@@ -598,6 +598,11 @@ def machines_lists_each_node(c):
     c.app.see("orchestrator")
 
 
+# Scenarios for session life-cycle, creation, sharing and administration live in
+# their own file, imported here so they run before the faults damage the cluster.
+import scenarios_lifecycle  # noqa: E402,F401
+
+
 # Faults. These run last among the functional scenarios, since they damage the cluster.
 
 
@@ -698,4 +703,7 @@ def a_daemon_loss_recovers(c):
     wait_for(lambda: daemon_state(c)["state"] == "unavailable", 20, "the daemon to read unavailable")
     check(c.app.alive(), "the app must survive its daemon")
     c.app.go("mission")
+
+    # The monkey may have hidden the sidebar, which is where the footer says this.
+    c.app.menu("Show Sidebar")
     c.app.see("unavailable")

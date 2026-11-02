@@ -7,6 +7,7 @@ import LoomKit
 //
 //   loom-probe list  <state-root>
 //   loom-probe deployment <state-root>
+//   loom-probe raw <state-root> <command> [json body]
 //   loom-probe drive <state-root> <workspace> <config> <prompt>...
 
 func stderr(_ text: String) {
@@ -60,6 +61,12 @@ do {
         for session in sessions.prefix(10) {
             print("  \(session.id) [\(session.state.label)] \(session.title.prefix(40)) \(activity[session.id]?.state.rawValue ?? "-")")
         }
+
+    case "raw":
+        // `raw <state-root> <command> [json body]`: prints the reply as the daemon sent it.
+        let text = arguments.count > 3 ? arguments[3] : "{}"
+        let body = try JSONValue.parse(Data(text.utf8))
+        print(try await control.raw(arguments[2], body: body).compactText)
 
     case "deployment":
         // Read-only, and safe against a live daemon.

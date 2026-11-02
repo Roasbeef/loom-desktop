@@ -180,6 +180,12 @@ public struct DeploymentNode: Sendable, Equatable, Identifiable {
     public let capacity: Int?
     public let resident: Int?
     public let workspaces: [String]
+    /// Sessions this executor still holds a scope for after their owner ended.
+    public let unclean: [UncleanScope]
+    /// What the executor's own report contradicts in its declaration, if anything.
+    public let contradiction: String?
+    public let ledgerBytes: Int?
+    public let ledgerLimit: Int?
 
     init?(_ body: JSONValue) {
         guard let node = body["node"]?.string else { return nil }
@@ -199,7 +205,66 @@ public struct DeploymentNode: Sendable, Equatable, Identifiable {
         scopeLimit = body["executor"]?["scope_limit"]?.int
         capacity = body["orchestrator"]?["capacity"]?.int
         resident = body["orchestrator"]?["resident"]?.int
-        workspaces = (body["workspaces"]?.array ?? []).compactMap(\.string)
+
+        // An executor lists its registered workspaces and unclean scopes inside its
+        // own report, and only when the read named that node.
+        workspaces = (body["executor"]?["workspaces"]?.array ?? body["workspaces"]?.array ?? []).compactMap(\.string)
+        unclean = (body["executor"]?["unclean"]?.array ?? []).compactMap(UncleanScope.init)
+        contradiction = body["executor"]?["contradiction"]?.string
+        ledgerBytes = body["executor"]?["ledger_bytes"]?.int
+        ledgerLimit = body["executor"]?["ledger_limit"]?.int
+    }
+}
+
+/// A scope on an executor that has not closed cleanly, which blocks reopening the
+/// session it belonged to until an operator releases it.
+public struct UncleanScope: Sendable, Equatable, Identifiable {
+    public let sessionID: String
+    public let state: String
+    public var id: String { sessionID }
+
+    init?(_ body: JSONValue) {
+        guard let session = body["session"]?.string else { return nil }
+        sessionID = session
+        state = body["state"]?.string ?? "unknown"
+    }
+}
+
+/// Another orchestrator this daemon lists, as the deployment states it.
+public struct OtherOrchestrator: Sendable, Equatable, Identifiable {
+    public let name: String
+    public let node: String
+    public let state: String
+    /// `receiving` when it accepts sessions moved to it, nil when it gave no report.
+    public let imports: String?
+    /// The executors it serves, by this daemon's names for them.
+    public let serves: [String]
+    public var id: String { name }
+
+    init?(_ body: JSONValue) {
+        guard let name = body["name"]?.string else { return nil }
+        self.name = name
+        node = body["node"]?.string ?? name
+        state = body["state"]?.string ?? "unknown"
+        imports = body["imports"]?.string
+        serves = (body["serves"]?.array ?? []).compactMap(\.string)
+    }
+}
+
+/// A session move in flight, from the asking daemon's own report.
+public struct MoveInFlight: Sendable, Equatable, Identifiable {
+    public let sessionID: String
+    public let destination: String
+    public let phase: String
+    public let reason: String?
+    public var id: String { sessionID }
+
+    init?(_ body: JSONValue) {
+        guard let session = body["session_id"]?.string else { return nil }
+        sessionID = session
+        destination = body["to"]?.string ?? ""
+        phase = body["phase"]?.string ?? "running"
+        reason = body["reason"]?.string
     }
 }
 
@@ -212,6 +277,8 @@ public struct PlacementOption: Sendable, Equatable, Identifiable {
     public let platform: String?
     public let enforcement: String?
     public let freeScopes: Int?
+    /// For a pool, the executors it lists. An executor has none.
+    public let members: [String]
     public var id: String { "\(choice)" }
 }
 
@@ -226,6 +293,10 @@ public struct Deployment: Sendable, Equatable {
     public let executors: [PlacementOption]
     public let pools: [PlacementOption]
     public let omitted: [String]
+    public let others: [OtherOrchestrator]
+    public let moves: [MoveInFlight]
+    /// How the asking daemon relates to each node: serves, peers, and the link.
+    public let edges: [DeploymentEdge]
 
     /// Whether this daemon has more than itself, which decides if a person sees
     /// any placement vocabulary at all.
@@ -241,6 +312,9 @@ public struct Deployment: Sendable, Equatable {
         hasDistribution = body["distribution"]?.string == "configured"
         nodes = (body["nodes"]?.array ?? []).compactMap(DeploymentNode.init)
         omitted = (body["omitted"]?.array ?? []).compactMap(\.string)
+        others = (body["orchestrators"]?.array ?? []).compactMap(OtherOrchestrator.init)
+        moves = (body["moves"]?.array ?? []).compactMap(MoveInFlight.init)
+        edges = (body["edges"]?.array ?? []).compactMap(DeploymentEdge.init)
 
         let placements = body["placements"]
         executors = (placements?["executors"]?.array ?? []).compactMap { row in
@@ -252,19 +326,23 @@ public struct Deployment: Sendable, Equatable {
                 state: row["state"]?.string ?? "unknown",
                 platform: row["declared"]?["platform"]?.string,
                 enforcement: row["declared"]?["enforcement"]?.string,
-                freeScopes: row["free_scopes"]?.int
+                freeScopes: row["free_scopes"]?.int,
+                members: []
             )
         }
         pools = (placements?["pools"]?.array ?? []).compactMap { row in
             guard let name = row["name"]?.string else { return nil }
+            // A pool reports which of its executors qualify, not a state of its own.
+            let eligible = (row["eligible"]?.array ?? []).compactMap(\.string)
             return PlacementOption(
                 choice: .pool(name),
                 name: name,
                 node: nil,
-                state: row["state"]?.string ?? "unknown",
+                state: row["state"]?.string ?? (eligible.isEmpty ? "none eligible" : "ready"),
                 platform: row["declared"]?["platform"]?.string ?? row["platform"]?.string,
                 enforcement: nil,
-                freeScopes: row["free_scopes"]?.int
+                freeScopes: row["free_scopes"]?.int,
+                members: (row["executors"]?.array ?? []).compactMap(\.string)
             )
         }
     }
@@ -287,5 +365,24 @@ public struct ElsewhereGroup: Sendable, Equatable, Identifiable {
         address = body["address"]?.string
         hasMore = body["more"]?.bool ?? false
         sessions = (body["sessions"]?.array ?? []).compactMap(SessionRecord.init)
+    }
+}
+
+/// One relation the asking daemon holds to a node, with the state of the link.
+public struct DeploymentEdge: Sendable, Equatable {
+    public let from: String
+    public let to: String
+    public let kind: String
+    /// `connected` when the asking daemon reaches the node over its own link.
+    public let link: String
+    public let sessions: Int
+
+    init?(_ body: JSONValue) {
+        guard let from = body["from"]?.string, let to = body["to"]?.string else { return nil }
+        self.from = from
+        self.to = to
+        kind = body["kind"]?.string ?? ""
+        link = body["link"]?.string ?? "unknown"
+        sessions = body["sessions"]?.int ?? 0
     }
 }

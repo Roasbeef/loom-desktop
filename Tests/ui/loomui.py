@@ -192,6 +192,22 @@ class App:
     def type(self, text):
         self.cmd(f"type {text}")
 
+    def focus(self, label):
+        """Puts the caret in a text field of the open sheet by its accessibility label."""
+        wait_for(lambda: self.cmd(f"focus {label}") == "ok", what=f"a text field named {label!r}")
+
+    def fill(self, label, text):
+        """Replaces the contents of a text field, as a person would by selecting it and typing."""
+        self.focus(label)
+        wait_for(lambda: self.cmd("clear") == "ok", what="the field to be emptied")
+        if text:
+            self.type(text)
+
+    def enabled(self, label):
+        """Whether the control with this accessibility name exists and is enabled."""
+        nodes = [n for n in self.tree() if n["name"] == label]
+        return bool(nodes) and all(n["enabled"] for n in nodes)
+
     def menu(self, title):
         self.cmd(f"menu {title}")
 

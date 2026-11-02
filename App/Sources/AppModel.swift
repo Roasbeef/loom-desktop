@@ -105,8 +105,12 @@ final class DaemonConnection: Identifiable {
     /// no such time, so this is an observation, absent until a change is seen.
     private(set) var lastChanged: [String: Date] = [:]
 
+    /// The choices of the last accepted creation, which a test reads to see what
+    /// the new-session form actually sent.
+    private(set) var lastCreation = ""
+
     private var endpoint: DaemonEndpoint?
-    private var control: ControlClient?
+    @ObservationIgnored var control: ControlClient?
     private var loop: Task<Void, Never>?
     private var ticks = 0
 
@@ -136,6 +140,12 @@ final class DaemonConnection: Identifiable {
     var localRoot: URL? {
         if case .local(let root) = source { return root }
         return nil
+    }
+
+    /// Where an invitee redeems a claim: this daemon's address and the claim path.
+    /// It names no token, so it can be shown beside one.
+    var claimAddress: String? {
+        (try? endpoint?.url(path: "/v2/claim"))?.absoluteString
     }
 
     func start() {
@@ -194,7 +204,7 @@ final class DaemonConnection: Identifiable {
         state = .connected
     }
 
-    private func refresh(_ control: ControlClient) async throws {
+    func refresh(_ control: ControlClient) async throws {
         let status = try await control.status()
         let sessions = try await control.listSessions()
         let resident = sessions.filter { $0.state.isResident }.map(\.id)
@@ -279,7 +289,8 @@ final class DaemonConnection: Identifiable {
         prompt: String,
         placement: PlacementChoice,
         configuration: String,
-        requestKey: String
+        requestKey: String,
+        options: CreationOptions = CreationOptions()
     ) async throws -> String {
         guard let control else { throw LoomError.closed("\(label) is not connected.") }
         let record = try await control.createSession(
@@ -287,8 +298,11 @@ final class DaemonConnection: Identifiable {
             workspace: workspace,
             name: name.isEmpty ? (workspace as NSString).lastPathComponent : name,
             configuration: configuration,
-            placement: placement
+            placement: placement,
+            options: options
         )
+        lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") shareable=\(options.isShareable)"
+
         _ = try await control.openUntilResident(sessionID: record.id)
         try await refresh(control)
         guard let controller = attach(record.id) else { return record.id }
@@ -308,6 +322,9 @@ final class AppModel {
     private(set) var daemons: [DaemonConnection] = []
 
     var destination: Destination? = .mission
+
+    /// Rename, stop, archive and delete in flight, with the question each asks.
+    let actions = SessionActions()
     var isDispatching = false
     var isAddingDaemon = false
     var isPaletteOpen = false

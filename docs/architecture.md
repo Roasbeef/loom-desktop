@@ -234,6 +234,12 @@ A session's brain is the daemon holding it, and its hands are where tools run. `
 
 `Mission.blastRadius` joins unhealthy nodes with the sessions naming them. `Mission.attention` adds an item only when a sick node has dependents. Driving a session on another orchestrator takes a `DaemonConnection` to that orchestrator with its own credential, which `CredentialStore` keeps in the keychain.
 
+## Owner actions
+
+Commands only the owner may send share one shape. `ControlClient` has a method for each (`renameSession`, `archiveSession`, `deleteSession`, `invite`, `setRole`, `peerLinks` and the rest in `Administration.swift`), each decoded by a value type that ignores unknown fields. `DaemonConnection` adds the follow-up the daemon needs, such as stopping and waiting for `saved` before an archive, or before `sessions.isolate`, since the daemon refuses both while a runtime is held. `SessionActions` holds what a person is being asked, and `SessionActionPresenter` draws the native dialog or sheet for it from the main window. Stopping an idle run, renaming and linking do not ask. Stopping a run mid-turn, archiving, deleting, revoking, rotating and unlinking do.
+
+A claim token exists only in an `Invitation`, which prints as a placeholder and is drawn only by `HandoverView`, the sheet the owner asked for. The claim command shown with it names the address and never the token.
+
 ## Reconnection
 
 Sockets drop independently, and each has its own recovery. The rule is that nothing unsent crosses a reconnect (protocol section 6.7).

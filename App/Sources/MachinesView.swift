@@ -45,6 +45,20 @@ private struct DaemonSection: View {
     @Environment(AppModel.self) private var model
     let daemon: DaemonConnection
 
+    @ViewBuilder
+    private func nodeGroup(_ title: String, _ nodes: [DeploymentNode]) -> some View {
+        if !nodes.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(title).font(Theme.label).foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 460), spacing: 14, alignment: .top)], spacing: 14) {
+                    ForEach(nodes) { node in
+                        NodeCard(node: node, daemon: daemon)
+                    }
+                }
+            }
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
@@ -76,10 +90,13 @@ private struct DaemonSection: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 460), spacing: 14, alignment: .top)], spacing: 14) {
-                        ForEach(deployment.nodes) { node in
-                            NodeCard(node: node, daemon: daemon)
-                        }
+                    // Orchestrators decide and executors act, so they read as two groups.
+                    let orchestrators = deployment.nodes.filter { $0.roles.contains("orchestrator") || $0.roles.isEmpty }
+                    let executors = deployment.nodes.filter { $0.roles.contains("executor") && !$0.roles.contains("orchestrator") }
+                    nodeGroup("Orchestrators", orchestrators)
+                    nodeGroup("Executors", executors)
+                    if !deployment.pools.isEmpty {
+                        PoolsGroup(pools: deployment.pools)
                     }
                 } else {
                     Text("This daemon does not report a deployment.")
@@ -130,6 +147,10 @@ private struct NodeCard: View {
                     .foregroundStyle(color)
             }
 
+            if let edge = daemon.deployment?.edges.first(where: { $0.to == node.id }), edge.link != "connected" {
+                Text("Not linked from here: \(edge.link)").font(.callout).foregroundStyle(Theme.attention)
+            }
+
             let facts = [node.platform, node.enforcement, node.buildVersion.map { "build \($0)" }].compactMap { $0 }
             if !facts.isEmpty {
                 Text(facts.joined(separator: " · ")).font(Theme.meta).foregroundStyle(.secondary).lineLimit(1)
@@ -141,6 +162,11 @@ private struct NodeCard: View {
             if let open = node.openScopes, let limit = node.scopeLimit {
                 meter(label: "\(open) of \(limit) scopes", used: open, capacity: limit)
             }
+
+            Button("Details") { model.actions.machine = MachineRef(daemonID: daemon.id, node: node) }
+                .buttonStyle(.link)
+                .font(.caption)
+                .accessibilityLabel("Details for \(node.isSelf ? daemon.label : node.name)")
 
             if !dependents.isEmpty {
                 VStack(alignment: .leading, spacing: 3) {
@@ -185,6 +211,31 @@ private struct NodeCard: View {
             }
             .frame(height: 3)
             Text(used >= capacity ? "\(label), full" : label).font(Theme.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// The pools a session may be placed in, with the state each reports.
+private struct PoolsGroup: View {
+    let pools: [PlacementOption]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Pools").font(Theme.label).foregroundStyle(.secondary)
+            ForEach(pools) { pool in
+                HStack(spacing: 8) {
+                    Text(pool.name).font(.system(size: 13, weight: .semibold))
+                    Text(pool.state).font(Theme.caption).foregroundStyle(pool.state == "ready" ? Color.secondary : Theme.attention)
+                    if let platform = pool.platform { Text(platform).font(Theme.meta).foregroundStyle(.secondary) }
+                    if let free = pool.freeScopes { Text("\(free) free").font(Theme.caption).foregroundStyle(.secondary) }
+                    if !pool.members.isEmpty { Text(pool.members.joined(separator: ", ")).font(Theme.meta).foregroundStyle(.secondary) }
+                    Spacer()
+                }
+                .padding(12)
+                .surface()
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Pool \(pool.name), \(pool.state)")
+            }
         }
     }
 }

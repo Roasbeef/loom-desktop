@@ -27,12 +27,12 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | HM-10 | Worktree directory name on a row | sessions.gleam:430 | `sessions.list` | no | 3 |
 | HM-11 | Sidebar "New session" | view/sidebar.gleam:528 | local | yes (RootView.swift:202) | 1 |
 | HM-12 | Sidebar foot: Admin door | view/sidebar.gleam:757 | `ui.link` equivalent | no | 3 |
-| HM-13 | Row menu with "Rename, move or delete" | view/sidebar.gleam:932 | local | partial (RootView.swift:225 has a context menu with other items; those three are absent) | 2 |
-| HM-14 | Archive a saved row with a question | view/archiving.gleam:206 | `sessions.archive` | no | 2 |
-| HM-15 | Stop and archive a running row, asking when mid-turn | view/archiving.gleam:310 | `sessions.stop`, `sessions.archive` | no | 2 |
-| HM-16 | Stop a running row, asking when it is mid-turn | view/home_table.gleam:689 | `sessions.stop` | partial (RootView.swift:240 stops with no mid-turn question) | 2 |
-| HM-17 | Delete a saved or blocked row, with a question | view/home_table.gleam:746 | `sessions.delete` | no | 2 |
-| HM-18 | Rename a row in place | view/home_table.gleam:997 | `sessions.rename`† | no | 2 |
+| HM-13 | Row menu with "Rename, move or delete" | view/sidebar.gleam:932 | local | yes (SessionActions.swift; context menu and Session menu) | 2 |
+| HM-14 | Archive a saved row with a question | view/archiving.gleam:206 | `sessions.archive` | yes (SessionActions.swift) | 2 |
+| HM-15 | Stop and archive a running row, asking when mid-turn | view/archiving.gleam:310 | `sessions.stop`, `sessions.archive` | yes (SessionActions.swift; stops, waits for saved, archives) | 2 |
+| HM-16 | Stop a running row, asking when it is mid-turn | view/home_table.gleam:689 | `sessions.stop` | yes (SessionActions.swift, asks only when mid-turn) | 2 |
+| HM-17 | Delete a saved or blocked row, with a question | view/home_table.gleam:746 | `sessions.delete` | yes (SessionActions.swift) | 2 |
+| HM-18 | Rename a row in place | view/home_table.gleam:997 | `sessions.rename`† | yes (SessionActions.swift RenameSheet; `sessions.rename` read from server.gleam) | 2 |
 | HM-19 | Row state words: saved, moving to, needs attention, failed to start | view/home_table.gleam:1094 | `sessions.list` | partial (RootView.swift:304 and SessionScreen.swift:51 say moving, failed and blocked; "saved" is a section title) | 2 |
 | HM-20 | Row age, UTC minute in a title, and membership role | view/home_table.gleam:1111 | `sessions.list` | partial (RootView.swift:280 shows the age of the last observed change; no created age or role) | 3 |
 | HM-21 | "Waiting" banner on the home with a Review button | view/new_session.gleam:299 | `sessions.activity` | yes (MissionViews.swift:23) | 1 |
@@ -46,23 +46,23 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 |---|---|---|---|---|---|
 | NS-01 | Prompt box that becomes the first message | view/new_session.gleam:394 | `sessions.create`, `sessions.open`, `subscribe`, `prompt` | yes (RootView.swift:414; AppModel.swift:276) | 1 |
 | NS-02 | Session named from the message's first line | composer.gleam:490 | `sessions.create` | yes (RootView.swift:564) | 2 |
-| NS-03 | Recent places, "Start again where you worked" | view/new_session.gleam:325 | `sessions.list` | partial (RootView.swift:508 offers paths of known local workspaces only) | 1 |
+| NS-03 | Recent places, "Start again where you worked" | view/new_session.gleam:325 | `sessions.list` | yes (NewSessionSheet.swift lists used folders newest first) | 1 |
 | NS-04 | Choose the agent machine | view/new_session.gleam:571 | `sessions.create` | partial (RootView.swift:426 picks among connected daemons; it does not list configured orchestrators) | 2 |
 | NS-05 | Agent option state: checking, unavailable | view/new_session.gleam:629 | in-process | partial (RootView.swift:351 shows daemon state in the footer, not in the picker) | 3 |
-| NS-06 | Searchable code picker: folders and workspaces | view/new_session.gleam:771 | `deployment.status` | no | 2 |
-| NS-07 | Typed folder, judged before creation | creations.gleam:413 | `sessions.create` | partial (RootView.swift:504 and :551 have a field and panel; only the daemon judges the path) | 1 |
+| NS-06 | Searchable code picker: folders and workspaces | view/new_session.gleam:771 | `deployment.status` | yes (NewSessionSheet.swift; the folder field filters recent places or an executor's registered names) | 2 |
+| NS-07 | Typed folder, judged before creation | creations.gleam:413 | `sessions.create` | yes (NewSessionSheet.swift and FolderCheck in Administration.swift judge the typed path before any request) | 1 |
 | NS-08 | Run on an executor | view/create.gleam:511 | `sessions.create` `executor`; `deployment.status` | yes (RootView.swift:431; ControlClient.swift:97) | 2 |
-| NS-09 | Run in a pool | view/create.gleam:511 | `sessions.create` `pool` | code (RootView.swift:433; ControlClient.swift:98) | 2 |
+| NS-09 | Run in a pool | view/create.gleam:511 | `sessions.create` `pool` | yes (NewSessionSheet.swift; pools are offered as a place and the daemon picks the executor) | 2 |
 | NS-10 | Executor and pool cards: state, free scopes, contradiction, declaration | placements.gleam:71 | `deployment.status` | partial (RootView.swift:542 shows name, platform, free scopes and state; no contradiction text) | 3 |
-| NS-11 | A down executor may still be chosen | view/create.gleam:511 | `sessions.create` | no (RootView.swift:436 disables down and full) | 3 |
-| NS-12 | Workspace select for an executor's registered names | view/create.gleam:852 | `deployment.status` node read | code (RootView.swift:526; AppModel.swift:269) | 2 |
+| NS-11 | A down executor may still be chosen | view/create.gleam:511 | `sessions.create` | code (NewSessionSheet.swift allows a down executor with a warning; no scenario takes the executor down) | 3 |
+| NS-12 | Workspace select for an executor's registered names | view/create.gleam:852 | `deployment.status` node read | yes (NewSessionSheet.swift; `executor.workspaces` read from the node report, which the old decoder missed) | 2 |
 | NS-13 | Typed registered workspace when none is known | view/create.gleam:899 | `sessions.create` | yes (RootView.swift:530) | 3 |
-| NS-14 | Choose a model profile | view/new_session.gleam:116 | `sessions.create` | no | 2 |
-| NS-15 | Choose the main model | view/new_session.gleam:666 | `sessions.create` | no | 2 |
-| NS-16 | Shareable box | view/create.gleam:956 | `sessions.create` `domain_scope` | no | 2 |
-| NS-17 | Optional session name with its default stated | view/create.gleam:380 | `sessions.create` | no (name is derived; there is no field) | 3 |
-| NS-18 | New session under a project heading | view/create.gleam:278 | `sessions.create` | no | 2 |
-| NS-19 | Remembered folders with "Forget this folder" | view/folders.gleam:136 | in-process (`manager.forget_folder`) | no | 3 |
+| NS-14 | Choose a model profile | view/new_session.gleam:116 | `sessions.create` | yes (NewSessionSheet.swift; profiles read from the daemon's loom.toml, local daemons only) | 2 |
+| NS-15 | Choose the main model | view/new_session.gleam:666 | `sessions.create` | yes (NewSessionSheet.swift; models read from the daemon's loom.toml, local daemons only) | 2 |
+| NS-16 | Shareable box | view/create.gleam:956 | `sessions.create` `domain_scope` | yes (NewSessionSheet.swift, `domain_scope: session_only`) | 2 |
+| NS-17 | Optional session name with its default stated | view/create.gleam:380 | `sessions.create` | yes (NewSessionSheet.swift) | 3 |
+| NS-18 | New session under a project heading | view/create.gleam:278 | `sessions.create` | code (a project heading's plus in RootView.swift; the Session menu's New Session in This Folder is proven, but the sidebar list is not in the accessibility tree) | 2 |
+| NS-19 | Remembered folders with "Forget this folder" | view/folders.gleam:136 | in-process (`manager.forget_folder`) | yes (NewSessionSheet.swift; a per-app list, since the daemon's forget is in-process) | 3 |
 | NS-20 | Refusal words for each reason | creations.gleam:251 | `error` reply | partial (RootView.swift:451 draws the daemon's message) | 2 |
 | NS-21 | Created but message unsent: "Open the session" | view/new_session.gleam:1141 | local | no | 3 |
 | NS-22 | Start on another orchestrator | view/new_session.gleam:617 | in-process (`ui_top.found`) | partial (RootView.swift:426 only through a direct daemon connection) | 3 |
@@ -309,27 +309,27 @@ The web page has no schedule surface beyond these two commands.
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
 | SH-01 | Viewers of the session, with roles | view/session_tab.gleam:171; sv:session_summary.gleam:132 | `presence` | code (SessionScreen.swift:1174 and :710) | 2 |
-| SH-02 | Invite as observer or operator | view/share.gleam:289 | `sessions.invite` | no | 2 |
-| SH-03 | Invitation handover: address, token, command, with copy | view/share.gleam:326; view/share.gleam:384 | `sessions.invite` | no | 2 |
-| SH-04 | Hide the token | view/share.gleam:360 | local | no | 3 |
-| SH-05 | Make a private session shareable, with a question | view/share.gleam:164; view/share.gleam:179 | `sessions.isolate` | no | 3 |
-| SH-06 | Rename the session from its page | view/rename.gleam:147 | `sessions.rename`† | no | 2 |
+| SH-02 | Invite as observer or operator | view/share.gleam:289 | `sessions.invite` | yes (SharingSheet.swift; the owner invites by name and role) | 2 |
+| SH-03 | Invitation handover: address, token, command, with copy | view/share.gleam:326; view/share.gleam:384 | `sessions.invite` | yes (SharingSheet.swift HandoverView: address, command, token, copy buttons; the command never carries the token) | 2 |
+| SH-04 | Hide the token | view/share.gleam:360 | local | yes (SharingSheet.swift HandoverView) | 3 |
+| SH-05 | Make a private session shareable, with a question | view/share.gleam:164; view/share.gleam:179 | `sessions.isolate` | yes (SharingSheet.swift; stops, isolates and reopens a running session, because the daemon refuses to isolate a live runtime) | 3 |
+| SH-06 | Rename the session from its page | view/rename.gleam:147 | `sessions.rename`† | yes (SessionActions.swift RenameSheet, Session menu) | 2 |
 | SH-07 | Accept an invitation with a claim form | page.gleam:761 | `credentials.claim` | no (Discovery.swift:31 refuses a claim token) | 3 |
 
 ## Credentials and sign-ins
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| CR-01 | Your name, and change it | view/your_name.gleam:72; view/your_name.gleam:107 | `principals.rename` | no | 3 |
-| CR-02 | People list on the admin page | view/admin_people.gleam:135 | `principals.list` | no | 3 |
-| CR-03 | Rotate a person's credential | view/admin_people.gleam:277 | `credentials.rotate` | no | 3 |
-| CR-04 | Revoke a person's access, two steps | view/admin_people.gleam:289 | `credentials.revoke` | no | 3 |
-| CR-05 | Rename a person | view/admin_people.gleam:214 | `principals.rename` | no | 3 |
-| CR-06 | A person's sign-ins, and revoke one | view/admin_people.gleam:330 | `credentials.signins`, `credentials.revoke_login` | no | 3 |
-| CR-07 | Claim shown once beside the action | view/admin_claim.gleam:108 | `sessions.invite`, `credentials.rotate` | no | 3 |
-| CR-08 | Session members, set role and revoke membership | view/admin_sessions.gleam:222; grants.gleam:219 | `sessions.members`, `sessions.set_role`, `sessions.revoke` | no | 3 |
-| CR-09 | Invitation form with name and role | view/admin_sessions.gleam:491 | `sessions.invite` | no | 3 |
-| CR-10 | Make shareable from the admin page | view/admin_sessions.gleam:301 | `sessions.isolate` | no | 3 |
+| CR-01 | Your name, and change it | view/your_name.gleam:72; view/your_name.gleam:107 | `principals.rename` | yes (PeopleSheet.swift, Go menu People…) | 3 |
+| CR-02 | People list on the admin page | view/admin_people.gleam:135 | `principals.list` | yes (PeopleSheet.swift) | 3 |
+| CR-03 | Rotate a person's credential | view/admin_people.gleam:277 | `credentials.rotate` | yes (PeopleSheet.swift, after a question) | 3 |
+| CR-04 | Revoke a person's access, two steps | view/admin_people.gleam:289 | `credentials.revoke` | yes (PeopleSheet.swift, after a question) | 3 |
+| CR-05 | Rename a person | view/admin_people.gleam:214 | `principals.rename` | yes (PeopleSheet.swift) | 3 |
+| CR-06 | A person's sign-ins, and revoke one | view/admin_people.gleam:330 | `credentials.signins`, `credentials.revoke_login` | code (PeopleSheet.swift lists a person's browser sign-ins and revokes one; the fixture has no browser logins) | 3 |
+| CR-07 | Claim shown once beside the action | view/admin_claim.gleam:108 | `sessions.invite`, `credentials.rotate` | yes (SharingSheet.swift HandoverView, shared by invite and rotate) | 3 |
+| CR-08 | Session members, set role and revoke membership | view/admin_sessions.gleam:222; grants.gleam:219 | `sessions.members`, `sessions.set_role`, `sessions.revoke` | yes (SharingSheet.swift sets a role and removes a member, after a question) | 3 |
+| CR-09 | Invitation form with name and role | view/admin_sessions.gleam:491 | `sessions.invite` | yes (SharingSheet.swift) | 3 |
+| CR-10 | Make shareable from the admin page | view/admin_sessions.gleam:301 | `sessions.isolate` | yes (SharingSheet.swift) | 3 |
 | CR-11 | Grant allowance spent, with the time a place frees | admin.gleam:888; wc:time_rule.gleam:49 | `error` details | no | 3 |
 
 ## Machines and deployment
@@ -337,15 +337,15 @@ The web page has no schedule surface beyond these two commands.
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
 | MA-01 | Deployment section, summary line | view/admin_machines.gleam:155 | `deployment.status` | yes (MachinesView.swift:44) | 3 |
-| MA-02 | Machines grouped by role | view/admin_machines.gleam:127 | `deployment.status` | partial (MachinesView.swift:79 grids by node and shows roles; not grouped) | 3 |
-| MA-03 | Row facts and "not linked from here" | view/admin_machines.gleam:391 | `deployment.status` | partial (MachinesView.swift:133 shows platform, enforcement and build; no link standing) | 3 |
-| MA-04 | Pools | view/admin_machines.gleam:554 | `deployment.status` | no (only in the dispatch picker) | 3 |
-| MA-05 | Machine page tab: Overview | view/admin_machine.gleam:191; machines.gleam:551 | `deployment.status` `node` | partial (MachinesView.swift:94 shows state, reasons and meters) | 3 |
-| MA-06 | Machine page tab: Sessions | view/admin_machine.gleam:428; view/admin_machine.gleam:539 | `deployment.status`, `sessions.elsewhere` | partial (MachinesView.swift:100 lists this daemon's dependents) | 3 |
+| MA-02 | Machines grouped by role | view/admin_machines.gleam:127 | `deployment.status` | yes (MachinesView.swift groups orchestrators, executors and pools) | 3 |
+| MA-03 | Row facts and "not linked from here" | view/admin_machines.gleam:391 | `deployment.status` | code (MachinesView.swift and MachineDetailSheet.swift say not linked from here from the `edges` link; no scenario breaks a link) | 3 |
+| MA-04 | Pools | view/admin_machines.gleam:554 | `deployment.status` | yes (MachinesView.swift PoolsGroup) | 3 |
+| MA-05 | Machine page tab: Overview | view/admin_machine.gleam:191; machines.gleam:551 | `deployment.status` `node` | yes (MachineDetailSheet.swift overview, declaration and ledger) | 3 |
+| MA-06 | Machine page tab: Sessions | view/admin_machine.gleam:428; view/admin_machine.gleam:539 | `deployment.status`, `sessions.elsewhere` | yes (MachineDetailSheet.swift lists the sessions that depend on the machine) | 3 |
 | MA-07 | Machine page tab: Access, ledger standing | view/admin_machine.gleam:663 | `ledger.status`, `ledger.entries` | no | 3 |
-| MA-08 | Copy enroll, renew and revoke commands | view/admin_machine.gleam:681; view/admin_machine.gleam:689; view/admin_machine.gleam:749 | none, the operator runs them | no | 3 |
-| MA-09 | Scopes tab: counts and scopes that block a reopen | view/admin_machine.gleam:901 | `deployment.status` | partial (MachinesView.swift:141 shows the scope meter only) | 3 |
-| MA-10 | Copy the release-scope command | view/admin_machine.gleam:777 | none, the operator runs it | no | 3 |
+| MA-08 | Copy enroll, renew and revoke commands | view/admin_machine.gleam:681; view/admin_machine.gleam:689; view/admin_machine.gleam:749 | none, the operator runs them | yes (MachineDetailSheet.swift prints the renew, revoke and enroll commands; the app runs none) | 3 |
+| MA-09 | Scopes tab: counts and scopes that block a reopen | view/admin_machine.gleam:901 | `deployment.status` | code (MachineDetailSheet.swift shows scope counts and each scope that did not close cleanly; the fixture has no unclean scope) | 3 |
+| MA-10 | Copy the release-scope command | view/admin_machine.gleam:777 | none, the operator runs it | code (MachineDetailSheet.swift prints `loomd executor release <session>` for each unclean scope; none exists in the fixture) | 3 |
 | MA-11 | Show a machine's sessions in the sidebar | admin.gleam:1399 | local | no | 3 |
 | MA-12 | Admin page Machines and People parts | admin.gleam:1305 | local | yes (Machines only: MachinesView.swift:9; people are in CR rows) | 3 |
 | MA-13 | Placement strip: "Agent on", "Commands on" | view/placement.gleam:42 | `sessions.list` | yes (SessionScreen.swift:102 and :1155) | 2 |
@@ -356,19 +356,19 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| MV-01 | Move: list eligible and ineligible destinations | view/home_table.gleam:958; sv:move_candidates.gleam:121 | in-process (`deployment.candidates`) | no | 3 |
-| MV-02 | Move: confirm in the row | view/home_table.gleam:888 | `sessions.move` | no | 3 |
-| MV-03 | Move disabled with a reason for a session with no executor | view/home_table.gleam:774 | local | no | 3 |
-| MV-04 | "Moving to" shown on a row | view/home_table.gleam:1094 | `sessions.list` | code (RootView.swift:304) | 3 |
-| MV-05 | Moves on a machine page, and Abandon with a question | view/admin_machine.gleam:942; view/admin_machine.gleam:1021 | in-process (`server.abandon_move`) | no | 3 |
+| MV-01 | Move: list eligible and ineligible destinations | view/home_table.gleam:958; sv:move_candidates.gleam:121 | in-process (`deployment.candidates`) | code (MoveSheet.swift lists `orchestrators` from deployment.status with the first reason each cannot take the session; the fixture has one orchestrator) | 3 |
+| MV-02 | Move: confirm in the row | view/home_table.gleam:888 | `sessions.move` | code (MoveSheet.swift sends sessions.move; the fixture has no second orchestrator) | 3 |
+| MV-03 | Move disabled with a reason for a session with no executor | view/home_table.gleam:774 | local | yes (MoveSheet.swift) | 3 |
+| MV-04 | "Moving to" shown on a row | view/home_table.gleam:1094 | `sessions.list` | code (RootView.swift) | 3 |
+| MV-05 | Moves on a machine page, and Abandon with a question | view/admin_machine.gleam:942; view/admin_machine.gleam:1021 | in-process (`server.abandon_move`) | code (MoveSheet.swift abandons from the session's move sheet; the web page does it on the machine page) | 3 |
 
 ## Peers
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| PL-01 | Peer links of the strand | view/peer_links.gleam:74 | `peers.inspect` | no | 3 |
-| PL-02 | Link: pick session, strand, wake and both directions | view/peer_links.gleam:318; view/peer_links.gleam:354 | `peers.link` | no | 3 |
-| PL-03 | Unlink, naming which directions | view/peer_links.gleam:167; view/peer_links.gleam:406 | `peers.unlink` | no | 3 |
+| PL-01 | Peer links of the strand | view/peer_links.gleam:74 | `peers.inspect` | yes (PeerLinksSheet.swift, Session menu Peer Links…) | 3 |
+| PL-02 | Link: pick session, strand, wake and both directions | view/peer_links.gleam:318; view/peer_links.gleam:354 | `peers.link` | yes (PeerLinksSheet.swift; picks a running session on the same daemon, a strand and a wake setting) | 3 |
+| PL-03 | Unlink, naming which directions | view/peer_links.gleam:167; view/peer_links.gleam:406 | `peers.unlink` | yes (PeerLinksSheet.swift, after a question; unlinks outgoing links) | 3 |
 
 ## Other orchestrators
 
@@ -402,8 +402,8 @@ The web page has no schedule surface beyond these two commands.
 |---|---|---|---|---|---|
 | SE-01 | Theme: system, light or dark | wc:layout_rule.gleam:348 | local | partial (LoomApp.swift:213 has no theme setting, so it follows the system) | 3 |
 | SE-02 | Saved layout: columns and tab | wc:shell.gleam:539 | local | partial (SessionScreen.swift:974 keeps the inspector tab; column state is not saved by the app) | 3 |
-| SE-03 | Show the session's profile, and switch it | sv:commands.gleam:620; sv:commands.gleam:624 | `profile_get`, `profile_set` | no | 2 |
-| SE-04 | Reasoning effort | sv:command.gleam:344 | `set_config` | no | 2 |
+| SE-03 | Show the session's profile, and switch it | sv:commands.gleam:620; sv:commands.gleam:624 | `profile_get`, `profile_set` | yes (SessionSettingsSheet.swift; `profile_get` and `profile_set`, after a question) | 2 |
+| SE-04 | Reasoning effort | sv:command.gleam:344 | `set_config` | yes (SessionSettingsSheet.swift; `set_config` `thinking_level` on the focused strand) | 2 |
 
 ## Session panel and top bar
 

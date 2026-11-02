@@ -4,6 +4,8 @@ import Foundation
 public struct Strand: Sendable, Equatable, Identifiable {
     public let id: String
     public var model: String?
+    /// The reasoning level this strand asks models for (`off` through `max`).
+    public var thinkingLevel: String?
     public var leaf: String?
     public var currentOperation: String?
     public var lastOutcome: String?
@@ -451,6 +453,7 @@ public struct Conversation: Sendable, Equatable {
                 return Strand(
                     id: id,
                     model: cell["value"]?["model"]?["modelId"]?.string,
+                    thinkingLevel: cell["value"]?["thinkingLevel"]?.string,
                     leaf: value("strand.leaf", id)?.string,
                     currentOperation: value("strand.state", id)?["currentOperationId"]?.string,
                     lastOutcome: value("strand.last_result", id)?["outcome"]?.string,
