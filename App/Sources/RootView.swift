@@ -190,32 +190,23 @@ private struct SidebarView: View {
         .listStyle(.sidebar)
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                Picker("Group by", selection: $grouping) {
-                    ForEach(groupings) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
+                GroupingTabs(options: groupings, selection: $grouping)
                 if model.isMultiMachine, model.machineCounts.count > 1 {
-                    Picker("Machine", selection: $machineFilter) {
-                        Text("All \(model.sessions.count)").tag("")
-                        ForEach(model.machineCounts, id: \.name) { Text("\($0.name) \($0.count)").tag($0.name) }
+                    MachineChips(total: model.sessions.count, machines: model.machineCounts, selection: $machineFilter)
+                }
+                HStack(alignment: .lastTextBaseline, spacing: 8) {
+                    DaemonFooter()
+                    Button {
+                        model.actions.showsPeople = true
+                    } label: {
+                        Image(systemName: "person.2")
+                            .font(Theme.caption)
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("The people who can use this daemon, and their sign-ins")
+                    .accessibilityLabel("Open People")
                 }
-                Button {
-                    model.actions.showsPeople = true
-                } label: {
-                    Label("People", systemImage: "person.2")
-                        .font(Theme.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help("The people who can use this daemon, and their sign-ins")
-                .accessibilityLabel("Open People")
-                DaemonFooter()
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 10)
@@ -376,6 +367,92 @@ extension Date {
         case ..<86400: return "\(seconds / 3600)h"
         default: return "\(seconds / 86400)d"
         }
+    }
+}
+
+/// The sidebar's grouping choice, drawn by hand because a system segmented
+/// control takes the accent colour and sizes each segment to its text.
+private struct GroupingTabs: View {
+    let options: [SidebarGrouping]
+    @Binding var selection: SidebarGrouping
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options) { option in
+                let isSelected = option == selection
+                Button {
+                    selection = option
+                } label: {
+                    Text(option.rawValue)
+                        .font(Theme.caption)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .background(isSelected ? Theme.tintStrong : .clear, in: .rect(cornerRadius: 5))
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.hairline)
+                    }
+                }
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(Theme.tint, in: .rect(cornerRadius: 7))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Group by")
+    }
+}
+
+/// The filter to one machine. It scrolls because a cluster can have more
+/// machines than the sidebar is wide, and it shows the node name alone because
+/// the host part of `orch0@127.0.0.1` would take the whole row.
+private struct MachineChips: View {
+    let total: Int
+    let machines: [(name: String, count: Int)]
+    @Binding var selection: String
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 2) {
+                chip(title: "All", count: total, value: "", help: "Every machine")
+                ForEach(machines, id: \.name) { machine in
+                    chip(
+                        title: machine.name.split(separator: "@").first.map(String.init) ?? machine.name,
+                        count: machine.count,
+                        value: machine.name,
+                        help: machine.name
+                    )
+                }
+            }
+        }
+        .scrollIndicators(.never)
+    }
+
+    private func chip(title: String, count: Int, value: String, help: String) -> some View {
+        let isSelected = selection == value
+        return Button {
+            selection = value
+        } label: {
+            HStack(spacing: 4) {
+                Text(title).lineLimit(1)
+                Text("\(count)").monospacedDigit().foregroundStyle(.tertiary)
+            }
+            .font(Theme.caption)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .background(isSelected ? Theme.tintStrong : .clear, in: .rect(cornerRadius: 5))
+        .help(help)
+        .accessibilityLabel(value.isEmpty ? "All \(count)" : "\(value) \(count)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
