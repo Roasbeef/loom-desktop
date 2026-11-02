@@ -18,9 +18,19 @@ It answers three questions at a glance: what is one agent doing, what across all
 - **Runs agents anywhere.** A session's conversation and its tools can sit on different machines, and subagents can run under another orchestrator. On one machine, none of that vocabulary appears.
 - **Streams without dropping frames.** A token redraws the live tail, not the transcript. Figures are in [docs/design.md](docs/design.md).
 - **Reads like a Mac app.** Liquid Glass from the system, a real menu bar, ⌘K to go anywhere, and full keyboard use.
-- **Renders what agents write.** Markdown, tables, highlighted code, numbered red and green diffs, and runs of tool calls folded to one line.
+- **Renders what agents write.** Markdown, tables, highlighted code, numbered red and green diffs, and each turn's tool calls folded to one line.
+- **Takes input the way the other clients do.** A composer with slash commands and completions, image attachments, queued and steering messages, and panels for the goal, todo board, context window, notes and proposals.
 
-It is an early exploration. [docs/parity.md](docs/parity.md) lists every capability of Loom's web UI and says, row by row, what this app has.
+It is an early exploration, and it does not match the web UI yet. [docs/parity.md](docs/parity.md) lists 292 capabilities of Loom's web UI and says, row by row, what this app has. The counts below come from `python3 tests/ui/parity_check.py`.
+
+| Native state | Rows | Meaning |
+| --- | --- | --- |
+| `yes` | 215 | A UI scenario proves it against a real daemon. |
+| `code` | 40 | Implemented, with no scenario yet. |
+| `partial` | 15 | Part of it exists. |
+| `no` | 22 | Absent. Some are deliberate differences. |
+
+Of the 215 `yes` rows, 44 are covered only by scenarios that need an unlocked screen. On a locked screen those scenarios report `blocked`, so the rows rest on a run made with the screen unlocked. Twelve of the rows below `yes` need a second orchestrator, and the static cluster the scenarios use has one, so those cannot be proven there. The screenshots above were taken earlier and may differ from the current interface.
 
 ## Run it
 
@@ -56,11 +66,11 @@ make uitest
 make parity
 ```
 
-`make test` runs the unit tests. `make uitest` starts a real orchestrator and executor with a scripted model, then drives the running app through every scenario, without taking focus from what you are doing. It writes a report with a screenshot per scenario to `build/uitest/report.html`.
+`make test` runs the unit tests. `make uitest` starts a real orchestrator and executor with a scripted model, then drives a copy of the running app through every scenario, without taking focus from what you are doing. The copy has its own bundle identifier, so a run does not read or change your preferences. It writes a report with a screenshot per scenario to `build/uitest/report.html`.
 
 The scenarios address the app by meaning: accessibility names and state, not coordinates. They include fault injection (losing an executor, losing the daemon, a failed model call), a seeded random walk, frame and CPU budgets, an accessibility check, and visual baselines in both appearances at two sizes.
 
-`make parity` fails if [docs/parity.md](docs/parity.md) says `yes` for a capability that no scenario proves.
+`make parity` fails if [docs/parity.md](docs/parity.md) says `yes` for a capability that no scenario proves, or if a scenario names a row that does not say `yes`.
 
 ## Learn more
 

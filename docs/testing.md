@@ -6,14 +6,20 @@ The test tools exist to answer one question: does the app a person runs do what 
 
 | Layer | Command | What it proves | Judge |
 | --- | --- | --- | --- |
-| Pure rules | `make test` | Protocol assembly, projection, markdown, diffs, merge rules | XCTest |
+| Pure rules | `make test` | Protocol assembly, projection, turn folding, the composer's parse, panel boards, sidebar rows, markdown, diffs, merge rules | XCTest, in `Tests/LoomKitTests/` |
 | Scenarios | `make uitest` | Features work end to end against a real cluster | Accessibility tree and app state |
 | Foreground | `make uitest-foreground` | Real key equivalents with a key window. Takes focus briefly | App state |
-| Parity | `make parity` | No row claims `yes` without a scenario | `tests/ui/parity_check.py` |
+| Parity | `make parity` | No row claims `yes` without a scenario, and no scenario covers a row that is not `yes` | `tests/ui/parity_check.py` |
+
+## The app under test
+
+`tests/ui/run.py` does not launch `build/Loom.app` itself. `isolated_app()` in `tests/ui/loomui.py` makes a copy for the run: it copies the built app with `ditto` to `build/uitest-app-<slot>/Loom.app`, sets `CFBundleIdentifier` to `com.roasbeef.loom-desktop.uitest<slot>` with `plutil`, signs the copy ad hoc, and runs `defaults delete` on that identifier. `UserDefaults.standard` is keyed by the bundle identifier, so the copy reads and writes its own preferences and a run never touches the preferences of the app you use. The preferences are emptied once per run and survive a relaunch inside it, which the scenarios about remembered choices rely on.
+
+`make uitest` builds the app with `-DEBUG`, so the copy carries `DebugDriver`. The run sets `LOOM_DEBUG_DRIVER` to a directory under the slot's base path and `LOOM_STATE_DIR` to the throwaway orchestrator's state root.
 
 ## How a scenario sees the app
 
-`tests/ui/loomui.py` talks to `App/Sources/DebugDriver.swift`, which compiles only into debug-flagged builds. Commands go through a file, and each waits on its own reply rather than on a sleep.
+`tests/ui/loomui.py` talks to `App/Sources/DebugDriver.swift`, which compiles only into debug-flagged builds. Commands go through a file that the driver polls every 100 ms, and each waits on its own reply file rather than on a sleep.
 
 | Tool | Use it for |
 | --- | --- |
@@ -32,8 +38,9 @@ The test tools exist to answer one question: does the app a person runs do what 
 | `app.cmd("attach <name> <address>")`, `app.cmd("unattach <name>")` | Connect a second daemon without saving it, with the credential in the driver directory's `token` file, and remove it. A scenario that connects through the Connect a Daemon sheet removes the saved daemon with `unattach`. |
 | `app.cmd("attachfile <path>")`, `app.cmd("asrole <role>")`, `app.cmd("shutdown")`, `app.cmd("peerlink <from> <to>")`, `app.cmd("staleapprove")` | Debug hooks for what the cluster cannot produce on its own: a file attached through the drop path, a session drawn as another role, a draining daemon (`cluster.restart_orch()` starts it again), two linked sessions, and an answer built from a record that moved. |
 | `app.cmd("run <command> <json>")` | Sends one session command from the open session, for set-up a scenario does not itself test. |
+| `app.cmd("lanedelay <ms>")`, `app.cmd("pasteimage <path>")`, `app.cmd("strand <id>")`, `app.cmd("stopall")` | Hold each send for a time so the pending line is visible, paste an image through the composer's paste path, focus a strand, and free every daemon slot. `run.py` sends `stopall` before each scenario. |
 
-The scripted model in `scripts/fake_provider.py` chooses its reply from keywords in the prompt: `demo`, `escalate`, `long`, `slow`, `hang`, `explode`, and for the tools a panel shows `todoboard`, `writenote`, `proposerule`, `heartbeat`, `backgroundjob` and `commitwork`. Others make the model start a subagent (`spawnagent`), run a seven second command (`slowstep`), stop mid-reply (`stopmid`), read a picture (`readpicture`), message another session (`peersend` with its id), report a cached prefix or its loss (`cachehit`, `cachemiss`), write a markdown reply (`markdown`), think at length (`longthink`), and make the advisor nudge (`advisenudge`). The cluster starts with a 100-token recent tail, so `/compact` has something to cut, and routes the summarize role to the same model, so long reasoning gets a label. It reports token usage, and the cluster prices the model, so a session has an estimated cost. The advisor is routed to the same model, and it ignores these keywords.
+The scripted model in `scripts/fake_provider.py` chooses its reply from keywords in the prompt: `demo`, `escalate`, `long`, `slow`, `hang`, `explode`, and for the tools a panel shows `todoboard`, `writenote`, `proposerule`, `heartbeat`, `backgroundjob` and `commitwork`. `tour` writes a file, runs a command and reads a missing file, and `program` runs a `code_mode` program. Others make the model start a subagent (`spawnagent`), run a seven second command (`slowstep`), stop mid-reply (`stopmid`), read a picture (`readpicture`), message another session (`peersend` with its id), report a cached prefix or its loss (`cachehit`, `cachemiss`), write a markdown reply (`markdown`), think at length (`longthink`), and make the advisor nudge (`advisenudge`). The cluster starts with a 100-token recent tail, so `/compact` has something to cut, and routes the summarize role to the same model, so long reasoning gets a label. It reports token usage, and the cluster prices the model, so a session has an estimated cost. The advisor is routed to the same model, and it ignores these keywords.
 
 The cluster has an orchestrator `orch`, an executor `box` with a pool `boxes`, a plain repository `proj`, and a second repository with a linked worktree for the rows that name one. It has a single orchestrator. Linking a second one needs a membership ledger, which a static deployment does not have, so the rows that need two stay at `code`. Scenarios that kill the executor run last, and `tests/ui/scenarios_down.py` holds them.
 
@@ -55,7 +62,7 @@ Then change the row in `docs/parity.md` to `yes`. Every scenario starts with all
 
 ## Running several at once
 
-`LOOM_UITEST_SLOT=n` offsets every port, path and node name, so independent runs share nothing. `tests/ui/run.py --only text` filters by scenario name or parity id, and `--seed n` reproduces a random walk.
+`LOOM_UITEST_SLOT=n` offsets every port, path and node name, and names the app copy and its preferences domain, so independent runs share nothing. `tests/ui/run.py --only text` filters by scenario name or parity id, and `--seed n` reproduces a random walk.
 
 ## Visual baselines
 
