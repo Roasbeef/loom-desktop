@@ -451,6 +451,7 @@ enum Snapshot {
             "appearance": model.appearance.rawValue,
             "effectiveAppearance": NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light",
             "showsSidebar": model.sidebarVisibility != .detailOnly,
+            "dockBadge": NSApp.dockTile.badgeLabel ?? "",
             "isMultiMachine": model.isMultiMachine,
             "isDaemonMissing": model.isDaemonMissing,
             "attention": model.attention.map { ["id": $0.id, "kind": $0.kind.title, "agent": $0.agent, "title": $0.title] },
