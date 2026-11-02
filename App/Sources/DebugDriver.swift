@@ -224,6 +224,13 @@ enum DebugDriver {
                     action: record.action, preview: record.preview, reason: record.reason, source: record.source, grants: record.grants
                 ))
             }
+        case "attachfile" where parts.count > 1:
+            // Attaches a file through the same vetting a drop uses, whatever its name says.
+            if let data = FileManager.default.contents(atPath: rest) {
+                model.currentSession?.composer.attach(data, name: URL(fileURLWithPath: rest).lastPathComponent)
+            } else {
+                reply = "error: cannot read \(rest)"
+            }
         case "approve" where parts.count > 1:
             if let controller = model.controller(for: parts[1]), let record = controller.escalations.first {
                 controller.approve(record)
@@ -488,6 +495,12 @@ enum Snapshot {
                 "pendingDrafts": session.composer.ledger.lines.map(\.text),
                 "draft": session.composer.draft,
                 "images": session.composer.images.map(\.name),
+                "pictures": session.blocks.flatMap { block -> [String] in
+                    switch block {
+                    case .row(let row): return row.pictures.map(\.caption)
+                    case .fold(let fold): return fold.rows.flatMap { $0.pictures.map(\.caption) }
+                    }
+                },
                 "userImages": session.blocks.reduce(0) { total, block in
                     if case .row(let row) = block { return total + row.images }
                     return total

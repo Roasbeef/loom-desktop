@@ -143,6 +143,8 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
     public var tookMs: Int?
     /// Images the message carried, which the row names but does not draw.
     public var images = 0
+    /// The images of a message or a tool result, with the bytes the record held.
+    public var pictures: [ImageBlock] = []
     /// The structured result a tool returned beside its text.
     public var details: JSONValue?
     /// The record's place in the session's sequence, which orders decisions among rows.
@@ -842,6 +844,7 @@ public struct Conversation: Sendable, Equatable {
             } else {
                 var row = TranscriptRow(id: id, kind: .user(text: body, author: author))
                 row.images = images
+                row.pictures = ImageBlock.read(blocks: blocks, rowID: id)
                 rows.append(row)
             }
 
@@ -894,6 +897,7 @@ public struct Conversation: Sendable, Equatable {
                 )
                 row.settledAt = at
                 row.details = details
+                row.pictures = ImageBlock.read(blocks: blocks, rowID: row.id)
                 row.seq = rows[index].seq
                 rows[index] = row
 

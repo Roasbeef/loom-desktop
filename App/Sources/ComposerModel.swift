@@ -86,7 +86,7 @@ final class ComposerModel {
     // MARK: Images
 
     func attach(_ data: Data, name: String) {
-        switch ImageAttachment.vet(data, name: name, already: images.count) {
+        switch ImageAttachment.vet(data, name: name, already: images.count, alreadyBytes: images.reduce(0) { $0 + $1.data.count }) {
         case .success(let image): images.append(image)
         case .failure(let refusal): notice = Notice(text: refusal.message, tone: .warning)
         }

@@ -320,9 +320,13 @@ struct RowView: View {
                         Label("\(row.images) image\(row.images == 1 ? "" : "s")", systemImage: "photo")
                             .font(Theme.caption)
                             .foregroundStyle(.secondary)
+                        PictureStrip(pictures: row.pictures)
                     }
-                    if let author, author != "Owner" {
-                        Text(author).font(Theme.meta).foregroundStyle(.secondary)
+                    if let author {
+                        // The role is the same fixed word for every message, because only a
+                        // person who may operate can send one, and the record does not say
+                        // in which capacity the sender was attached.
+                        Text("\(author) · operator").font(Theme.meta).foregroundStyle(.secondary)
                     }
                 }
             }

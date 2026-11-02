@@ -314,3 +314,59 @@ final class SessionApprovalTests: XCTestCase {
         XCTAssertEqual(write.rememberedAuthority, "Session approval persists across restart.")
     }
 }
+
+final class ImageBlockTests: XCTestCase {
+    private func png(width: UInt32, height: UInt32) -> Data {
+        var bytes: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 13] + Array("IHDR".utf8)
+        for value in [width, height] { bytes += [UInt8(value >> 24), UInt8(value >> 16 & 0xFF), UInt8(value >> 8 & 0xFF), UInt8(value & 0xFF)] }
+        return Data(bytes + [8, 2, 0, 0, 0])
+    }
+
+    func testReadsThePixelSizeOfEachTypeFromItsOwnHeader() {
+        XCTAssertEqual(ImageHeader.size(of: png(width: 640, height: 480))?.width, 640)
+        XCTAssertEqual(ImageHeader.size(of: png(width: 640, height: 480))?.height, 480)
+        let gif = Data(Array("GIF89a".utf8) + [0x20, 0x01, 0x10, 0x00, 0, 0, 0])
+        XCTAssertEqual(ImageHeader.size(of: gif)?.width, 288)
+        XCTAssertEqual(ImageHeader.size(of: gif)?.height, 16)
+        let jpeg = Data([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0, 0, 0xFF, 0xC0, 0x00, 0x0B, 8, 0x00, 0x20, 0x00, 0x30, 3, 0, 0, 0])
+        XCTAssertEqual(ImageHeader.size(of: jpeg)?.width, 48)
+        XCTAssertEqual(ImageHeader.size(of: jpeg)?.height, 32)
+        var webp = Array("RIFF".utf8) + [0, 0, 0, 0] + Array("WEBP".utf8) + Array("VP8X".utf8) + [10, 0, 0, 0, 0, 0, 0, 0]
+        webp += [0x7F, 0x00, 0x00, 0x3F, 0x00, 0x00]
+        XCTAssertEqual(ImageHeader.size(of: Data(webp))?.width, 128)
+        XCTAssertEqual(ImageHeader.size(of: Data(webp))?.height, 64)
+        XCTAssertNil(ImageHeader.size(of: Data("plain text, no image".utf8)))
+    }
+
+    func testTheCaptionGivesTypeSizeAndWeightOnlyWhenTheBytesAgree() {
+        let good = ImageBlock(id: "a", mimeType: "image/png", data: png(width: 2, height: 2))
+        XCTAssertTrue(good.isDrawable)
+        XCTAssertTrue(good.caption.hasPrefix("image/png · 2 × 2 pixels · "), good.caption)
+        let lying = ImageBlock(id: "b", mimeType: "image/jpeg", data: png(width: 2, height: 2))
+        XCTAssertFalse(lying.isDrawable)
+        XCTAssertEqual(lying.caption, "Not drawn: the bytes are not image/jpeg.")
+        XCTAssertEqual(ImageBlock(id: "c", mimeType: "", data: Data("x".utf8)).caption, "Not drawn: the bytes are not a known image type.")
+    }
+
+    func testReadsImageBlocksInOrderAndSkipsWhatIsNotBase64() {
+        let encoded = png(width: 1, height: 1).base64EncodedString()
+        let blocks: [JSONValue] = [
+            ["type": "text", "text": "look"],
+            ["type": "image", "data": .string(encoded), "mimeType": "image/png"],
+            ["type": "image", "data": "!!!", "mimeType": "image/png"],
+        ]
+        let found = ImageBlock.read(blocks: blocks, rowID: "r")
+        XCTAssertEqual(found.map(\.id), ["r/image/1"])
+    }
+
+    func testAMessageCarriesFourImagesAndTwentyMebibytesInAll() {
+        let tiny = png(width: 1, height: 1)
+        guard case .failure(let fifth) = ImageAttachment.vet(tiny, name: "e.png", already: 4) else { return XCTFail("a fifth image is refused") }
+        XCTAssertTrue(fifth.message.contains("4 of 4 images"), fifth.message)
+        guard case .failure(let heavy) = ImageAttachment.vet(tiny, name: "big.png", already: 1, alreadyBytes: ImageAttachment.byteLimit) else {
+            return XCTFail("the total weight is bounded")
+        }
+        XCTAssertTrue(heavy.message.contains("20 MiB"), heavy.message)
+        guard case .success = ImageAttachment.vet(tiny, name: "ok.png", already: 3, alreadyBytes: 1_000) else { return XCTFail("a fourth is accepted") }
+    }
+}

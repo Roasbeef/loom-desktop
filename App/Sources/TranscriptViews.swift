@@ -1,3 +1,4 @@
+import AppKit
 import LoomKit
 import Markup
 import SwiftUI
@@ -250,6 +251,9 @@ struct StepRow: View {
         if parts.name != "code_mode", let result = parts.result, !result.isEmpty {
             OutputBlock(text: result, tint: parts.isError ? Theme.failure : .primary)
         }
+        if !row.pictures.isEmpty {
+            PictureStrip(pictures: row.pictures)
+        }
     }
 
     /// The change counts, spoken ahead of the open state.
@@ -279,6 +283,36 @@ struct StepRow: View {
         case "code_mode": return "curlybraces"
         case _ where name.hasPrefix("agent_"): return "person.2"
         default: return "wrench.and.screwdriver"
+        }
+    }
+}
+
+/// The images a message or a tool result carried, each with a line giving its type,
+/// its size in pixels and its weight. A picture whose bytes are not the type the
+/// record declared is not drawn, and the line says so.
+struct PictureStrip: View {
+    let pictures: [ImageBlock]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ForEach(pictures) { picture in
+                VStack(alignment: .leading, spacing: 4) {
+                    if picture.isDrawable, let image = NSImage(data: picture.data) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 220, maxHeight: 160, alignment: .leading)
+                            .clipShape(.rect(cornerRadius: Theme.radiusInner))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.radiusInner).strokeBorder(Theme.hairline, lineWidth: 0.5))
+                            .accessibilityHidden(true)
+                    }
+                    Text(picture.caption)
+                        .font(Theme.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Image, \(picture.caption)")
+            }
         }
     }
 }
