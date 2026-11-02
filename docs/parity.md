@@ -17,7 +17,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 |---|---|---|---|---|---|
 | HM-01 | List sessions, grouped by project, newest first | view/sidebar.gleam:362 | `sessions.list` | yes (SidebarRows.sections, newest first under each project heading with its count; sidebar_groups_by_project_newest_first) | 1 |
 | HM-02 | Live activity word and dot for each running row (working, idle, needs you) | view/home_table.gleam:1092 | `sessions.activity` | yes (SidebarRows.standing; the row says working, idle or needs you; sidebar_rows_say_what_each_session_is_doing) | 1 |
-| HM-03 | Open a running session from a row | view/sidebar.gleam:839 | local; `ui.link` equivalent | yes (a running row is selected with the driver's `select`, which sets the destination as a click does; the sidebar rows are not in the accessibility tree) | 1 |
+| HM-03 | Open a running session from a row | view/sidebar.gleam:839 | local; `ui.link` equivalent | code (a running row is selected with the driver's `select`, which assigns the destination a click would; the sidebar's rows are not in the accessibility tree, so no scenario can press one) | 1 |
 | HM-04 | Resume a saved session from a row | view/sidebar.gleam:859 | `sessions.open`, `operations.get` | yes (a saved row opens to Resume Session; sidebar_opens_running_and_saved_rows) | 1 |
 | HM-05 | Saved sessions behind a remembered "N saved" toggle | view/sidebar.gleam:708 | local | yes (the "N saved" fold is stored in the defaults and toggled by Go > Show Saved Sessions) | 2 |
 | HM-06 | Fold quiet rows behind "Show N more" | view/sidebar.gleam:667 | local | no (native lists every row in a scrolling sidebar and needs no bound; kept as a deliberate difference) | 3 |
@@ -36,7 +36,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | HM-19 | Row state words: saved, moving to, needs attention, failed to start | view/home_table.gleam:1094 | `sessions.list` | partial (SidebarRows.standing words saved, moving to X, needs attention and failed to start: reason are unit tested; the scenario reaches saved only, because no move or failed start can be scripted) | 2 |
 | HM-20 | Row age, UTC minute in a title, and membership role | view/home_table.gleam:1111 | `sessions.list` | partial (the quiet line gives the age since creation in words; the daemon sends no membership role in `sessions.list`, so none is drawn) | 3 |
 | HM-21 | "Waiting" banner on the home with a Review button | view/new_session.gleam:299 | `sessions.activity` | yes (MissionViews.swift:23) | 1 |
-| HM-22 | Count of waiting sessions on the sidebar menu button | component.gleam:7504 | `sessions.activity` | yes (RootView.swift:148, Inbox badge) | 2 |
+| HM-22 | Count of waiting sessions on the sidebar menu button | component.gleam:7504 | `sessions.activity` | yes (RootView.swift:148, the Inbox badge counts the attention list; the sidebar's rows are not in the accessibility tree, so the scenario reads the list the badge draws and the Dock badge that counts the same list) | 2 |
 | HM-23 | Show the full session list from the composer home | view/new_session.gleam:250 | local | yes (Mission Control lists every session; the_sidebar_foot_opens_people_and_mission_control_lists_everyone) | 2 |
 | HM-24 | Note drawn beside the row a press concerned | view/home_table.gleam:243 | local | partial (an action's failure is an alert that names it, in SessionActions.swift; the web draws a note beside the row, and no refusal can be provoked from a row) | 3 |
 
@@ -77,9 +77,9 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-04 | Live reasoning row with a preview and expandable text | view/fold_row.gleam:189 | `stream_delta` | yes (LiveReasoning shows the newest line and opens to the text) | 1 |
 | TR-05 | Generation rate, `tok/s` | view/heading.gleam:227 | `usage`, `op_transition` | yes (GenerationRate.swift, ComposerFigures.swift; timed from the first streamed fragment to the usage reading, because the daemon pushes no phase transitions to a session lane) | 2 |
 | TR-06 | Markdown answers | markdown_view.gleam:248 | `entry` | yes (Markdown.swift alert and footnote blocks, Theme.swift; the mermaid fence draws as a code block, see TR-08) | 1 |
-| TR-07 | Code fences with syntax highlighting | code_view.gleam:67 | `entry` | yes (Theme.swift:395; Syntax.swift:58) | 1 |
+| TR-07 | Code fences with syntax highlighting | code_view.gleam:67 | `entry` | code (Syntax.swift picks a lexical class for each token and Theme.swift colours it, unit tested; a colour is not in the accessibility tree, and a screen capture proves nothing on a locked screen) | 1 |
 | TR-08 | Mermaid diagrams, source disclosure, Copy source, Expand | markdown_view.gleam:248; wc:mermaid.gleam:36 | `entry` | no (a diagram needs a JavaScript renderer the app does not ship; the source draws as a code block named mermaid, with Copy code) | 2 |
-| TR-09 | Tables that scroll in their own box | markdown_view.gleam:295 | `entry` | yes (Theme.swift:328) | 2 |
+| TR-09 | Tables that scroll in their own box | markdown_view.gleam:295 | `entry` | yes (Theme.swift:328; the table's cells sit in a scroll area of their own, apart from the report around it) | 2 |
 | TR-10 | Clickable links, validated before an anchor is drawn | wc:link.gleam:14 | `entry` | yes (LinkRule.swift applies the web page's rule; a refused address stays as its label and says it was not followed) | 2 |
 | TR-11 | A turn's work folded behind one divider with figures | view/lane.gleam:1031 | `history_lineage` for fold steps | yes (Fold in Turns.swift; a_turn_folds_to_one_line_with_figures) | 1 |
 | TR-12 | Failed count and "interrupted" on a divider | sv:turns.gleam:173 | `entry` | yes (Fold.isInterrupted, from an aborted response or a cancelled command; the failed count was already proven by a_turn_folds_to_one_line_with_figures) | 2 |
@@ -107,7 +107,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-34 | Load older, by turns | view/lane.gleam:566 | `history_lineage` | yes (`history_lineage` paging until a whole turn arrives, older_turns_page_in) | 1 |
 | TR-35 | Beginning-of-conversation and loading words | view/lane.gleam:556 | local | yes (Beginning of the conversation) | 3 |
 | TR-36 | Frozen historical browsing, with return to latest | component.gleam:6717 | `history` | no (the app has Load Older Turns; a frozen view of an earlier point in the history is unbuilt) | 2 |
-| TR-37 | Follow the tail, keep place when scrolled, Jump to latest | view/lane.gleam:210; wc:follow.gleam:3 | local | yes (SessionScreen.swift:221 and :233) | 1 |
+| TR-37 | Follow the tail, keep place when scrolled, Jump to latest | view/lane.gleam:210; wc:follow.gleam:3 | local | yes (SessionScreen.swift:221 and :233; a reader scrolled above the tail gets a Latest control, and a reader above the tail gets a Latest control; pressing it animates, so its return is checked only on an unlocked screen) | 1 |
 | TR-38 | Keep the reader's place per strand | wc:follow_rule.gleam:428 | local | no (one scroll position is kept for the transcript; keeping a place per strand needs a display to verify and is unbuilt) | 2 |
 | TR-39 | Images in user messages and tool results | view/lane.gleam:1606; image.gleam:77 | `/ui/.../image` route | yes (PictureStrip draws images from a sent message and from a tool result, only when the bytes match the declared type) | 2 |
 | TR-40 | Large result: View full result, page through, Download | tool_result.gleam:36 | `/ui/.../result` route | no (the app already holds the whole result in its step, so the paged viewer and download are unbuilt) | 3 |
@@ -120,13 +120,13 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
 | CO-01 | Send when idle | operator_page.gleam:1138 | `prompt` | yes (SessionScreen.swift:754) | 1 |
-| CO-02 | Steer when busy | operator_page.gleam:1141 | `steer` | yes (AppModel.swift:681) | 1 |
+| CO-02 | Steer when busy | operator_page.gleam:1141 | `steer` | yes (AppModel.swift:681; a steer is in the transcript at once and is not held in the pending list) | 1 |
 | CO-03 | Queue when busy, runs after the turn | operator_page.gleam:1140 | `prompt` (held by the daemon) | yes (ComposerModel.swift submit queues with `prompt` when busy; return_queues_and_the_chord_steers) | 1 |
 | CO-04 | Send key: Command or Control with Enter | wc:composer_rule.gleam:356 | local | yes (ComposerViews.swift: Return queues or sends, ⌘↩ steers or sends; idle_composer_sends_with_return_or_the_chord) | 1 |
 | CO-05 | Slash command list as the draft grows | wc:composer_rule.gleam:361; completion.gleam:39 | local | yes (SlashCommand.swift; CommandList in ComposerViews.swift; the_command_list_follows_the_draft) | 1 |
 | CO-06 | Argument rows for effort, goal, model and profile | sv:command.gleam:305; completion.gleam:106 | local | yes (effort levels and model names proven; goal words and profile names are unit tested) | 2 |
 | CO-07 | Addressed strand shown above the editor | operator_page.gleam:1066 | local | yes (ComposerViews.swift To line above the editor; the_composer_says_whom_it_addresses_and_who_it_is) | 2 |
-| CO-08 | Busy mark and hint | operator_page.gleam:950 | local | yes (SessionScreen.swift:751 and :592) | 1 |
+| CO-08 | Busy mark and hint | operator_page.gleam:950 | local | yes (the composer swaps Send for a Stop control while the run is busy; the placeholder hint is not in the accessibility tree) | 1 |
 | CO-09 | Notice line after a command | operator_page.gleam:1164; sv:notice_words.gleam:35 | reply outcome | yes (ComposerModel.Notice; schedules_list_and_retire, a_refused_draft_returns_to_the_editor) | 2 |
 | CO-10 | Who the page acts as, `Owner · operator` | operator_page.gleam:1093 | `snapshot_begin` | yes (ComposerFigures.swift SessionController.who, from the attachment list and the role) | 3 |
 | CO-11 | Cache outlook of the addressed strand | operator_page.gleam:1108 | `usage` | yes (CacheWatch.swift, ComposerFigures.swift CacheOutlookFigure; the label counts idle time only, because the OpenAI dialect never reports a one-hour write and the web page's countdown needs one) | 2 |
@@ -240,7 +240,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 |---|---|---|---|---|---|
 | NO-01 | Notes tab for the focused strand | view/notes.gleam:45 | `notes` | yes (NotesPane.swift) | 2 |
 | NO-02 | Refresh | view/notes.gleam:60 | `notes` | yes (NotesPane.swift) | 3 |
-| NO-03 | Search keys and values | view/notes.gleam:78 | local | yes (NotesPane.swift; typed search is not driven) | 2 |
+| NO-03 | Search keys and values | view/notes.gleam:78 | local | code (NotesPane.swift filters by the search text; the scenario shows the field but never types into it) | 2 |
 | NO-04 | Open a note, go back | view/notes.gleam:157; view/notes.gleam:220 | local | yes (NotesPane.swift) | 2 |
 | NO-05 | Readable or Raw view of a note | view/notes.gleam:242 | local | yes (NotesPane.swift) | 3 |
 
@@ -287,12 +287,12 @@ The web page has no schedule surface beyond these two commands.
 |---|---|---|---|---|---|
 | WT-01 | Changes tab reads the workspace, refreshing after tool results | cd:ui_socket.gleam:3764 | `worktree_diff` | yes (SessionScreen.swift:1057) | 1 |
 | WT-02 | Title, file count and per-file counts | view/worktree.gleam:82; view/worktree.gleam:150 | `worktree_diff` | yes (SessionScreen.swift:1018 and :1082) | 1 |
-| WT-03 | One red and green diff per file | view/diff.gleam:38; view/worktree.gleam:127 | `worktree_diff` | yes (Theme.swift:438; Diff.swift) | 1 |
+| WT-03 | One red and green diff per file | view/diff.gleam:38; view/worktree.gleam:127 | `worktree_diff` | code (Theme.swift:438 and Diff.swift draw a patch with full red and green lines, which a step's diff shares; no scenario has read a diff in the Changes tab, which a locked screen does not lay out) | 1 |
 | WT-04 | File status words | view/worktree.gleam:180 | `worktree_diff` | yes (SessionScreen.swift FileChange) | 3 |
 | WT-05 | Committed in this session | view/worktree.gleam:65 | `worktree_diff` | yes (SessionScreen.swift ChangesPane) | 2 |
 | WT-06 | Omitted files and the diff-cut note | view/worktree.gleam:73; view/worktree.gleam:134 | `worktree_diff` | code (SessionScreen.swift draws the omitted-files count and the diff-cut note from `omitted` and `extent`; no scripted diff is large enough to be cut) | 3 |
 | WT-07 | Edit board from this session's edits, as a fallback | view/changes.gleam:178; sv:changes_view.gleam:217 | `entry` | no (the Changes tab shows the failure with no board of this session's edits as a fallback) | 2 |
-| WT-08 | Edit diffs in a step | view/diff.gleam:52 | `entry` | yes (SessionScreen.swift:472) | 1 |
+| WT-08 | Edit diffs in a step | view/diff.gleam:52 | `entry` | yes (TranscriptViews.swift: an opened write shows its lines as a patch, a plus mark for each line added) | 1 |
 | WT-09 | Read refused or failed, one sentence | view/changes.gleam:240 | `worktree_diff` | code (the Changes tab draws the daemon's message for a failed read; a scenario on a folder that is not a repository could not open the inspector and was not kept, so the row is unproven) | 3 |
 | WT-10 | Trace tab: programs, state, result, calls, budget | view/trace.gleam:62; view/trace.gleam:96 | `entry` | code (TracePane.swift, TraceBoard.swift; the test cluster has no code-mode toolchain, so only the empty state is driven) | 2 |
 
@@ -349,8 +349,8 @@ The web page has no schedule surface beyond these two commands.
 | MA-11 | Show a machine's sessions in the sidebar | admin.gleam:1399 | local | yes (the Machine segment filters the sidebar to one machine's sessions) | 3 |
 | MA-12 | Admin page Machines and People parts | admin.gleam:1305 | local | yes (Machines only: MachinesView.swift:9; people are in CR rows) | 3 |
 | MA-13 | Placement strip: "Agent on", "Commands on" | view/placement.gleam:42 | `sessions.list` | yes (SessionScreen.swift:102 and :1155) | 2 |
-| MA-14 | "Runs on" in the Session tab | view/session_tab.gleam:170 | `sessions.list` | yes (SessionScreen.swift:1158) | 3 |
-| MA-15 | Daemon's name in the sidebar | view/sidebar.gleam:541 | `sessions.list` | yes (RootView.swift:341) | 3 |
+| MA-14 | "Runs on" in the Session tab | view/session_tab.gleam:170 | `sessions.list` | code (SessionScreen.swift:1158 draws the line on the Session tab; that tab is not laid out on a locked screen, and no scenario has read it) | 3 |
+| MA-15 | Daemon's name in the sidebar | view/sidebar.gleam:541 | `sessions.list` | yes (RootView.swift:341, the sidebar foot names each daemon by its label once two are connected; with one it counts slots) | 3 |
 
 ## Moves
 
@@ -418,9 +418,9 @@ The web page has no schedule surface beyond these two commands.
 | PA-07 | Connection pill: connected or disconnected | view/heading.gleam:139 | local | yes (ComposerFigures.swift) | 2 |
 | PA-08 | Estimated cost in the bar and Session tab | view/heading.gleam:182; view/session_tab.gleam:175 | `usage` | yes (ComposerFigures.swift, UsageWords.swift) | 1 |
 | PA-09 | Home button | view/heading.gleam:286 | local | yes (the Mission Control row and menu) | 2 |
-| PA-10 | Session tab: workspace and session name | view/session_tab.gleam:170 | `sessions.list` | yes (SessionScreen.swift:1160) | 2 |
+| PA-10 | Session tab: workspace and session name | view/session_tab.gleam:170 | `sessions.list` | code (SessionScreen.swift:1160 draws the workspace and name on the Session tab; that tab is not laid out on a locked screen, and no scenario has read it) | 2 |
 | PA-11 | Page ended notice with fixed advice | view/ended.gleam:27; ending.gleam:170 | close frame | yes (SessionScreen.swift ComposerStack, EndingWords.swift) | 2 |
-| PA-12 | Tab title with the waiting count | wc:title_rule.gleam:41 | local | yes (LoomApp.swift:190, Dock badge; SessionScreen.swift:114 for the title) | 2 |
+| PA-12 | Tab title with the waiting count | wc:title_rule.gleam:41 | local | yes (LoomApp.swift:190, the Dock badge counts the waiting items and is read from the Dock tile; the window title is the session's name and carries no count) | 2 |
 | PA-13 | Side question panel: refresh, cancel, clear, close | operator_page.gleam:1265 | `btw` | yes (SideQuestionPanel.swift) | 2 |
 
 ## Keyboard shortcuts

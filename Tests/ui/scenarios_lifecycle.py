@@ -359,10 +359,10 @@ def a_session_is_created_in_a_pool(c):
     finally:
         close_form(c)
     sid = c.app.session_id("Pool form check")
-    wait_for(lambda: c.app.cmd(f"snapshot") and any(s["id"] == sid for s in c.app.sessions()), what="the session")
+    wait_for(lambda: record(c, sid)["executor"] == "box", what="the daemon to place the session on the pool's executor")
 
 
-@scenario("MA-02", "MA-05", "MA-06", "MA-08", "MA-09")
+@scenario("MA-02", "MA-05", "MA-06", "MA-08")
 def a_machine_is_read_in_detail(c):
     """Machines are grouped by role, and a machine's detail shows its state, its sessions, its scopes and operator commands."""
     sid = c.app.dispatch("Machine detail run demo", "proj", executor="box")
