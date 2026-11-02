@@ -59,7 +59,7 @@ built by SwiftPM and `scripts/bundle.sh`.**
 Two stages, in order:
 
 1. **Client only, as today.** The app attaches to a `loomd` installed by
-   `make install` or the release tarball. This is what exists now. Starting a
+   `make install` or the release tarball. This is what exists now. The Start button
    daemon from the app is not built. The terminal's launch ladder (lock, paused
    child, identity record) is intricate, so the app should run `loom` to perform
    it rather than reimplement it.
@@ -109,43 +109,65 @@ session, though `DaemonConnection` remains the way to reach a daemon directly.
 
 ## The interface
 
-References, and what each contributed:
+![A session with its changes in the inspector](images/session.png)
+
+The app targets macOS 26 and later. References, and what each contributed:
 
 | Reference | Taken |
 |---|---|
-| Claude Code desktop | Session sidebar, a transcript with collapsed tool rows, a side pane for review |
-| Codex app | Project grouping in the sidebar, a review pane over the worktree diff |
-| herdr | Blocked, working and done as the only states worth a glance. It is a terminal multiplexer, with no desktop app to borrow from |
+| Claude Code desktop | Session sidebar, a transcript with folded tool rows, a side pane for review |
+| Codex app | A review pane over the worktree diff |
+| herdr | Blocked, working and done as the states worth a glance. It is a terminal multiplexer, with no desktop app to borrow from |
 | Plannotator Inbox | Items grouped by what they need, one place to answer |
-| Substrate Command Center | The idea only: agent cards, a heartbeat trace, a needs-you tray, a steer box on each card |
+| Substrate Command Center | The idea only: a view per agent, a heartbeat trace, a needs-you list |
+| Air traffic flight strips | One line per agent in fixed columns, so many compare by scanning down |
 
 Rules the views follow:
 
-- Colour means state. Orange is waiting on you, green is running, red is failed,
-  and everything else is neutral.
-- Motion means work. Only a working agent's trace animates.
-- Surfaces are a tinted fill and a hairline border, with no accent bars and no
-  shadows. Diffs are full red and green.
-- A healthy fleet takes little space. Items needing a person come first.
+- **Leave the chrome to the system.** The sidebar, toolbar, sheets and menus get
+  Liquid Glass by being left unpainted. Custom glass is only what floats over content:
+  the composer, the approval's backing, the palette and the "Latest" pill.
+- **Colour follows the plant-display palette** measured for the web redesign (Loom's
+  `docs/design-notes/web-ui-redesign.md`, section 9). Normal is grey, amber means a
+  decision is waiting, red means failed or down, and green appears only in diffs.
+- **State has a shape as well as a colour.** A diamond needs you, a filled dot is
+  working, and a ring is at rest.
+- **Monospaced type marks identifiers.** Prose stays in the system face.
+- **Motion means work.** Only a working agent animates, and Reduce Motion stops it.
+- **Say only what is known.** A row's age is when this client saw it change, because
+  the daemon reports no such time, and it stays blank until a change is seen. A folded
+  run never says "wrote" about a call that failed.
 
-Three screens:
+Four screens, plus a palette:
 
-- **Inbox** merges approvals, failed runs and unhealthy machines across every
-  connected daemon, grouped by what each needs.
-- **Mission Control** shows fleet counts, slot use per daemon and one card per agent,
-  with its placement.
-- **Session** shows the transcript, live streaming, approvals above the composer,
-  steer and stop while busy, remote subagents with a read-only page of each, and
-  the worktree diff in an inspector. A dead socket is stated on screen with a
-  Reconnect button rather than left looking connected.
-- **Machines** shows each daemon's view of its nodes, what depends on each, and
-  sessions held elsewhere with a way to connect.
+- **Inbox** merges approvals, failed runs and unhealthy machines with dependents,
+  across every connected daemon.
+- **Mission Control** leads with what needs you, answerable in place, then one strip
+  per agent. A session whose latest reply is unread reads bold.
+- **Session** shows the transcript, approvals above the composer, steer and stop while
+  busy, and an inspector with the worktree's changes, every agent, and usage.
+- **Machines** shows each daemon's view of its nodes and what depends on each.
+- **⌘K** goes anywhere by typing, with what needs you ranked first.
 
-The approval card follows protocol section 5.10. The tool is always named, the
-requested authority is listed literally, the model-written preview has its
-controls escaped and sits in a bounded block, and the card says the preview is a
-sample of a larger action. A grant kind the client cannot translate disables
-Allow, because approving part of a request without saying so would misstate it.
+The approval card follows protocol section 5.10. The authority requested leads, the
+tool is always named, the model-written preview stays visible with its controls
+escaped in a bounded block, and the card says the preview is a sample of a larger
+action. Allowing for the session sits behind a menu, offered under the same rule as the
+reference client: only filesystem and full-network grants, and never a mixed request.
+
+### Keyboard
+
+| Keys | Action |
+|---|---|
+| ⌘K | Command palette |
+| ⌘N, ⇧⌘N | New agent, connect a daemon |
+| ⌘1, ⌘2, ⌘3 | Inbox, Mission Control, Machines |
+| ⌘J | Next session needing you |
+| ↩, ⇧↩ | Send or steer, new line |
+| ⎋, ⌘. | Stop the run |
+| ⇧⌘A, ⇧⌘D | Allow, deny the first request |
+| ⌘F | Find in transcript |
+| ⌥⌘I | Inspector |
 
 ## What the protocol document got wrong
 
@@ -171,10 +193,27 @@ client:
 | No read of a saved session's approvals or spend | A saved session's pending approval is invisible until opened | The catalogue summary in Loom's `docs/design-notes/web-ui-redesign.md` |
 | Claim tokens are refused, not redeemed | A member needs a credential obtained elsewhere | Implement `/v2/claim` |
 | Sessions cannot be moved from the app | `moving` is displayed, `sessions.move` is not sent | Add once the flow is designed |
-| A dropped session socket does not reconnect by itself | A Reconnect button appears, except for sessions awaiting approval, which reattach automatically | Add the procedure of section 6.7 |
+| No last-activity time on the wire | Ages are this client's own observation | Add it to the catalogue summary |
+| A window other than the main one has no Session menu | Its shortcuts act on the main window's session | Track the key window |
 
-Not built yet: notifications, a free-form canvas, goals, proposals, schedules,
-permissions, memory, member invites, starting the daemon, and bundling it.
+Not built yet: a worktree per session, a free-form canvas, goals, proposals, schedules,
+permissions, memory, member invites, and bundling the daemon.
+
+## Measured bar
+
+An optimized build with the debug driver, on the two-node cluster:
+
+| Measure | Target | Result |
+|---|---|---|
+| Frame gaps at rest | no drops | 776 frames, max 8.3 ms |
+| Frame gaps streaming about 250 words a second | under 1% of frames over 25 ms | p50 and p95 8.3 ms, p99 34 ms, 2.4% over 25 ms: missed |
+| CPU at rest, several sessions attached | under 1% | 0.6 to 1.3% |
+| Projecting 5,000 entries | under a frame | 6 ms in a debug build |
+| Controls the accessibility tree cannot name | none of ours | 0; the 4 flagged are window chrome and the search field |
+
+`sample` shows the streaming hitches are in SwiftUI's layout transactions rather than
+this code's parsing, which took about 11 of 4,000 samples. The rate is far above a
+real model's, so this is a known limit and not a daily problem.
 
 ## Verifying a change
 
@@ -182,6 +221,9 @@ permissions, memory, member invites, starting the daemon, and bundling it.
 endpoint, so a throwaway daemon runs real sessions with no credential or spend.
 `scripts/dev-cluster.sh` starts a real orchestrator and executor on this machine.
 `loom-probe` drives the protocol headlessly. A debug build run with
-`LOOM_DEBUG_DRIVER=<dir>` takes navigation and screenshot commands from a file;
-see `App/Sources/DebugDriver.swift`. Never point these at a daemon you care about.
+`LOOM_DEBUG_DRIVER=<dir>` takes commands from a file: composited window captures with
+glass intact, real input events, a frame-gap meter, an accessibility audit and the menu
+state. See `App/Sources/DebugDriver.swift`. For clicks the window must be key, which
+`open -b com.roasbeef.loom-desktop` grants. Measure with
+`CONFIG=release SWIFT_FLAGS="-Xswiftc -DDEBUG" scripts/bundle.sh`. Never point these at a daemon you care about.
 Use `--state-dir` and `LOOM_STATE_DIR`.
