@@ -19,7 +19,7 @@ The test tools exist to answer one question: does the app a person runs do what 
 | --- | --- |
 | `app.snap()`, `app.session()` | The app's state as JSON. Prefer this for assertions. |
 | `app.see(regex)`, `app.not_see(regex)` | Whether text reached the accessibility tree, which is what a person's screen reader gets. |
-| `app.press(label)` | Presses a control by accessibility name, through the action VoiceOver uses. It needs no coordinates and takes no focus. |
+| `app.press(label)` | Presses a control by accessibility name, through the action VoiceOver uses. It needs no coordinates and takes no focus. It also finds controls in a popover, and treats a disabled control as absent, so a press waits for it to arm. |
 | `app.menu(title)` | Invokes a menu item. Native menus cannot be pressed while tracking, so an action reachable only inside a `Menu` also belongs in the menu bar. |
 | `app.key(name, mods)`, `app.type(text)` | Real key events. Text goes to the focused field. Shift-modified menu shortcuts cannot be synthesized this way. |
 | `app.dispatch`, `app.prompt`, `app.open_session` | Create and drive sessions. |
@@ -27,8 +27,9 @@ The test tools exist to answer one question: does the app a person runs do what 
 | `app.hitch(seconds)`, `app.stats()` | Frame gaps and CPU. |
 | `app.audit()` | Controls with no accessibility name. |
 | `cluster.kill(name)` | Fault injection against `orch` or `exec`. |
+| `app.cmd("run <command> <json>")` | Sends one session command from the open session, for set-up a scenario does not itself test. |
 
-The scripted model in `scripts/fake_provider.py` chooses its reply from keywords in the prompt: `demo`, `escalate`, `long`, `slow`, `hang`, `explode`.
+The scripted model in `scripts/fake_provider.py` chooses its reply from keywords in the prompt: `demo`, `escalate`, `long`, `slow`, `hang`, `explode`, and for the tools a panel shows `todoboard`, `writenote`, `proposerule`, `heartbeat`, `backgroundjob` and `commitwork`. It reports token usage, and the cluster prices the model, so a session has an estimated cost. The advisor is routed to the same model, and it ignores these keywords.
 
 ## Adding a scenario
 

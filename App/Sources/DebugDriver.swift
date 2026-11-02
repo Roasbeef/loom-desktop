@@ -111,7 +111,9 @@ enum DebugDriver {
             let body = (try? JSONValue.parse(Data((json.isEmpty ? "{}" : json).utf8))) ?? .object([:])
             model.currentSession?.run(String(parts[1]), body: body)
         case "stopall":
-            // Frees every daemon slot, so one scenario cannot starve the next.
+            // Frees every daemon slot, so one scenario cannot starve the next, and
+            // closes the inspector, so the next one starts from the default layout.
+            model.showsInspector = false
             for daemon in model.daemons {
                 for record in daemon.sessions where record.state.isResident {
                     try? await daemon.stop(record.id)

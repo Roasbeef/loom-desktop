@@ -15,6 +15,7 @@ keyword in the last user turn selects a script:
   writenote  writes a typed note with the `remember` tool
   proposerule queues a standing rule with the `propose` tool
   heartbeat  creates a recurring schedule with `schedule_create`
+  commitwork writes a file and commits it, for the committed-in-this-session patch
   backgroundjob starts a background shell job that outlives the run
 
 Anything else streams a short markdown reply. A tool result continues whichever
@@ -187,6 +188,17 @@ def script(messages):
             yield chunk({}, "tool_calls")
         else:
             yield from text_stream("The heartbeat is scheduled.")
+        return
+
+    if "commitwork" in prompt:
+        if steps == 0:
+            yield call(0, "fs_write", {"path": "fetch.py", "content": "BUDGET = 3\n"})
+            yield chunk({}, "tool_calls")
+        elif steps == 1:
+            yield call(0, "bash", {"command": "git add -A && git -c user.name=loom -c user.email=loom@example.com commit -q -m 'add the retry budget'"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("I committed the work.")
         return
 
     if "backgroundjob" in prompt:

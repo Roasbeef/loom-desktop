@@ -784,6 +784,14 @@ final class SessionController {
         }
     }
 
+    /// Sends a command and returns its reply, for a surface that keeps its own state
+    /// beside the controller's. The credit's order is kept, because it goes through
+    /// the lane's request path.
+    func exchange(_ command: String, body: JSONValue = .object([:])) async throws -> EventEnvelope {
+        guard let lane else { throw LoomError.closed("the session is not attached") }
+        return try await lane.request(command, body: body)
+    }
+
     /// A strand whose chain holds no `todo` result may still have a board in its
     /// notes, which is how a client attaching after the last call recovers it.
     private func askForNotesIfNoBoard() {

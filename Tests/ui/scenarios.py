@@ -260,6 +260,8 @@ def bar_figures_and_tabs(c):
     c.app.see(r"Estimated cost.*est \$0\.0", 10)
     for tab in ("Changes", "Strands", "Session", "Trace", "Notes", "Evolution"):
         open_tab(c, tab)
+    open_tab(c, "Trace")
+    c.app.see(r"No program has run on this strand", 5)
     open_tab(c, "Session")
     c.app.see(r"Estimated cost", 10)
 
@@ -300,7 +302,7 @@ def todo_board_follows_the_agent(c):
     c.app.shot(c.out / "panels" / "todo-board.png")
 
 
-@scenario("ST-01", "ST-02", "ST-06", "ST-07", "ST-05", "ST-16", "ST-04")
+@scenario("ST-01", "ST-02", "ST-06", "ST-05", "ST-16")
 def strands_say_what_they_do(c):
     """Each strand has a card with one status line, a page of detail, and takes the composer."""
     sid = c.app.dispatch("Cards check", WORKSPACE)
@@ -334,7 +336,7 @@ def strands_say_what_they_do(c):
     check(not any("a word for the advisor" in t for t in c.app.session()["transcript"]), "the prompt belonged to the advisor")
 
 
-@scenario("AP-02", "AP-09", "AP-12", "AP-06")
+@scenario("AP-02", "AP-09")
 def approval_says_who_and_waits(c):
     """The card says who asks and what for, and its buttons arm after a moment."""
     c.app.dispatch("Arming escalate", WORKSPACE)
@@ -477,6 +479,58 @@ def memory_overview_lists_notes(c):
     c.app.press("Refresh memory")
     c.app.see(r"Retry budget lives in fetch", 15)
     c.app.see(r"loom-memory.notes", 5)
+
+
+@scenario("WT-04", "WT-05")
+def changes_say_how_each_file_changed(c):
+    """A new file reads as new, and a commit the session made is listed with its patch."""
+    c.app.dispatch("Status commitwork", "proj", executor="box")
+    c.app.open_session("Status commit")
+    c.app.transcript_has("committed the work", 60)
+    open_tab(c, "Changes")
+    c.app.see(r"Committed in this session", 20)
+    c.app.see(r"BUDGET = 3", 10)
+    # A file the session wrote and did not commit is new, and says so.
+    c.app.dispatch("Status demo run please", "proj", executor="box")
+    c.app.open_session("Status demo")
+    c.app.transcript_has("Retry budget is now per host", 60)
+    open_tab(c, "Changes")
+    c.app.see(r"fetch\.py, \d+ added, \d+ removed, (new|added|modified)", 20)
+
+
+@scenario("ST-15")
+def a_strand_is_forked_from_a_form(c):
+    """Fork opens a form, and the new strand appears with the name it was given."""
+    run_session(c, "Forking", "check", "scripted")
+    open_tab(c, "Strands")
+    c.app.press("Fork Strand")
+    c.app.type("alt-approach")
+    c.app.key("return")
+    wait_for(lambda: "alt-approach" in c.app.session()["strands"], 15, "the forked strand")
+    c.app.see(r"Strand alt-approach", 10)
+
+
+@scenario("PA-03", "PA-09")
+def home_and_sidebar_controls(c):
+    """The sidebar hides and shows, and Mission Control is one press from a session."""
+    run_session(c, "Homeward", "check", "scripted")
+    c.app.press("Hide Sidebar")
+    wait_for(lambda: not any(t.startswith("Mission Control") for t in c.app.texts()), 5, "the sidebar to hide")
+    c.app.press("Show Sidebar")
+    c.app.menu("Mission Control")
+    wait_for(lambda: c.app.snap()["destination"] == "mission", 5, "Mission Control")
+
+
+@scenario("PV-06", "PV-13")
+def evolution_tab_reads_the_board_and_core(c):
+    """The Evolution tab reads the catalogue again on request, and reads the core's status."""
+    run_session(c, "Evolving", "check", "scripted")
+    open_tab(c, "Evolution")
+    c.app.see(r"No candidates yet", 15)
+    c.app.press("Read Again")
+    c.app.see(r"No candidates yet", 10)
+    c.app.press("Read Core Status")
+    c.app.see(r"boundary", 15)
 
 
 # Navigation and screens.
@@ -623,6 +677,16 @@ def an_executor_loss_is_reported(c):
     wait_for(lambda: any(a["kind"] == "Machines" for a in c.app.snap()["attention"]), 10, "a machine item")
     c.app.go("inbox")
     c.app.see("box is down")
+
+
+@scenario("PA-11")
+def a_session_says_why_it_ended(c):
+    """When the daemon is lost, the open session says it is disconnected and why."""
+    run_session(c, "Ending", "check", "scripted")
+    c.cluster.kill("orch")
+    wait_for(lambda: c.app.session().get("isLive") is False, 30, "the lane to read closed")
+    c.app.see(r"Disconnected", 10)
+    wait_for(lambda: c.app.session().get("endedWords"), 10, "words for the ending")
 
 
 @scenario()
