@@ -42,7 +42,10 @@ def sidebar_groups_by_project_newest_first(c):
     old = c.app.dispatch("Sidebar older please demo", WORKSPACE)
     new = c.app.dispatch("Sidebar newer please demo", WORKSPACE)
     tree = c.app.dispatch("Sidebar tree please demo", TREE)
-    wait_for(lambda: section_of(c, "proj") and len(section_of(c, "proj")["rows"]) >= 2, what="the project section")
+    wait_for(
+        lambda: section_of(c, "proj") and len(section_of(c, "proj")["rows"]) >= 2,
+        what=f"the project section (sections: {[s['title'] for s in sidebar(c)['Project']]}, daemons: {[(d['label'], d['state'], len(d['sessions'])) for d in c.app.snap()['daemons']]})",
+    )
     ids = [r["id"] for r in section_of(c, "proj")["rows"]]
     check(ids.index(new) < ids.index(old), f"newest should come first: {ids}")
     check(section_of(c, "proj")["count"] == len(ids), "a heading states how many rows it holds")
