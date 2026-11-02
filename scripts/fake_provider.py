@@ -20,11 +20,17 @@ keyword in the last user turn selects a script:
   think      streams three lines of reasoning, a second apart, then answers
   tour       a write, a command and a read that fails, then a short answer
   program    a code_mode call with a small program
+  spawnagent starts a subagent with `agent_spawn`, waits for its report, then answers
+  slowstep   a shell command that runs for several seconds, for a step still going
+  cachehit   an ordinary reply whose usage reports a large cached prefix
+  cachemiss  an ordinary reply whose usage reports that prefix billed again
+  markdown   a reply with an alert, a footnote, a link and a diagram
 
 Anything else streams a short markdown reply. A tool result continues whichever
 script produced the call.
 """
 import json
+import re
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -96,6 +102,27 @@ LONG = " ".join(
 )
 
 
+MARKDOWN = """> [!WARNING]
+> The budget resets on a timer, so check the clock first.
+
+The design is in the notes[^1], and the docs are at [the Loom site](https://example.com/loom) and [a script](javascript:alert(1)).
+
+[^1]: The notes live in the session store.
+
+```mermaid
+graph TD
+  A[Prompt] --> B[Reply]
+```"""
+
+
+def last_tool_text(messages):
+    for message in reversed(messages):
+        if message.get("role") == "tool":
+            content = message.get("content", "")
+            return content if isinstance(content, str) else json.dumps(content)
+    return ""
+
+
 def steps_taken(messages):
     """Counts tool results since the last user turn."""
     count = 0
@@ -123,6 +150,31 @@ def script(messages):
     # primary's own words. It must not act them out a second time.
     if "[advisor feed" in prompt:
         yield from text_stream("Nothing to add.")
+        return
+
+    if "spawnagent" in prompt:
+        if steps == 0:
+            yield chunk({"content": "I will hand the survey to a subagent."})
+            yield call(0, "agent_spawn", {"purpose": "survey files", "brief": "Name one file in the workspace and reply with a single short sentence."})
+            yield chunk({}, "tool_calls")
+        elif steps == 1:
+            handle = re.search(r"sub:[^\s\"#]+#[A-Za-z0-9_]+", last_tool_text(messages))
+            yield call(0, "agent_wait", {"handles": [handle.group(0) if handle else "missing"], "within_ms": 60000})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The subagent has reported.")
+        return
+
+    if "slowstep" in prompt:
+        if steps == 0:
+            yield call(0, "bash", {"command": "sleep 7; echo slow-step-done"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The slow step finished.")
+        return
+
+    if "markdown" in prompt:
+        yield from text_stream(MARKDOWN)
         return
 
     if "think" in prompt:
@@ -270,6 +322,17 @@ def script(messages):
     )
 
 
+def usage_for(prompt):
+    """Token counts for a reply. A cached prefix is what the app's cache outlook reads."""
+    if "cachehit" in prompt:
+        return {"prompt_tokens": 12500, "completion_tokens": 300, "total_tokens": 12800,
+                "prompt_tokens_details": {"cached_tokens": 12000}}
+    if "cachemiss" in prompt:
+        return {"prompt_tokens": 12500, "completion_tokens": 300, "total_tokens": 12800,
+                "prompt_tokens_details": {"cached_tokens": 0}}
+    return {"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500}
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -299,7 +362,7 @@ class Handler(BaseHTTPRequestHandler):
         # has token counts and the configured price turns them into an estimate.
         usage = {"id": "chatcmpl-fake", "object": "chat.completion.chunk", "created": int(time.time()),
                  "model": "fake", "choices": [],
-                 "usage": {"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500}}
+                 "usage": usage_for(last_user_text(request.get("messages", [])))}
         self.wfile.write(f"data: {json.dumps(usage)}\n\n".encode())
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()

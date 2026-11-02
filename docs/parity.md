@@ -100,9 +100,9 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-27 | Open the peer's session | view/lane.gleam:956 | local; `ui.link` equivalent | no | 2 |
 | TR-28 | Sibling strand's message card | view/lane.gleam:850 | `entry` | partial (SessionScreen.swift:301 draws a bubble with an author; framing is not removed) | 2 |
 | TR-29 | Decided approval row in the lane | sv:decisions.gleam:89 | `escalations_decided` | yes (`escalations_decided` rows placed by sequence; a_decided_approval_stays_in_the_lane) | 2 |
-| TR-30 | Cache miss row | sv:turns.gleam:351 | `usage` | no | 3 |
+| TR-30 | Cache miss row | sv:turns.gleam:351 | `usage` | yes (CacheWatch.detect in Conversation.rows; a 61 second pause, then a request that re-reads 12,000 cached tokens) | 3 |
 | TR-31 | Delivered advisor nudge row | sv:turns.gleam:324 | `entry` | partial (Conversation.swift:602 draws a `[loom]` note as a one-line notice) | 3 |
-| TR-32 | Compaction, branch and oversized notices | sv:transcript_lines.gleam:2672 | `entry` | code (compaction, branch and oversized notices; the fake daemon never compacts) | 2 |
+| TR-32 | Compaction, branch and oversized notices | sv:transcript_lines.gleam:2672 | `entry` | yes (the compaction row is proven through /compact; the branch and oversized notices by unit test, since the cluster makes neither) | 2 |
 | TR-33 | Provider failure and Stopped rows | sv:transcript_lines.gleam:35 | `entry` | yes (a stopped run leaves a Stopped row; the provider's own error is shown as before) | 2 |
 | TR-34 | Load older, by turns | view/lane.gleam:566 | `history_lineage` | yes (`history_lineage` paging until a whole turn arrives, older_turns_page_in) | 1 |
 | TR-35 | Beginning-of-conversation and loading words | view/lane.gleam:556 | local | yes (Beginning of the conversation) | 3 |
@@ -125,24 +125,24 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | CO-04 | Send key: Command or Control with Enter | wc:composer_rule.gleam:356 | local | yes (ComposerViews.swift: Return queues or sends, ⌘↩ steers or sends; idle_composer_sends_with_return_or_the_chord) | 1 |
 | CO-05 | Slash command list as the draft grows | wc:composer_rule.gleam:361; completion.gleam:39 | local | yes (SlashCommand.swift; CommandList in ComposerViews.swift; the_command_list_follows_the_draft) | 1 |
 | CO-06 | Argument rows for effort, goal, model and profile | sv:command.gleam:305; completion.gleam:106 | local | yes (effort levels and model names proven; goal words and profile names are unit tested) | 2 |
-| CO-07 | Addressed strand shown above the editor | operator_page.gleam:1066 | local | code (SessionScreen.swift:751, in the placeholder) | 2 |
+| CO-07 | Addressed strand shown above the editor | operator_page.gleam:1066 | local | yes (ComposerViews.swift To line above the editor; the_composer_says_whom_it_addresses_and_who_it_is) | 2 |
 | CO-08 | Busy mark and hint | operator_page.gleam:950 | local | yes (SessionScreen.swift:751 and :592) | 1 |
 | CO-09 | Notice line after a command | operator_page.gleam:1164; sv:notice_words.gleam:35 | reply outcome | yes (ComposerModel.Notice; schedules_list_and_retire, a_refused_draft_returns_to_the_editor) | 2 |
-| CO-10 | Who the page acts as, `Owner · operator` | operator_page.gleam:1093 | `snapshot_begin` | no | 3 |
-| CO-11 | Cache outlook of the addressed strand | operator_page.gleam:1108 | `usage` | no | 2 |
+| CO-10 | Who the page acts as, `Owner · operator` | operator_page.gleam:1093 | `snapshot_begin` | yes (ComposerFigures.swift SessionController.who, from the attachment list and the role) | 3 |
+| CO-11 | Cache outlook of the addressed strand | operator_page.gleam:1108 | `usage` | yes (CacheWatch.swift, ComposerFigures.swift CacheOutlookFigure; the label counts idle time only, because the OpenAI dialect never reports a one-hour write and the web page's countdown needs one) | 2 |
 | CO-12 | Sent draft as a pending line until taken | wc:pending_rule.gleam:126 | local | yes (DraftLedger; a pending line shows until the daemon takes the draft, a_refused_draft_returns_to_the_editor) | 2 |
 | CO-13 | Refused draft restored to the editor | wc:pending_rule.gleam:148 | error reply | yes (a refused draft returns to the editor with the daemon's words) | 2 |
 | CO-14 | Returned prompt put back in the editor | operator_page.gleam:1050 | returned draft event | no | 2 |
 | CO-15 | Attach images by button, paste or drop, with chips and limits | operator_page.gleam:975; wc:attach.gleam:96 | `prompt_content` | yes (paste proven through the real `paste:`; the Attach button and drop share `ComposerModel.attach`; prompt_content) | 2 |
 | CO-16 | Submit disabled when empty | wc:composer_rule.gleam:384 | local | yes (the Send control is disabled with an empty draft) | 3 |
-| CO-17 | `/compact` | sv:command.gleam:556 | `compact` | code (`compact` is sent and its refusal is worded; the fake daemon never has anything to compact, so success is not proven) | 2 |
+| CO-17 | `/compact` | sv:command.gleam:556 | `compact` | yes (typed /compact on a conversation with two replies cuts it and leaves the compaction row; the cluster starts with LOOM_COMPACTION_KEEP_RECENT=100 so a short scripted run has something to cut) | 2 |
 | CO-18 | `/abort` | sv:command.gleam:557 | `abort` | yes (equivalent Stop button and key, SessionScreen.swift:693 and :723) | 1 |
 | CO-19 | `/steer <text>` | sv:command.gleam:596 | `steer` | yes (typed `/steer`, typed_queue_and_steer_commands) | 2 |
 | CO-20 | `/queue <text>` | sv:command.gleam:598 | `follow_up` | yes (`/queue` sends `follow_up`) | 2 |
 | CO-21 | `/model <name>` | sv:command.gleam:564 | `set_config` `model_name` | yes (`/model <name>` sends `set_config`; the_command_list_follows_the_draft) | 1 |
 | CO-22 | `/effort <level>` | sv:command.gleam:593 | `set_config` `thinking_level` | yes (`/effort <level>` sends `set_config` `thinking_level`) | 2 |
 | CO-23 | `/profile`, `/model-profile` show | sv:command.gleam:566 | `profile_get` | yes (`/profile` shows the profile and the names available) | 2 |
-| CO-24 | `/profile <name>`, `/profile default` | sv:command.gleam:567 | `profile_set` | code (`profile_set` is sent; the cluster defines no named profile, so only `default` was tried) | 2 |
+| CO-24 | `/profile <name>`, `/profile default` | sv:command.gleam:567 | `profile_set` | yes (/profile lists review, /profile review moves the session and it returns to /profile default) | 2 |
 | CO-25 | `/fork <name>` | sv:command.gleam:591 | `fork` | yes (`/fork`; fork_makes_a_strand_and_escape_returns) | 2 |
 | CO-26 | `/goal <objective>`, `--budget` | sv:command.gleam:595 | `goal_set` | yes (`/goal [--budget N] <objective>`; the dev cluster now routes an advisor) | 2 |
 | CO-27 | `/goal check [command]` | sv:command.gleam:692 | `goal_check` | yes (`/goal check`) | 3 |
@@ -150,14 +150,14 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | CO-29 | `/goal pause` | sv:command.gleam:678 | `goal_pause` | yes (`/goal pause`) | 2 |
 | CO-30 | `/goal resume` | sv:command.gleam:679 | `goal_resume` | yes (`/goal resume`) | 2 |
 | CO-31 | `/schedules` | sv:command.gleam:522 | `schedules` | yes (`/schedules`) | 2 |
-| CO-32 | `/unschedule <name> [target]` | sv:command.gleam:600 | `schedule_cancel` | code (`/unschedule` is sent and a missing schedule is refused in words; no schedule exists to retire) | 3 |
-| CO-33 | `/approvals [id]` | sv:command.gleam:532 | `escalations_get`, `escalations_decided` | no | 3 |
-| CO-34 | `/approve <id>` | sv:command.gleam:585 | `approve` | code (typed `/approve <id>`; the buttons remain) | 3 |
-| CO-35 | `/deny <id>` | sv:command.gleam:587 | `deny` | code (typed `/deny <id>`; the buttons remain) | 3 |
+| CO-32 | `/unschedule <name> [target]` | sv:command.gleam:600 | `schedule_cancel` | yes (typed /unschedule retires a schedule the agent created) | 3 |
+| CO-33 | `/approvals [id]` | sv:command.gleam:532 | `escalations_get`, `escalations_decided` | yes (Decision.ledgerWords in ApprovalWords.swift; lists the ledger and one id) | 3 |
+| CO-34 | `/approve <id>` | sv:command.gleam:585 | `approve` | yes (ComposerModel.swift .approve, matched by id prefix) | 3 |
+| CO-35 | `/deny <id>` | sv:command.gleam:587 | `deny` | yes (ComposerModel.swift .deny; an id that matches nothing is refused in words) | 3 |
 | CO-36 | `/btw <question>` | sv:command.gleam:550 | `btw` | yes (`/btw <question>` opens a side panel and the answer fills it) | 2 |
-| CO-37 | `/btw`, `/btw refresh`, `/btw clear`, `/btw cancel`, `/btw close` | sv:command.gleam:541 | `btw`; close is local | partial (ask and close proven; refresh, clear and cancel are sent and not exercised) | 3 |
+| CO-37 | `/btw`, `/btw refresh`, `/btw clear`, `/btw cancel`, `/btw close` | sv:command.gleam:541 | `btw`; close is local | yes (ask, refresh, clear, cancel and close each exercised by typed commands) | 3 |
 | CO-38 | `/peek <child>`, `/peek close` | sv:command.gleam:547 | `child_history` | code (equivalent row press, SessionScreen.swift:888 and :1134; no typed form) | 2 |
-| CO-39 | `/clear`, clears this client's transcript | sv:command.gleam:560 | local | no | 3 |
+| CO-39 | `/clear`, clears this client's transcript | sv:command.gleam:560 | local | yes (SessionController.clearTranscript hides rows through the newest sequence; the session keeps them) | 3 |
 | CO-40 | Skill slash command as a prompt | sv:command.gleam:897 | `prompt` | no (the page loads no skill list, so it refuses these as unknown; native sends the text as a plain prompt) | 3 |
 
 ## Approvals

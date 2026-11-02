@@ -92,7 +92,9 @@ HOME="$base/exec" LOOM_DISTRIBUTION_OPTFILE="$base/exec/.loom/distribution/dist.
     > "$base/logs/exec.log" 2>&1 &
 echo $! > "$base/exec.pid"
 
-HOME="$base/orch" FAKE_KEY=x LOOM_DISTRIBUTION_OPTFILE="$base/orch/.loom/distribution/dist.options" \
+# A tiny recent-tail target lets a short scripted session have something to cut,
+# so /compact can succeed. A real session keeps the default of 20,000 tokens.
+HOME="$base/orch" FAKE_KEY=x LOOM_COMPACTION_KEEP_RECENT=100 LOOM_DISTRIBUTION_OPTFILE="$base/orch/.loom/distribution/dist.options" \
     nohup "$loomd" --config "$base/orch/.loom/loom.toml" --bind "127.0.0.1:$orch_bind" \
     > "$base/logs/orch.log" 2>&1 &
 echo $! > "$base/orch.pid"

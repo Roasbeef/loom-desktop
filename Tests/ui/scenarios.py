@@ -1008,6 +1008,7 @@ def machines_lists_each_node(c):
 # Scenarios for session life-cycle, creation, sharing and administration live in
 # their own file, imported here so they run before the faults damage the cluster.
 import scenarios_lifecycle  # noqa: E402,F401
+import scenarios_transcript  # noqa: E402,F401
 
 
 # Faults. These run last among the functional scenarios, since they damage the cluster.
