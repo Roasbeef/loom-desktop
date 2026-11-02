@@ -59,8 +59,13 @@ thinking = "unsupported"
 context_window = 200000
 max_output_tokens = 4096
 
+[models.fake.pricing]
+input = 3.0
+output = 15.0
+
 [roles]
 main = ["fake"]
+advisor = ["fake"]
 EOF
 
 if ! lsof -nP -iTCP:$provider -sTCP:LISTEN >/dev/null 2>&1; then

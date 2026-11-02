@@ -230,6 +230,309 @@ def approval_appears_in_mission_and_inbox(c):
     c.app.press("Allow")
 
 
+# Panels: the figures, boards and inspector tabs.
+
+
+def open_tab(c, name):
+    """Opens the inspector on a tab, whatever the inspector showed before."""
+    if not c.app.snap()["showsInspector"]:
+        c.app.menu("Show Inspector")
+        wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
+    c.app.press(name)
+
+
+def run_session(c, title, prompt, wait="scripted"):
+    """Dispatches a run, opens it and waits for its closing words."""
+    c.app.dispatch(f"{title} {prompt}", WORKSPACE)
+    c.app.open_session(title)
+    c.app.transcript_has(wait, 40)
+    wait_for(lambda: not c.app.session()["isBusy"], 40, "the run to end")
+
+
+@scenario("PA-01", "PA-07", "PA-08")
+def bar_figures_and_tabs(c):
+    """The composer shows the connection and an estimated cost, and the inspector has six tabs."""
+    run_session(c, "Figures", "check", "scripted")
+    c.app.see(r"Connected")
+    wait_for(lambda: c.app.session().get("context", "").startswith("ctx ~"), 20, "the context figure")
+    # The fake model reports tokens and the cluster prices them, so the bar says
+    # how much, as an estimate and not as a bill.
+    c.app.see(r"Estimated cost.*est \$0\.0", 10)
+    for tab in ("Changes", "Strands", "Session", "Trace", "Notes", "Evolution"):
+        open_tab(c, tab)
+    open_tab(c, "Trace")
+    c.app.see(r"No program has run on this strand", 5)
+    open_tab(c, "Session")
+    c.app.see(r"Estimated cost", 10)
+
+
+@scenario("CX-01", "CX-02", "CX-03", "CX-04", "CX-05", "CX-07")
+def context_figure_and_breakdown(c):
+    """The bar says how full the window is, and its breakdown explains it and can compact."""
+    run_session(c, "Context", "demo please", "Retry budget is now per host")
+    wait_for(lambda: c.app.session().get("context", "").startswith("ctx ~"), 20, "the context figure")
+    c.app.press("Context window")
+    c.app.see(r"Context window ~", 10)
+    c.app.see(r"tokens until the session compacts itself", 10)
+    c.app.see(r"System prompt", 5)
+    c.app.see(r"What is in the context", 5)
+    c.app.press("Refresh")
+    c.app.shot(c.out / "panels" / "context-breakdown.png")
+    # A short session has nothing to compact, and the daemon says so. The panel
+    # words that refusal as an answer.
+    c.app.press("Compact Now")
+    c.app.see(r"Nothing to compact yet", 10)
+    c.app.key("escape")
+    wait_for(lambda: not any("Context window ~" in t for t in c.app.texts()), 5, "the breakdown to close")
+
+
+@scenario("ST-11")
+def todo_board_follows_the_agent(c):
+    """The todo board is pinned above the composer with the active task and progress."""
+    run_session(c, "Plan", "todoboard now", "first task is finished")
+    wait_for(lambda: c.app.session().get("todo") == "1/4 done", 15, "the board")
+    c.app.see(r"Todo board.*Add the tests", 5)
+    # The board remembers whether it was left open, so open it only if it is not.
+    try:
+        c.app.see(r"Wire the metrics, pending", 1)
+    except Failure:
+        c.app.press("Todo board")
+    c.app.see(r"Wire the metrics, pending", 5)
+    c.app.see(r"Write the parser, done", 5)
+    c.app.shot(c.out / "panels" / "todo-board.png")
+
+
+@scenario("ST-01", "ST-02", "ST-06", "ST-05", "ST-16")
+def strands_say_what_they_do(c):
+    """Each strand has a card with one status line, a page of detail, and takes the composer."""
+    sid = c.app.dispatch("Cards check", WORKSPACE)
+    c.app.open_session("Cards")
+    c.app.transcript_has("scripted", 30)
+    wait_for(lambda: any(l.startswith("advisor: Finished") for l in c.app.session()["strandLines"]), 40, "the advisor to finish")
+    c.app.prompt(sid, "please hang here")
+    wait_for(lambda: c.app.session().get("isBusy"), 20, "a busy session")
+    open_tab(c, "Strands")
+    c.app.see(r"Strand main.*Working", 10)
+    # The advisor ended its run, so it sits in the closed group.
+    c.app.not_see(r"Strand advisor")
+    c.app.press("Settled strands")
+    c.app.see(r"Strand advisor.*Finished", 5)
+    c.app.press("Details for main")
+    c.app.see(r"Recent tools", 5)
+    c.app.see(r"Not reported yet|tokens", 5)
+    c.app.shot(c.out / "panels" / "strand-detail.png")
+    c.app.press("All Strands")
+    c.app.see(r"Strand main", 5)
+    c.app.menu("Stop Run")
+    wait_for(lambda: not c.app.session()["isBusy"], 20, "the run to stop")
+    wait_for(lambda: any(l.startswith("main: Halted") for l in c.app.session()["strandLines"]), 15, "main to read halted")
+    # A card focuses its strand, and what is typed then goes to that strand.
+    c.app.press("Strand advisor")
+    wait_for(lambda: c.app.session()["focused"] == "advisor", 5, "the advisor to take focus")
+    c.app.prompt(sid, "a word for the advisor")
+    c.app.transcript_has("a word for the advisor", 20)
+    c.app.press("Strand main")
+    wait_for(lambda: c.app.session()["focused"] == "main", 5, "main to take focus")
+    check(not any("a word for the advisor" in t for t in c.app.session()["transcript"]), "the prompt belonged to the advisor")
+
+
+@scenario("AP-02", "AP-09")
+def approval_says_who_and_waits(c):
+    """The card says who asks and what for, and its buttons arm after a moment."""
+    c.app.dispatch("Arming escalate", WORKSPACE)
+    c.app.open_session("Arming")
+    started = time.monotonic()
+    wait_for(lambda: c.app.session().get("escalations"), 40, "the approval")
+    seen = time.monotonic()
+    c.app.see(r"main wants to write a file", 5)
+    c.app.see(r"Allow this file write\?|Write to /Users/Shared", 5)
+    c.app.press("Allow")
+    check(time.monotonic() - seen > 0.3, "Allow answered before the card armed")
+    wait_for(lambda: not c.app.session()["escalations"], 15, "the approval to clear")
+
+
+@scenario("GO-01", "GO-02", "GO-03", "GO-04", "GO-05", "GO-06")
+def goal_pauses_resumes_and_clears(c):
+    """A pinned goal shows its status and spend, and Pause, Resume and Clear change it."""
+    c.app.dispatch("Goal check", WORKSPACE)
+    c.app.open_session("Goal check")
+    open_tab(c, "Session")
+    c.app.see(r"No goal is pinned", 10)
+    c.app.cmd('run goal_set {"objective":"land the migration","token_budget":400000}')
+    wait_for(lambda: c.app.session()["goal"] in ("active", "paused"), 15, "the goal")
+    c.app.see(r"land the migration", 10)
+    c.app.press("Pause Goal")
+    wait_for(lambda: c.app.session()["goal"] == "paused", 15, "the goal to pause")
+    c.app.see(r"Goal paused \(you paused it\)", 10)
+    c.app.press("Resume Goal")
+    wait_for(lambda: c.app.session()["goal"] in ("active", "budget limited"), 15, "the goal to resume")
+    c.app.shot(c.out / "panels" / "goal-dock.png")
+    c.app.press("Clear Goal")
+    c.app.press("Discard Goal")
+    wait_for(lambda: c.app.session()["goal"] in ("none", ""), 15, "the goal to clear")
+    c.app.see(r"No goal is pinned", 10)
+
+
+@scenario("PV-01", "PV-02", "PV-03", "PV-04", "PV-05")
+def proposals_are_reviewed(c):
+    """A proposed rule is shown whole, and can be rejected, or approved after a question."""
+    c.app.dispatch("Rule one proposerule", WORKSPACE)
+    c.app.open_session("Rule one")
+    c.app.see(r"proposes a rule", 40)
+    c.app.see(r"Run make check before pushing", 5)
+    c.app.shot(c.out / "panels" / "proposal-dock.png")
+    open_tab(c, "Session")
+    c.app.see(r"1 proposals waiting", 10)
+    c.app.press("Reject rule")
+    c.app.see(r"Decided \(1\)", 15)
+    c.app.not_see(r"proposes a rule")
+    # A second proposal is approved, and only after the question is answered.
+    sid = c.app.session_id("Rule one")
+    c.app.prompt(sid, "again proposerule")
+    c.app.see(r"proposes a rule", 40)
+    c.app.press("Approve rule")
+    c.app.press("Approve and Write")
+    c.app.see(r"Decided \(2\)", 15)
+
+
+@scenario("NO-01", "NO-02", "NO-03", "NO-04", "NO-05")
+def notes_are_searched_and_opened(c):
+    """The Notes tab lists the strand's notes, searches them and shows one readable or raw."""
+    run_session(c, "Notes", "todoboard", "first task is finished")
+    open_tab(c, "Notes")
+    c.app.see(r"Note todo", 10)
+    c.app.press("Refresh notes")
+    c.app.press("Note todo")
+    c.app.see(r"All Notes", 5)
+    c.app.see(r"Write the parser", 5)
+    c.app.press("Raw")
+    c.app.see(r"\"phases\"", 5)
+    c.app.press("All Notes")
+    c.app.see(r"Search notes", 5)
+
+
+@scenario("PE-01", "PE-02")
+def remembered_permissions_can_be_forgotten(c):
+    """What Allow for This Session left behind is listed with who approved it, and Forget removes it."""
+    pending_approval(c, "Forgetting")
+    c.app.menu("Allow Request for This Session")
+    wait_for(lambda: not c.app.session()["escalations"], 15, "the approval to clear")
+    open_tab(c, "Session")
+    # The listing is read when the tab opens, which may be before the daemon has
+    # written the remembered fact, so ask again until it is there.
+    wait_for(lambda: c.app.press("Refresh permissions") and any("Write to /Users/Shared" in t for t in c.app.texts()), 15, "the remembered permission")
+    c.app.see(r"Owner", 5)
+    label = wait_for(lambda: next((t for t in c.app.texts() if t.startswith("Forget Write to")), None), 10, "a Forget button")
+    c.app.press(label)
+    c.app.press("Forget")
+    wait_for(lambda: not any("Write to /Users/Shared" in t for t in c.app.texts()), 15, "the permission to go")
+    c.app.see(r"Nothing is remembered", 10)
+
+
+@scenario("SC-01", "SC-02")
+def schedules_are_listed_and_retired(c):
+    """A schedule a strand created is listed with its timing and can be retired."""
+    run_session(c, "Beats", "heartbeat", "heartbeat is scheduled")
+    open_tab(c, "Session")
+    c.app.press("Refresh schedules")
+    c.app.see(r"heartbeat", 10)
+    c.app.see(r"fired \d", 5)
+    c.app.press("Retire schedule heartbeat")
+    c.app.press("Retire Schedule")
+    c.app.see(r"Nothing is scheduled", 15)
+
+
+@scenario("JO-01", "JO-02")
+def live_jobs_are_listed(c):
+    """A background job is listed with its age and deadline, as of the last refresh."""
+    run_session(c, "Jobs", "backgroundjob", "background job is running")
+    open_tab(c, "Session")
+    c.app.see(r"Live jobs", 5)
+    c.app.see(r"at last refresh", 15)
+    c.app.see(r"sleep 300", 15)
+    c.app.see(r"deadline in", 5)
+
+
+@scenario("PA-13")
+def side_question_panel(c):
+    """A question asked on the side is answered in its own panel, which clears and closes."""
+    run_session(c, "Aside", "check", "scripted")
+    c.app.press("Side Question")
+    wait_for(lambda: c.app.session()["side"], 5, "the panel")
+    # The field takes focus when the panel opens, so typing needs no click.
+    c.app.type("what changed?")
+    c.app.press("Ask")
+    c.app.see(r"what changed\?", 15)
+    c.app.see(r"scripted", 20)
+    c.app.press("Refresh")
+    c.app.press("Clear")
+    c.app.not_see(r"what changed\?")
+    c.app.press("Close Side Question")
+    wait_for(lambda: not c.app.session()["side"], 5, "the panel to close")
+
+
+@scenario("ME-01")
+def memory_overview_lists_notes(c):
+    """The memory overview names what each run receives and the notes the agent wrote."""
+    run_session(c, "Memory", "writenote", "wrote that down")
+    open_tab(c, "Session")
+    c.app.press("Refresh memory")
+    c.app.see(r"Retry budget lives in fetch", 15)
+    c.app.see(r"loom-memory.notes", 5)
+
+
+@scenario("WT-04", "WT-05")
+def changes_say_how_each_file_changed(c):
+    """A new file reads as new, and a commit the session made is listed with its patch."""
+    c.app.dispatch("Status commitwork", "proj", executor="box")
+    c.app.open_session("Status commit")
+    c.app.transcript_has("committed the work", 60)
+    open_tab(c, "Changes")
+    c.app.see(r"Committed in this session", 20)
+    c.app.see(r"BUDGET = 3", 10)
+    # A file the session wrote and did not commit is new, and says so.
+    c.app.dispatch("Status demo run please", "proj", executor="box")
+    c.app.open_session("Status demo")
+    c.app.transcript_has("Retry budget is now per host", 60)
+    open_tab(c, "Changes")
+    c.app.see(r"fetch\.py, \d+ added, \d+ removed, (new|added|modified)", 20)
+
+
+@scenario("ST-15")
+def a_strand_is_forked_from_a_form(c):
+    """Fork opens a form, and the new strand appears with the name it was given."""
+    run_session(c, "Forking", "check", "scripted")
+    open_tab(c, "Strands")
+    c.app.press("Fork Strand")
+    c.app.type("alt-approach")
+    c.app.key("return")
+    wait_for(lambda: "alt-approach" in c.app.session()["strands"], 15, "the forked strand")
+    c.app.see(r"Strand alt-approach", 10)
+
+
+@scenario("PA-03", "PA-09")
+def home_and_sidebar_controls(c):
+    """The sidebar hides and shows, and Mission Control is one press from a session."""
+    run_session(c, "Homeward", "check", "scripted")
+    c.app.press("Hide Sidebar")
+    wait_for(lambda: not any(t.startswith("Mission Control") for t in c.app.texts()), 5, "the sidebar to hide")
+    c.app.press("Show Sidebar")
+    c.app.menu("Mission Control")
+    wait_for(lambda: c.app.snap()["destination"] == "mission", 5, "Mission Control")
+
+
+@scenario("PV-06", "PV-13")
+def evolution_tab_reads_the_board_and_core(c):
+    """The Evolution tab reads the catalogue again on request, and reads the core's status."""
+    run_session(c, "Evolving", "check", "scripted")
+    open_tab(c, "Evolution")
+    c.app.see(r"No candidates yet", 15)
+    c.app.press("Read Again")
+    c.app.see(r"No candidates yet", 10)
+    c.app.press("Read Core Status")
+    c.app.see(r"boundary", 15)
+
+
 # Navigation and screens.
 
 
@@ -277,6 +580,8 @@ def inspector_toggles_and_shows_changes(c):
     c.app.transcript_has("Retry budget is now per host", 40)
     c.app.menu("Show Inspector")
     wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
+    # The inspector reopens on the tab it was left on, which an earlier scenario chose.
+    c.app.press("Changes")
     c.app.see(r"changed file|No uncommitted", 20)
     c.app.see("fetch.py", 10)
     c.app.menu("Hide Inspector")
@@ -374,6 +679,16 @@ def an_executor_loss_is_reported(c):
     wait_for(lambda: any(a["kind"] == "Machines" for a in c.app.snap()["attention"]), 10, "a machine item")
     c.app.go("inbox")
     c.app.see("box is down")
+
+
+@scenario("PA-11")
+def a_session_says_why_it_ended(c):
+    """When the daemon is lost, the open session says it is disconnected and why."""
+    run_session(c, "Ending", "check", "scripted")
+    c.cluster.kill("orch")
+    wait_for(lambda: c.app.session().get("isLive") is False, 30, "the lane to read closed")
+    c.app.see(r"Disconnected", 10)
+    wait_for(lambda: c.app.session().get("endedWords"), 10, "words for the ending")
 
 
 @scenario()

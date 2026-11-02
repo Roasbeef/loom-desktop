@@ -7,6 +7,8 @@ public struct Strand: Sendable, Equatable, Identifiable {
     public var leaf: String?
     public var currentOperation: String?
     public var lastOutcome: String?
+    /// The message of a failed last run, which a strand card gives as the reason.
+    public var lastError: String?
 
     public var isBusy: Bool { currentOperation != nil }
 }
@@ -252,6 +254,19 @@ public struct Conversation: Sendable, Equatable {
     public private(set) var peek: ChildPeek?
     public private(set) var hasAdoptedCut = false
 
+    /// Each strand's glance, from its `client/glance/` cell.
+    public private(set) var glances: [String: Glance] = [:]
+    /// The newest ready `context` board and the words for why it is stale, if
+    /// the last read failed. A pending reply changes neither, so a refresh does
+    /// not blank a figure the person is looking at.
+    public private(set) var context: ContextBoard?
+    public private(set) var contextNotice: String?
+    /// How many times the daemon has said a surface changed, by event name, so a
+    /// view that shows one can read it again when the count moves.
+    public private(set) var signals: [String: Int] = [:]
+    /// Spend by children on other orchestrators, from the metadata document.
+    public private(set) var remoteUsage: [RemoteUsage] = []
+
     /// Moves when what `rows` would return may have changed, so a host can keep
     /// its projection until then and a streamed token never rebuilds it.
     public private(set) var revision = 0
@@ -323,9 +338,22 @@ public struct Conversation: Sendable, Equatable {
             if let call = frame.body["call_id"]?.string, let tail = frame.body["tail"]?.string {
                 toolTails[call] = tail
             }
+        case "goal_changed", "proposals_changed", "evolution_changed":
+            signals[frame.event, default: 0] += 1
         case "snapshot":
             if let mode = frame.body["mode"]?.string { surfaces[mode] = frame.body }
             switch frame.body["mode"]?.string {
+            case "context":
+                switch ContextBoard.reading(frame.body["board"]) {
+                case .ready(let board):
+                    context = board
+                    contextNotice = nil
+                case .failed(_, let message):
+                    context = nil
+                    contextNotice = message
+                case .pending, nil:
+                    break
+                }
             case "worktree_diff":
                 worktree = frame.body["board"]
             case "remote_children":
@@ -425,7 +453,8 @@ public struct Conversation: Sendable, Equatable {
                     model: cell["value"]?["model"]?["modelId"]?.string,
                     leaf: value("strand.leaf", id)?.string,
                     currentOperation: value("strand.state", id)?["currentOperationId"]?.string,
-                    lastOutcome: value("strand.last_result", id)?["outcome"]?.string
+                    lastOutcome: value("strand.last_result", id)?["outcome"]?.string,
+                    lastError: value("strand.last_result", id)?["error"]?["message"]?.string
                 )
             }
             .sorted { lhs, rhs in lhs.id == "main" ? true : (rhs.id == "main" ? false : lhs.id < rhs.id) }
@@ -439,7 +468,15 @@ public struct Conversation: Sendable, Equatable {
             .compactMap(Self.escalation)
             .filter { $0.status == "pending" }
 
+        glances = Dictionary(cells.compactMap { cell -> (String, Glance)? in
+            guard cell["namespace"]?.string == "fact.custom",
+                  let key = cell["key"]?.string, key.hasPrefix(Glance.keyPrefix),
+                  let glance = Glance(cell["value"]) else { return nil }
+            return (String(key.dropFirst(Glance.keyPrefix.count)), glance)
+        }, uniquingKeysWith: { first, _ in first })
+
         peers = (metadata["peers"]?.array ?? []).compactMap(Self.peer)
+        remoteUsage = RemoteUsage.list(metadata)
         usage = metadata["usage"] ?? .null
         branch = value("fact.custom", "client/peers/git-observation")?["repository"]?["branch"]?.string
         pendingInputs = (metadata["pending_inputs"]?.array ?? []).compactMap { row in
@@ -551,6 +588,43 @@ public struct Conversation: Sendable, Equatable {
             append(entry, to: &rows, toolIndex: &toolIndex)
         }
         return rows
+    }
+
+    /// The strand's todo board: the newest successful `todo` result on its chain.
+    /// Walking the chain stops at the first board, so a long transcript costs
+    /// only the distance to the last call. A strand whose chain holds none has
+    /// no board here, and the caller may seed one from the strand's notes.
+    public func todoBoard(strand: String) -> TodoBoard? {
+        var cursor = strands.first { $0.id == strand }?.leaf
+        while let id = cursor, let entry = entries[id] {
+            if let board = TodoBoard.from(toolResult: entry["message"]) { return board }
+            cursor = entry["parentId"]?.string
+        }
+        return nil
+    }
+
+    /// The `code_mode` programs on the strand's chain, for the Trace tab.
+    public func traceBoard(strand: String) -> TraceBoard {
+        var chain: [JSONValue] = []
+        var cursor = strands.first { $0.id == strand }?.leaf
+        while let id = cursor, let entry = entries[id] {
+            chain.append(entry)
+            cursor = entry["parentId"]?.string
+        }
+        return TraceBoard.fold(chain: chain.reversed())
+    }
+
+    /// One line for each strand, in the order the strands are held.
+    public func strandLines() -> [StrandLine] {
+        strands.map { strand in
+            StrandLine.make(
+                strand: strand,
+                glance: glances[strand.id],
+                rows: rows(strand: strand.id),
+                approvals: escalations.filter { $0.strand == strand.id }.count,
+                hasHeldInput: pendingInputs.contains { $0.strand == strand.id }
+            )
+        }
     }
 
     /// Whether this strand's chain continues below what is held. Asking the

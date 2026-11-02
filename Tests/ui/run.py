@@ -2,7 +2,7 @@
 """Runs the UI scenarios against a real cluster and writes a report.
 
   tests/ui/run.py                 every scenario, no focus taken
-  tests/ui/run.py --only approval name or parity id substring
+  tests/ui/run.py --only approval name or parity id substring; commas separate several
   tests/ui/run.py --foreground    also the scenarios that need a key window
   tests/ui/run.py --update        accept visual differences as the new baseline
   tests/ui/run.py --seed 7        the monkey's seed, to reproduce a failure
@@ -36,7 +36,7 @@ def main():
     selected = [
         s for s in scenarios.ALL
         if (args.foreground or not s.foreground)
-        and (args.only in s.name or any(args.only in i for i in s.covers))
+        and any(o in s.name or any(o in i for i in s.covers) for o in args.only.split(","))
     ]
     cluster = Cluster(BASE)
     print("starting cluster", flush=True)

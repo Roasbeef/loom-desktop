@@ -136,6 +136,12 @@ public actor ControlClient {
         ])
     }
 
+    /// Asks the daemon to drain and exit. It is the owner's alone, and the harness
+    /// uses it to stop throwaway daemons without signalling a process.
+    public func shutdown() async throws {
+        _ = try await request("daemon.shutdown", body: ["epoch": .string(try currentEpoch())])
+    }
+
     /// Reads the deployment: every machine this daemon is configured with, and
     /// where a session may be placed. `node` narrows it to one key and adds that
     /// node's long lists. Every statement is as seen from this daemon.

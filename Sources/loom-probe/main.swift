@@ -27,7 +27,7 @@ func pump(_ lane: SessionLane, verbose: Bool, stop: @escaping @Sendable (EventEn
             }
             if stop(nil, cut) { return }
         case .push(let frame):
-            print("PUSH \(frame.event) seq=\(frame.seq ?? -1) \(frame.body.compactText.prefix(300))")
+            print("PUSH \(frame.event) seq=\(frame.seq ?? -1) \(frame.body.compactText.prefix(frame.event == "snapshot" ? 20000 : 300))")
             if stop(frame, nil) { return }
         case .closed(let error):
             print("CLOSED \(error?.localizedDescription ?? "by request")")
@@ -102,6 +102,32 @@ do {
         }
         try await lane.requestWorktreeDiff()
         try await Task.sleep(for: .seconds(2))
+        await lane.close()
+        await reader.value
+
+    case "shutdown":
+        // Stops a throwaway daemon by asking it to, never against a real one.
+        try await control.shutdown()
+        print("SHUTDOWN asked")
+
+    case "raw":
+        // Sends one session command with a JSON body and prints the reply and every
+        // push for a few seconds. This is how a new surface's real frames are read
+        // before a decoder is written against them.
+        //   loom-probe raw <state-root> <session-id> <command> [json-body] [seconds]
+        let lane = try SessionLane(endpoint: endpoint, sessionID: arguments[2])
+        try await lane.start()
+        let reader = Task { await pump(lane, verbose: false) { _, _ in false } }
+        let body = arguments.count > 4
+            ? (try JSONValue.parse(Data(arguments[4].utf8)))
+            : JSONValue.object([:])
+        do {
+            let reply = try await lane.request(arguments[3], body: body)
+            print("REPLY \(reply.event) \(reply.body.compactText)")
+        } catch {
+            print("ERROR \(error.localizedDescription)")
+        }
+        try await Task.sleep(for: .seconds(arguments.count > 5 ? Double(arguments[5]) ?? 3 : 3))
         await lane.close()
         await reader.value
 

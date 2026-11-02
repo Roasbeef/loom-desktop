@@ -165,91 +165,91 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
 | AP-01 | Pending card in a region above the composer | operator_page.gleam:712 | escalation cells in metadata | yes (SessionScreen.swift:633) | 1 |
-| AP-02 | Who asks and what for, in a sentence | operator_page.gleam:779 | metadata | partial (SessionScreen.swift:790 names tool and strand; no `approval.wants` sentence) | 1 |
+| AP-02 | Who asks and what for, in a sentence | operator_page.gleam:779 | metadata | yes (SessionScreen.swift ApprovalCard, ApprovalWords.swift) | 1 |
 | AP-03 | Literal action and authority lists | operator_page.gleam:803 | metadata | yes (SessionScreen.swift:781 and :821) | 1 |
 | AP-04 | Deny, naming the tool | operator_page.gleam:775 | `deny` | yes (SessionScreen.swift:854; no tool in the label) | 1 |
 | AP-05 | Allow once, naming the tool | operator_page.gleam:819 | `approve` | yes (SessionScreen.swift:857; no tool in the label) | 1 |
-| AP-06 | Allow for this session, on the owner's page where eligible | operator_page.gleam:874 | `approve` `scope` | partial (SessionScreen.swift:864; it does not check that the reader is the owner, and Escalation.swift:59 omits the wall-seconds-zero form) | 2 |
+| AP-06 | Allow for this session, on the owner's page where eligible | operator_page.gleam:874 | `approve` `scope` | partial (SessionScreen.swift ApprovalButtons offers it only to the owner role; Escalation.swift:59 still omits the wall-seconds-zero form) | 2 |
 | AP-07 | Grants outside the ceiling, listed with their reason | operator_page.gleam:844 | `remote-escalation` cells | code (SessionScreen.swift:802) | 3 |
 | AP-08 | "Cannot be approved from the page" with its reason | operator_page.gleam:830 | metadata | partial (SessionScreen.swift:812 counts untranslatable grants and disables Allow) | 3 |
-| AP-09 | 600 ms arming delay on a new card | operator_page.gleam:793 | local | no | 2 |
+| AP-09 | 600 ms arming delay on a new card | operator_page.gleam:793 | local | yes (SessionScreen.swift ApprovalCard arms after 600 ms; the driver will not press a disabled control) | 2 |
 | AP-10 | Remote child's request | sv:approval.gleam:97 | `remote-escalation` cells | code (Conversation.swift:464) | 3 |
 | AP-11 | No key acts inside the approval region | wc:shell_rule.gleam:922 | local | no (LoomApp.swift:111 deliberately has Allow and Deny keys) | 3 |
-| AP-12 | Answer a stale record is refused locally, with words | component.gleam:4422 | local | partial (SessionLane.swift:99 echoes the sequence and the daemon refuses) | 2 |
+| AP-12 | Answer a stale record is refused locally, with words | component.gleam:4422 | local | code (SessionController.isCurrent refuses an answer for a record the session no longer holds, with Escalation.staleWords) | 2 |
 
 ## Strands and agents
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| ST-01 | Strand cards with name and one status line | view/strip.gleam:272; sv:strand_card.gleam:50 | metadata | partial (SessionScreen.swift:1107 shows a dot, name and model; no activity line) | 1 |
-| ST-02 | Focus a strand from its card | view/strip.gleam:457 | local | code (SessionScreen.swift:1109 and toolbar :133) | 1 |
+| ST-01 | Strand cards with name and one status line | view/strip.gleam:272; sv:strand_card.gleam:50 | metadata | yes (StrandsPane.swift, StrandLine.swift) | 1 |
+| ST-02 | Focus a strand from its card | view/strip.gleam:457 | local | yes (StrandsPane.swift card focus) | 1 |
 | ST-03 | Cache ring or avatar on a card | view/strip.gleam:491 | `usage` | no | 3 |
-| ST-04 | Needs-approval badge on the Strands tab | wc:shell_rule.gleam:647 | metadata | partial (Inbox count, RootView.swift:148; none per strand) | 2 |
-| ST-05 | Settled strands in a closed group, how each ended | view/strip.gleam:350 | metadata | no | 2 |
-| ST-06 | Strand detail: task, model, context, cache, running, recent tools | view/strand_detail.gleam:86 | metadata | no | 2 |
-| ST-07 | Breadcrumb "All strands", with Esc | view/crumb.gleam:61 | local | no | 2 |
+| ST-04 | Needs-approval badge on the Strands tab | wc:shell_rule.gleam:647 | metadata | code (SessionInspector tab title carries the count, ComposerFigures.swift strandsTabTitle) | 2 |
+| ST-05 | Settled strands in a closed group, how each ended | view/strip.gleam:350 | metadata | yes (StrandsPane.swift Settled group; main is never settled) | 2 |
+| ST-06 | Strand detail: task, model, context, cache, running, recent tools | view/strand_detail.gleam:86 | metadata | yes (StrandsPane.swift StrandDetail: task, model, context, running, recent tools; no cache figure) | 2 |
+| ST-07 | Breadcrumb "All strands", with Esc | view/crumb.gleam:61 | local | code (StrandsPane.swift All Strands button and Escape; Escape is not driven by a scenario) | 2 |
 | ST-08 | Remote child card with orchestrator and seen age | view/strip.gleam:400 | `remote_children` | code (SessionScreen.swift:902) | 3 |
 | ST-09 | Peek at a remote child's transcript | view/peek.gleam:49 | `child_history` | code (SessionScreen.swift:922; only the first page is requested) | 3 |
 | ST-10 | Model on a card when it differs from main | view/strip.gleam:410 | metadata | code (SessionScreen.swift:1116) | 3 |
-| ST-11 | Todo board in the dock | view/todo_panel.gleam:153 | `notes` seed, `entry` | no | 1 |
+| ST-11 | Todo board in the dock | view/todo_panel.gleam:153 | `notes` seed, `entry` | yes (TodoDock.swift, TodoBoard.swift) | 1 |
 | ST-12 | Reviewer band | view/todo_panel.gleam:82; sv:reviewer_status.gleam:225 | metadata | no | 3 |
 | ST-13 | Advisor's pending nudges | view/nudges.gleam:66 | `advisor_pending`† | no | 2 |
 | ST-14 | Advisor's settled commentary | view/commentary.gleam:87 | `entry` | no | 2 |
-| ST-15 | Fork the strand from a form | view/controls.gleam:76 | `fork` | no | 2 |
-| ST-16 | Compose to the focused strand | component.gleam:6549 | `prompt`, `steer` | code (AppModel.swift:682) | 1 |
+| ST-15 | Fork the strand from a form | view/controls.gleam:76 | `fork` | yes (StrandsPane.swift ForkForm) | 2 |
+| ST-16 | Compose to the focused strand | component.gleam:6549 | `prompt`, `steer` | yes (AppModel.swift send follows focusedStrand) | 1 |
 
 ## Goals
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| GO-01 | Goal row with status and spend | view/session_tab.gleam:173; sv:goal_view.gleam:563 | `goal_get`, `goal_changed` | no | 2 |
-| GO-02 | Dock goal line while active or paused | view/controls.gleam:113 | `goal_get` | no | 2 |
-| GO-03 | Pause button | operator_page.gleam:623 | `goal_pause` | no | 2 |
-| GO-04 | Resume button | operator_page.gleam:624 | `goal_resume` | no | 2 |
-| GO-05 | Clear button | operator_page.gleam:625 | `goal_clear` | no | 2 |
-| GO-06 | "No goal is pinned" guidance | view/controls.gleam:142 | local | no | 3 |
+| GO-01 | Goal row with status and spend | view/session_tab.gleam:173; sv:goal_view.gleam:563 | `goal_get`, `goal_changed` | yes (GoalControls.swift GoalSection) | 2 |
+| GO-02 | Dock goal line while active or paused | view/controls.gleam:113 | `goal_get` | yes (GoalControls.swift GoalDock) | 2 |
+| GO-03 | Pause button | operator_page.gleam:623 | `goal_pause` | yes (GoalControls.swift GoalDock) | 2 |
+| GO-04 | Resume button | operator_page.gleam:624 | `goal_resume` | yes (GoalControls.swift GoalDock) | 2 |
+| GO-05 | Clear button | operator_page.gleam:625 | `goal_clear` | yes (GoalControls.swift GoalDock, asks first) | 2 |
+| GO-06 | "No goal is pinned" guidance | view/controls.gleam:142 | local | yes (GoalControls.swift GoalSection, with a form to pin one) | 3 |
 
 ## Proposals and evolution
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| PV-01 | Proposals review list, rule or config, with the change | view/proposals.gleam:78 | `proposals_get`, `proposals_changed` | no | 2 |
-| PV-02 | Pending proposal card in the dock | view/proposals.gleam:363 | `proposals_get` | no | 2 |
-| PV-03 | Approve a proposal, after a question | view/proposals.gleam:311 | `proposal_decide` | no | 2 |
-| PV-04 | Reject a proposal | view/proposals.gleam:279 | `proposal_decide` | no | 2 |
-| PV-05 | Count of proposals on the Session tab | wc:shell.gleam:263 | `proposals_changed` | no | 3 |
-| PV-06 | Evolution tab, Read again | view/evolution.gleam:150 | `evolution` `board`; `evolution_changed` | no | 3 |
-| PV-07 | Live generation per surface | view/evolution.gleam:230 | `evolution` `board` | no | 3 |
-| PV-08 | Candidates with description, facts, evidence and approval | view/evolution.gleam:344 | `evolution` `board` | no | 3 |
-| PV-09 | Approve or revoke, after a question | view/evolution.gleam:638 | `evolution` `approve`, `revoke` | no | 3 |
+| PV-01 | Proposals review list, rule or config, with the change | view/proposals.gleam:78 | `proposals_get`, `proposals_changed` | yes (ProposalsPanel.swift ProposalsSection) | 2 |
+| PV-02 | Pending proposal card in the dock | view/proposals.gleam:363 | `proposals_get` | yes (PanelDock.swift, ProposalsPanel.swift ProposalCard) | 2 |
+| PV-03 | Approve a proposal, after a question | view/proposals.gleam:311 | `proposal_decide` | yes (ProposalsPanel.swift, asks first) | 2 |
+| PV-04 | Reject a proposal | view/proposals.gleam:279 | `proposal_decide` | yes (ProposalsPanel.swift) | 2 |
+| PV-05 | Count of proposals on the Session tab | wc:shell.gleam:263 | `proposals_changed` | yes (ProposalsPanel.swift section count) | 3 |
+| PV-06 | Evolution tab, Read again | view/evolution.gleam:150 | `evolution` `board`; `evolution_changed` | yes (EvolutionPane.swift Read Again) | 3 |
+| PV-07 | Live generation per surface | view/evolution.gleam:230 | `evolution` `board` | code (EvolutionPane.swift Published section; the test cluster has no candidates) | 3 |
+| PV-08 | Candidates with description, facts, evidence and approval | view/evolution.gleam:344 | `evolution` `board` | code (EvolutionPane.swift candidate cards; the test cluster has no candidates) | 3 |
+| PV-09 | Approve or revoke, after a question | view/evolution.gleam:638 | `evolution` `approve`, `revoke` | code (EvolutionPane.swift Approve and Revoke, each asks first; no candidates to try them on) | 3 |
 | PV-10 | Select a candidate, with a staging line | view/evolution.gleam:551 | `evolution` `select`, `status` | no | 3 |
 | PV-11 | Roll back, with a reason | view/evolution.gleam:759 | `evolution` `rollback` | no | 3 |
-| PV-12 | History section | view/evolution.gleam:844 | `evolution` `board` | no | 3 |
-| PV-13 | Read core status | view/evolution.gleam:940 | `evolution` `core_status` | no | 3 |
+| PV-12 | History section | view/evolution.gleam:844 | `evolution` `board` | code (EvolutionPane.swift History section; no decisions to list) | 3 |
+| PV-13 | Read core status | view/evolution.gleam:940 | `evolution` `core_status` | yes (EvolutionPane.swift Read Core Status) | 3 |
 | PV-14 | Evolution count on its tab | wc:shell_rule.gleam:472 | `evolution` `board` | no | 3 |
 
 ## Memory
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| ME-01 | Memory overview: tiles, what the session receives, notes, rules and queue, on the owner's page | view/memory.gleam:40 | `memory_get` | no | 3 |
+| ME-01 | Memory overview: tiles, what the session receives, notes, rules and queue, on the owner's page | view/memory.gleam:40 | `memory_get` | yes (SessionExtras.swift MemorySection, without the tiles) | 3 |
 
 ## Notes
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| NO-01 | Notes tab for the focused strand | view/notes.gleam:45 | `notes` | no | 2 |
-| NO-02 | Refresh | view/notes.gleam:60 | `notes` | no | 3 |
-| NO-03 | Search keys and values | view/notes.gleam:78 | local | no | 2 |
-| NO-04 | Open a note, go back | view/notes.gleam:157; view/notes.gleam:220 | local | no | 2 |
-| NO-05 | Readable or Raw view of a note | view/notes.gleam:242 | local | no | 3 |
+| NO-01 | Notes tab for the focused strand | view/notes.gleam:45 | `notes` | yes (NotesPane.swift) | 2 |
+| NO-02 | Refresh | view/notes.gleam:60 | `notes` | yes (NotesPane.swift) | 3 |
+| NO-03 | Search keys and values | view/notes.gleam:78 | local | yes (NotesPane.swift; typed search is not driven) | 2 |
+| NO-04 | Open a note, go back | view/notes.gleam:157; view/notes.gleam:220 | local | yes (NotesPane.swift) | 2 |
+| NO-05 | Readable or Raw view of a note | view/notes.gleam:242 | local | yes (NotesPane.swift) | 3 |
 
 ## Schedules
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| SC-01 | List schedules, as a command answer | sv:commands.gleam:627 | `schedules` | no | 2 |
-| SC-02 | Retire a schedule | sv:commands.gleam:637 | `schedule_cancel` | no | 3 |
+| SC-01 | List schedules, as a command answer | sv:commands.gleam:627 | `schedules` | yes (SessionExtras.swift SchedulesSection) | 2 |
+| SC-02 | Retire a schedule | sv:commands.gleam:637 | `schedule_cancel` | yes (SessionExtras.swift SchedulesSection, asks first) | 3 |
 
 The web page has no schedule surface beyond these two commands.
 
@@ -257,8 +257,8 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| JO-01 | Live jobs on the Session tab, refreshed on a timer | view/session_tab.gleam:174; sv:session_summary.gleam:107 | `live_jobs` | no | 2 |
-| JO-02 | "not read yet" and "at last refresh" wording | view/session_tab.gleam:296 | local | no | 3 |
+| JO-01 | Live jobs on the Session tab, refreshed on a timer | view/session_tab.gleam:174; sv:session_summary.gleam:107 | `live_jobs` | yes (SessionExtras.swift JobsSection, every 5 s while the tab is open) | 2 |
+| JO-02 | "not read yet" and "at last refresh" wording | view/session_tab.gleam:296 | local | yes (SessionExtras.swift JobsSection) | 3 |
 
 ## Queue
 
@@ -273,13 +273,13 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| CX-01 | `ctx ~41%` figure in the top bar | view/heading.gleam:155 | `context` | no | 1 |
-| CX-02 | Breakdown: stacked bar, basis words, tokens to auto-compact | view/context_breakdown.gleam:349 | `context` | no | 2 |
-| CX-03 | What is in the context, an item list | view/context_breakdown.gleam:491 | `context` | no | 3 |
-| CX-04 | Refresh | view/context_breakdown.gleam:194 | `context` | no | 3 |
-| CX-05 | Compact now | view/context_breakdown.gleam:205 | `compact` | no | 2 |
-| CX-06 | Children on other orchestrators, their spend | view/context_breakdown.gleam:153 | `remote_usage` in snapshot | no | 3 |
-| CX-07 | Dismiss on an outside press or Escape | wc:dismiss_rule.gleam:100 | local | no | 3 |
+| CX-01 | `ctx ~41%` figure in the top bar | view/heading.gleam:155 | `context` | yes (ContextFigure.swift) | 1 |
+| CX-02 | Breakdown: stacked bar, basis words, tokens to auto-compact | view/context_breakdown.gleam:349 | `context` | yes (ContextFigure.swift ContextPanel) | 2 |
+| CX-03 | What is in the context, an item list | view/context_breakdown.gleam:491 | `context` | code (ContextFigure.swift Inventory disclosure; its rows are not opened by a scenario) | 3 |
+| CX-04 | Refresh | view/context_breakdown.gleam:194 | `context` | yes (ContextFigure.swift) | 3 |
+| CX-05 | Compact now | view/context_breakdown.gleam:205 | `compact` | yes (ContextFigure.swift; a short session answers Nothing to compact yet) | 2 |
+| CX-06 | Children on other orchestrators, their spend | view/context_breakdown.gleam:153 | `remote_usage` in snapshot | code (ContextFigure.swift lists remote_usage; no second orchestrator in the test cluster) | 3 |
+| CX-07 | Dismiss on an outside press or Escape | wc:dismiss_rule.gleam:100 | local | yes (the popover closes on Escape) | 3 |
 
 ## Worktree and diffs
 
@@ -288,21 +288,21 @@ The web page has no schedule surface beyond these two commands.
 | WT-01 | Changes tab reads the workspace, refreshing after tool results | cd:ui_socket.gleam:3764 | `worktree_diff` | yes (SessionScreen.swift:1057) | 1 |
 | WT-02 | Title, file count and per-file counts | view/worktree.gleam:82; view/worktree.gleam:150 | `worktree_diff` | yes (SessionScreen.swift:1018 and :1082) | 1 |
 | WT-03 | One red and green diff per file | view/diff.gleam:38; view/worktree.gleam:127 | `worktree_diff` | yes (Theme.swift:438; Diff.swift) | 1 |
-| WT-04 | File status words | view/worktree.gleam:180 | `worktree_diff` | no | 3 |
-| WT-05 | Committed in this session | view/worktree.gleam:65 | `worktree_diff` | code (SessionScreen.swift:1049) | 2 |
+| WT-04 | File status words | view/worktree.gleam:180 | `worktree_diff` | yes (SessionScreen.swift FileChange) | 3 |
+| WT-05 | Committed in this session | view/worktree.gleam:65 | `worktree_diff` | yes (SessionScreen.swift ChangesPane) | 2 |
 | WT-06 | Omitted files and the diff-cut note | view/worktree.gleam:73; view/worktree.gleam:134 | `worktree_diff` | partial (SessionScreen.swift:1044 says omitted; no cut note) | 3 |
 | WT-07 | Edit board from this session's edits, as a fallback | view/changes.gleam:178; sv:changes_view.gleam:217 | `entry` | no (SessionScreen.swift:1031 shows the failure and has no fallback) | 2 |
 | WT-08 | Edit diffs in a step | view/diff.gleam:52 | `entry` | yes (SessionScreen.swift:472) | 1 |
 | WT-09 | Read refused or failed, one sentence | view/changes.gleam:240 | `worktree_diff` | code (SessionScreen.swift:1032) | 3 |
-| WT-10 | Trace tab: programs, state, result, calls, budget | view/trace.gleam:62; view/trace.gleam:96 | `entry` | no | 2 |
+| WT-10 | Trace tab: programs, state, result, calls, budget | view/trace.gleam:62; view/trace.gleam:96 | `entry` | code (TracePane.swift, TraceBoard.swift; the test cluster has no code-mode toolchain, so only the empty state is driven) | 2 |
 
 ## Permissions
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| PE-01 | List what the session remembers | view/remembered.gleam:65 | `permissions` | no | 2 |
-| PE-02 | Forget, with a question | view/remembered.gleam:184; view/remembered.gleam:242 | `permission_forget` | no | 2 |
-| PE-03 | Which ended sign-in each permission came from | component.gleam:1340 | in-process | no | 3 |
+| PE-01 | List what the session remembers | view/remembered.gleam:65 | `permissions` | yes (SessionExtras.swift RememberedSection) | 2 |
+| PE-02 | Forget, with a question | view/remembered.gleam:184; view/remembered.gleam:242 | `permission_forget` | yes (SessionExtras.swift RememberedSection, asks first) | 2 |
+| PE-03 | Which ended sign-in each permission came from | component.gleam:1340 | in-process | partial (RememberedBoard.swift names who approved and the credential fingerprint, not whether that sign-in has ended) | 3 |
 
 ## Members and sharing
 
@@ -409,19 +409,19 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| PA-01 | Panel tabs: Strands, Changes, Session, Trace, Notes, Evolution | wc:shell_rule.gleam:467 | local | partial (SessionScreen.swift:967 has Changes, Agents and Details) | 1 |
+| PA-01 | Panel tabs: Strands, Changes, Session, Trace, Notes, Evolution | wc:shell_rule.gleam:467 | local | yes (SessionScreen.swift SessionInspector: Changes, Strands, Session, Trace, Notes, Evolution) | 1 |
 | PA-02 | Hide and show the panel | wc:shell_rule.gleam:949 | local | yes (LoomApp.swift:75, ⌥⌘I) | 1 |
-| PA-03 | Hide and show the sidebar | wc:shell_rule.gleam:946 | local | code (RootView.swift:13; system split view control) | 2 |
+| PA-03 | Hide and show the sidebar | wc:shell_rule.gleam:946 | local | yes (the toolbar button) | 2 |
 | PA-04 | Resize the panel by drag or keys | wc:grip_rule.gleam:208 | local | partial (SessionScreen.swift:122 by drag; no keys) | 3 |
 | PA-05 | Top bar location: workspace and name | view/heading.gleam:75 | `sessions.list` | yes (SessionScreen.swift:114) | 1 |
 | PA-06 | Main strand's model in the bar | view/heading.gleam:254 | metadata | yes (SessionScreen.swift:700, in the composer) | 1 |
-| PA-07 | Connection pill: connected or disconnected | view/heading.gleam:139 | local | partial (SessionScreen.swift:620 shows only a Reconnecting line) | 2 |
-| PA-08 | Estimated cost in the bar and Session tab | view/heading.gleam:182; view/session_tab.gleam:175 | `usage` | partial (SessionScreen.swift:706 and :1168 show the figure; no `est` or coverage words) | 1 |
-| PA-09 | Home button | view/heading.gleam:286 | local | code (RootView.swift:150; Mission Control) | 2 |
+| PA-07 | Connection pill: connected or disconnected | view/heading.gleam:139 | local | yes (ComposerFigures.swift) | 2 |
+| PA-08 | Estimated cost in the bar and Session tab | view/heading.gleam:182; view/session_tab.gleam:175 | `usage` | yes (ComposerFigures.swift, UsageWords.swift) | 1 |
+| PA-09 | Home button | view/heading.gleam:286 | local | yes (the Mission Control row and menu) | 2 |
 | PA-10 | Session tab: workspace and session name | view/session_tab.gleam:170 | `sessions.list` | yes (SessionScreen.swift:1160) | 2 |
-| PA-11 | Page ended notice with fixed advice | view/ended.gleam:27; ending.gleam:170 | close frame | partial (SessionScreen.swift:620 shows Reconnecting; reasons are not worded) | 2 |
+| PA-11 | Page ended notice with fixed advice | view/ended.gleam:27; ending.gleam:170 | close frame | yes (SessionScreen.swift ComposerStack, EndingWords.swift) | 2 |
 | PA-12 | Tab title with the waiting count | wc:title_rule.gleam:41 | local | yes (LoomApp.swift:190, Dock badge; SessionScreen.swift:114 for the title) | 2 |
-| PA-13 | Side question panel: refresh, cancel, clear, close | operator_page.gleam:1265 | `btw` | no | 2 |
+| PA-13 | Side question panel: refresh, cancel, clear, close | operator_page.gleam:1265 | `btw` | yes (SideQuestionPanel.swift) | 2 |
 
 ## Keyboard shortcuts
 
