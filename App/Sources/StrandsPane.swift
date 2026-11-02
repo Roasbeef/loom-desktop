@@ -132,7 +132,7 @@ struct StrandsPane: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Strand \(line.name)")
-            .accessibilityValue(line.statusLine(elapsed: nil))
+            .accessibilityValue(line.statusLine(elapsed: nil) + (line.model.flatMap { $0 != main?.model ? ", model \($0)" : nil } ?? ""))
 
             IconButton(symbol: "info.circle", label: "Details for \(line.name)") { detail = line.id }
                 .foregroundStyle(.tertiary)

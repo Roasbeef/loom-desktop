@@ -117,6 +117,9 @@ enum DebugDriver {
             // Frees every daemon slot, so one scenario cannot starve the next, and
             // closes the inspector, so the next one starts from the default layout.
             model.showsInspector = false
+
+            // A scenario that failed with a sheet open must not swallow the next one's typing.
+            if let sheet = window?.attachedSheet { window?.endSheet(sheet) }
             for daemon in model.daemons {
                 for record in daemon.sessions where record.state.isResident {
                     try? await daemon.stop(record.id)
@@ -528,6 +531,10 @@ enum Snapshot {
                 "outputRate": session.outputRate ?? 0,
                 "pushedEvents": session.pushedEvents,
                 "isObserver": session.isObserver,
+                "senders": session.blocks.compactMap { block -> String? in
+                    if case .row(let row) = block, case .user(_, let author) = row.kind { return author }
+                    return nil
+                },
                 "summaries": session.surfaces["block_summaries"]?.compactText ?? "",
                 "thinkingIDs": session.blocks.flatMap { block -> [String] in
                     guard case .fold(let fold) = block else { return [] }
