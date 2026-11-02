@@ -93,6 +93,8 @@ private struct LoomCommands: Commands {
         }
         CommandMenu("Session") {
             SessionMenuItems(model: model)
+            Divider()
+            SessionLifecycleMenuItems(model: model)
         }
     }
 }

@@ -29,6 +29,7 @@ struct RootView: View {
         .environment(\.appearsActive, ProcessInfo.processInfo.environment["LOOM_FORCE_ACTIVE"] != nil ? true : appearsActive)
         .environment(\.controlActiveState, ProcessInfo.processInfo.environment["LOOM_FORCE_ACTIVE"] != nil ? .key : controlActiveState)
         #endif
+        .modifier(SessionActionPresenter())
         .sheet(isPresented: $model.isDispatching) {
             DispatchSheet()
         }
@@ -235,12 +236,16 @@ private struct SessionContextMenu: ViewModifier {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(record.id, forType: .string)
             }
+            Divider()
+            Button("Rename…") { model.askToRename(record) }
             if record.state.isResident {
-                Divider()
-                Button("Stop Session") {
-                    Task { try? await model.daemon(holding: record.id)?.stop(record.id) }
-                }
+                Button("Stop Session") { model.askToStop(record) }
             }
+            Button("Archive…") { model.askToArchive(record) }
+            if !record.state.isResident {
+                Button("Delete…", role: .destructive) { model.askToDelete(record) }
+            }
+            Button("Move…") { model.askToMove(record) }
         }
     }
 }

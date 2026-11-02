@@ -262,7 +262,8 @@ enum DebugDriver {
     }
 
     private static func send(key: String, code: UInt16, flags: NSEvent.ModifierFlags) {
-        guard let window else { return }
+        // Typing goes to a sheet when one is up, as it does for a person.
+        guard let window = window?.attachedSheet ?? window else { return }
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard let event = NSEvent.keyEvent(
                 with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,
@@ -303,6 +304,8 @@ enum Snapshot {
         var body: [String: Any] = [
             "destination": destination,
             "isDispatching": model.isDispatching,
+            "pendingAction": model.actions.summary,
+            "actionError": model.actions.error ?? "",
             "isPaletteOpen": model.isPaletteOpen,
             "showsInspector": model.showsInspector,
             "isMultiMachine": model.isMultiMachine,
@@ -321,7 +324,11 @@ enum Snapshot {
                     "state": state,
                     "deployment": daemon.deployment?.state ?? "",
                     "nodes": (daemon.deployment?.nodes ?? []).map { ["name": $0.name, "state": $0.state] },
-                    "sessions": daemon.sessions.map { ["id": $0.id, "title": $0.title, "state": $0.state.label] },
+                    "sessions": daemon.sessions.map { record -> [String: Any] in
+                        ["id": record.id, "title": record.title, "state": record.state.label,
+                         "activity": daemon.activity[record.id]?.state.rawValue ?? "",
+                         "workspace": record.workspace, "executor": record.executor ?? "", "moving": record.movingTo ?? ""]
+                    },
                 ]
             },
         ]

@@ -106,7 +106,7 @@ final class DaemonConnection: Identifiable {
     private(set) var lastChanged: [String: Date] = [:]
 
     private var endpoint: DaemonEndpoint?
-    private var control: ControlClient?
+    @ObservationIgnored var control: ControlClient?
     private var loop: Task<Void, Never>?
     private var ticks = 0
 
@@ -194,7 +194,7 @@ final class DaemonConnection: Identifiable {
         state = .connected
     }
 
-    private func refresh(_ control: ControlClient) async throws {
+    func refresh(_ control: ControlClient) async throws {
         let status = try await control.status()
         let sessions = try await control.listSessions()
         let resident = sessions.filter { $0.state.isResident }.map(\.id)
@@ -308,6 +308,9 @@ final class AppModel {
     private(set) var daemons: [DaemonConnection] = []
 
     var destination: Destination? = .mission
+
+    /// Rename, stop, archive and delete in flight, with the question each asks.
+    let actions = SessionActions()
     var isDispatching = false
     var isAddingDaemon = false
     var isPaletteOpen = false

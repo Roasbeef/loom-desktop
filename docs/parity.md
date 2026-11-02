@@ -27,12 +27,12 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | HM-10 | Worktree directory name on a row | sessions.gleam:430 | `sessions.list` | no | 3 |
 | HM-11 | Sidebar "New session" | view/sidebar.gleam:528 | local | yes (RootView.swift:202) | 1 |
 | HM-12 | Sidebar foot: Admin door | view/sidebar.gleam:757 | `ui.link` equivalent | no | 3 |
-| HM-13 | Row menu with "Rename, move or delete" | view/sidebar.gleam:932 | local | partial (RootView.swift:225 has a context menu with other items; those three are absent) | 2 |
-| HM-14 | Archive a saved row with a question | view/archiving.gleam:206 | `sessions.archive` | no | 2 |
-| HM-15 | Stop and archive a running row, asking when mid-turn | view/archiving.gleam:310 | `sessions.stop`, `sessions.archive` | no | 2 |
-| HM-16 | Stop a running row, asking when it is mid-turn | view/home_table.gleam:689 | `sessions.stop` | partial (RootView.swift:240 stops with no mid-turn question) | 2 |
-| HM-17 | Delete a saved or blocked row, with a question | view/home_table.gleam:746 | `sessions.delete` | no | 2 |
-| HM-18 | Rename a row in place | view/home_table.gleam:997 | `sessions.rename`† | no | 2 |
+| HM-13 | Row menu with "Rename, move or delete" | view/sidebar.gleam:932 | local | yes (SessionActions.swift; context menu and Session menu) | 2 |
+| HM-14 | Archive a saved row with a question | view/archiving.gleam:206 | `sessions.archive` | yes (SessionActions.swift) | 2 |
+| HM-15 | Stop and archive a running row, asking when mid-turn | view/archiving.gleam:310 | `sessions.stop`, `sessions.archive` | yes (SessionActions.swift; stops, waits for saved, archives) | 2 |
+| HM-16 | Stop a running row, asking when it is mid-turn | view/home_table.gleam:689 | `sessions.stop` | yes (SessionActions.swift, asks only when mid-turn) | 2 |
+| HM-17 | Delete a saved or blocked row, with a question | view/home_table.gleam:746 | `sessions.delete` | yes (SessionActions.swift) | 2 |
+| HM-18 | Rename a row in place | view/home_table.gleam:997 | `sessions.rename`† | yes (SessionActions.swift RenameSheet; `sessions.rename` read from server.gleam) | 2 |
 | HM-19 | Row state words: saved, moving to, needs attention, failed to start | view/home_table.gleam:1094 | `sessions.list` | partial (RootView.swift:304 and SessionScreen.swift:51 say moving, failed and blocked; "saved" is a section title) | 2 |
 | HM-20 | Row age, UTC minute in a title, and membership role | view/home_table.gleam:1111 | `sessions.list` | partial (RootView.swift:280 shows the age of the last observed change; no created age or role) | 3 |
 | HM-21 | "Waiting" banner on the home with a Review button | view/new_session.gleam:299 | `sessions.activity` | yes (MissionViews.swift:23) | 1 |
@@ -313,7 +313,7 @@ The web page has no schedule surface beyond these two commands.
 | SH-03 | Invitation handover: address, token, command, with copy | view/share.gleam:326; view/share.gleam:384 | `sessions.invite` | no | 2 |
 | SH-04 | Hide the token | view/share.gleam:360 | local | no | 3 |
 | SH-05 | Make a private session shareable, with a question | view/share.gleam:164; view/share.gleam:179 | `sessions.isolate` | no | 3 |
-| SH-06 | Rename the session from its page | view/rename.gleam:147 | `sessions.rename`† | no | 2 |
+| SH-06 | Rename the session from its page | view/rename.gleam:147 | `sessions.rename`† | yes (SessionActions.swift RenameSheet, Session menu) | 2 |
 | SH-07 | Accept an invitation with a claim form | page.gleam:761 | `credentials.claim` | no (Discovery.swift:31 refuses a claim token) | 3 |
 
 ## Credentials and sign-ins
