@@ -273,7 +273,7 @@ def a_failed_changes_read_says_why_in_one_sentence(c):
     folder = BASE / "not-a-repo"
     folder.mkdir(exist_ok=True)
     (folder / "note.txt").write_text("plain folder\n")
-    c.app.dispatch("Plain folder please demo", str(folder.resolve()))
+    c.app.dispatch("Plain folder check", str(folder.resolve()))
     c.app.open_session("Plain folder")
     c.app.transcript_has("scripted", 40)
     open_tab(c, "Changes")

@@ -275,7 +275,7 @@ The web page has no schedule surface beyond these two commands.
 |---|---|---|---|---|---|
 | CX-01 | `ctx ~41%` figure in the top bar | view/heading.gleam:155 | `context` | yes (ContextFigure.swift) | 1 |
 | CX-02 | Breakdown: stacked bar, basis words, tokens to auto-compact | view/context_breakdown.gleam:349 | `context` | yes (ContextFigure.swift ContextPanel) | 2 |
-| CX-03 | What is in the context, an item list | view/context_breakdown.gleam:491 | `context` | code (the inventory disclosure is opened in context_figure_and_breakdown, which needs an unlocked screen, so it has not run) | 3 |
+| CX-03 | What is in the context, an item list | view/context_breakdown.gleam:491 | `context` | code (the inventory disclosure is an AXDisclosureTriangle, which the driver can now press; opening it hides the breakdown's Compact Now button, so a scenario for it has to run after the compact check and none has been run) | 3 |
 | CX-04 | Refresh | view/context_breakdown.gleam:194 | `context` | yes (ContextFigure.swift) | 3 |
 | CX-05 | Compact now | view/context_breakdown.gleam:205 | `compact` | yes (ContextFigure.swift; a short session answers Nothing to compact yet) | 2 |
 | CX-06 | Children on other orchestrators, their spend | view/context_breakdown.gleam:153 | `remote_usage` in snapshot | code (ContextFigure.swift lists remote_usage; needs a child on a second orchestrator) | 3 |

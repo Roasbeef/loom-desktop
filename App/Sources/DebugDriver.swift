@@ -663,7 +663,7 @@ enum AccessibilityAudit {
         for root in searchRoots(window) {
             visit(root) { node, _ in
                 guard target == nil, name(node) == label, isEnabled(node) else { return }
-                if ["AXButton", "AXLink", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXRow", "AXCell"].contains(role(node)) {
+                if ["AXButton", "AXLink", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXRow", "AXCell", "AXDisclosureTriangle"].contains(role(node)) {
                     target = node
                 }
             }
