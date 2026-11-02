@@ -238,6 +238,9 @@ enum DebugDriver {
             } catch {
                 reply = "error: \(error.localizedDescription)"
             }
+        case "asrole" where parts.count > 1:
+            // Draws the open session as an attachment of this role would see it.
+            model.currentSession?.debugRole = parts[1] == "none" ? nil : parts[1]
         case "approve" where parts.count > 1:
             if let controller = model.controller(for: parts[1]), let record = controller.escalations.first {
                 controller.approve(record)
@@ -524,6 +527,12 @@ enum Snapshot {
                 "models": session.catalogue.models,
                 "outputRate": session.outputRate ?? 0,
                 "pushedEvents": session.pushedEvents,
+                "isObserver": session.isObserver,
+                "summaries": session.surfaces["block_summaries"]?.compactText ?? "",
+                "thinkingIDs": session.blocks.flatMap { block -> [String] in
+                    guard case .fold(let fold) = block else { return [] }
+                    return fold.rows.compactMap { if case .thinking = $0.kind { return $0.id }; return nil }
+                },
                 "to": StrandName.display(session.focusedStrand),
                 "who": session.who ?? "",
                 "cacheOutlook": session.cacheOutlook(at: Date()) ?? "",

@@ -298,7 +298,7 @@ private struct BlockView: View {
         case .row(let row):
             RowView(row: row)
         case .fold(let fold):
-            FoldView(fold: fold, tails: controller.toolTails)
+            FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries)
         }
     }
 }
@@ -346,7 +346,7 @@ struct RowView: View {
                 }
                 .onHover { isHovering = $0 }
         case .thinking(let text):
-            ReasoningRow(text: text, tookMs: row.tookMs)
+            ReasoningRow(text: text, tookMs: row.tookMs, summary: nil)
         case .tool:
             StepRow(row: row, tail: nil)
         case .spawned(let child, let purpose):
@@ -433,7 +433,16 @@ private struct ComposerStack: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                 }
-                Composer(controller: controller)
+                if controller.isObserver {
+                    Text("You are watching this session. An observer cannot send messages or answer requests.")
+                        .font(Theme.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Theme.radiusFloating))
+                } else {
+                    Composer(controller: controller)
+                }
             }
         }
         .frame(maxWidth: Theme.contentWidth)
@@ -553,6 +562,15 @@ struct ApprovalButtons: View {
     var isArmed = true
 
     var body: some View {
+        if controller.isObserver {
+            Text("Only an operator can answer.").font(Theme.caption).foregroundStyle(.secondary)
+        } else {
+            buttons
+        }
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
         Button("Deny") { controller.deny(record) }
             .buttonStyle(.bordered)
             .disabled(!isArmed)

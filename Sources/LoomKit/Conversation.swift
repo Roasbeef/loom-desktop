@@ -306,6 +306,11 @@ public struct Conversation: Sendable, Equatable {
     /// Prompts a draining daemon handed back, for the host to put in the editor.
     /// Each is the prompt's last copy, so the host empties the list as it takes them.
     public private(set) var returnedDrafts: [ReturnedDraft] = []
+    /// The summarizer's labels for long reasoning blocks, by `entry/block`, which is also the
+    /// id of the reasoning row. They are the summarizer's words and never the agent's.
+    public private(set) var summaries: [String: String] = [:]
+    /// Blocks already asked about on this attachment, so a block with no label is asked once.
+    private var askedSummaries: Set<String> = []
     /// How fast each strand last generated, timed from this client's own observation.
     public private(set) var generation = GenerationRate()
 
@@ -418,6 +423,12 @@ public struct Conversation: Sendable, Equatable {
             if let call = frame.body["call_id"]?.string, let tail = frame.body["tail"]?.string {
                 toolTails[call] = tail
             }
+        case "block_summary":
+            if frame.body["subject"]?.string == "block", let entry = frame.body["entry"]?.string,
+               let block = frame.body["block"]?.int, let text = frame.body["text"]?.string {
+                summaries["\(entry)/\(block)"] = text
+                revision += 1
+            }
         case "held_input_returned":
             // The daemon is draining and gives each held prompt back unsent
             // (protocol-change/038), so the text is retained before the socket closes.
@@ -431,6 +442,12 @@ public struct Conversation: Sendable, Equatable {
         case "snapshot":
             if let mode = frame.body["mode"]?.string { surfaces[mode] = frame.body }
             switch frame.body["mode"]?.string {
+            case "block_summaries":
+                for row in frame.body["board"]?["summaries"]?.array ?? [] {
+                    if let entry = row["entry"]?.string, let block = row["block"]?.int, let text = row["text"]?.string {
+                        summaries["\(entry)/\(block)"] = text
+                    }
+                }
             case "context":
                 switch ContextBoard.reading(frame.body["board"]) {
                 case .ready(let board):
@@ -456,6 +473,21 @@ public struct Conversation: Sendable, Equatable {
         default:
             break
         }
+    }
+
+    /// The reasoning blocks long enough to be labelled that have neither a label nor a read
+    /// in flight, at most the protocol's 32. Asking marks them, so a block the daemon has
+    /// no label for is not asked about again on this attachment.
+    public mutating func takeWantedSummaries(in rows: [TranscriptRow]) -> [(entry: String, block: Int)] {
+        var wanted: [(entry: String, block: Int)] = []
+        for row in rows {
+            guard case .thinking(let text) = row.kind, text.utf8.count >= 512, summaries[row.id] == nil,
+                  !askedSummaries.contains(row.id), wanted.count < 32,
+                  let slash = row.id.lastIndex(of: "/"), let block = Int(row.id[row.id.index(after: slash)...]) else { continue }
+            askedSummaries.insert(row.id)
+            wanted.append((String(row.id[..<slash]), block))
+        }
+        return wanted
     }
 
     /// Hands over the returned prompts and forgets them.

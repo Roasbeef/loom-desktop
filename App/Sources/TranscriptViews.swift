@@ -10,6 +10,7 @@ import SwiftUI
 struct FoldView: View {
     let fold: Fold
     let tails: [String: String]
+    var summaries: [String: String] = [:]
     @State private var userOpened: Bool?
 
     private var isOpen: Bool { userOpened ?? fold.isLive }
@@ -53,7 +54,7 @@ struct FoldView: View {
             if isOpen {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(fold.rows) { row in
-                        FoldRow(row: row, tail: row.callID.flatMap { tails[$0] })
+                        FoldRow(row: row, tail: row.callID.flatMap { tails[$0] }, summary: summaries[row.id])
                     }
                 }
                 .padding(.leading, 22)
@@ -93,13 +94,14 @@ struct ChangeCounts: View {
 struct FoldRow: View {
     let row: TranscriptRow
     let tail: String?
+    var summary: String?
 
     var body: some View {
         switch row.kind {
         case .tool:
             StepRow(row: row, tail: tail)
         case .thinking(let text):
-            ReasoningRow(text: text, tookMs: row.tookMs)
+            ReasoningRow(text: text, tookMs: row.tookMs, summary: summary)
         case .assistant(let text):
             // Prose the strand wrote between steps is narration, so it is drawn
             // quieter than the answer.
@@ -519,6 +521,8 @@ struct OutputBlock: View {
 struct ReasoningRow: View {
     let text: String
     let tookMs: Int?
+    /// The summarizer's label for a long block. It is drawn as the summarizer's, never as the agent's.
+    let summary: String?
     @State private var isOpen = false
 
     private var preview: String {
@@ -543,7 +547,11 @@ struct ReasoningRow: View {
                     Image(systemName: "brain").foregroundStyle(.tertiary).frame(width: 14)
                     Text("Thought").font(Theme.label).foregroundStyle(.secondary)
                     if !isOpen {
-                        Text(preview).font(Theme.caption).foregroundStyle(.tertiary).lineLimit(1)
+                        if let summary {
+                            Text("Summarized: \(summary)").font(Theme.caption).foregroundStyle(.tertiary).lineLimit(2)
+                        } else {
+                            Text(preview).font(Theme.caption).foregroundStyle(.tertiary).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 4)
                     Text(figures).font(Theme.meta).foregroundStyle(.tertiary)
@@ -556,7 +564,7 @@ struct ReasoningRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Thought, \(figures)")
-            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+            .accessibilityValue((summary.map { "Summarized: \($0). " } ?? "") + (isOpen ? "Expanded" : "Collapsed"))
 
             if isOpen {
                 Text(text)

@@ -583,9 +583,15 @@ final class SessionController {
     private(set) var signals: [String: Int] = [:]
     private(set) var remoteUsage: [RemoteUsage] = []
     private(set) var role = ""
+    #if DEBUG
+    /// A role a scenario forces, because the cluster has one attachment and it is the owner.
+    var debugRole: String?
+    #endif
     private(set) var connectionID = ""
     /// Tokens a second of the focused strand's last timed generation.
     private(set) var outputRate: Int?
+    /// The summarizer's labels for long reasoning, by reasoning row id.
+    private(set) var summaries: [String: String] = [:]
     /// The newest request on the focused strand, which the cache outlook counts from.
     private(set) var cacheStamp: CacheStamp?
     /// The highest record sequence `/clear` hid on each strand, so a cleared window
@@ -627,6 +633,14 @@ final class SessionController {
         self.sessionID = sessionID
         self.endpoint = endpoint
         conversation = Conversation(sessionID: sessionID)
+    }
+
+    /// Whether this attachment may only watch: it sends nothing and answers nothing.
+    var isObserver: Bool {
+        #if DEBUG
+        if let debugRole { return debugRole == "observer" }
+        #endif
+        return role == "observer"
     }
 
     var strand: Strand? { strands.first { $0.id == focusedStrand } }
@@ -735,6 +749,7 @@ final class SessionController {
         assign(\.remoteUsage, conversation.remoteUsage)
         assign(\.role, conversation.role)
         assign(\.connectionID, conversation.connectionID)
+        assign(\.summaries, conversation.summaries)
         assign(\.outputRate, conversation.generation.rate(strand: focusedStrand))
         if todo == nil, let seeded = notesTodo() { todo = seeded }
         setStream()
@@ -753,6 +768,7 @@ final class SessionController {
             // fetch and hide them again. It offers none.
             assign(\.hasOlder, cleared == nil && conversation.hasOlder(strand: focusedStrand))
             assign(\.cacheStamp, CacheStamp.newest(rows))
+            askForSummaries(rows)
             assign(\.strandLines, conversation.strandLines())
             assign(\.trace, conversation.traceBoard(strand: focusedStrand))
             assign(\.todo, conversation.todoBoard(strand: focusedStrand) ?? notesTodo())
@@ -780,6 +796,14 @@ final class SessionController {
         }
     }
 
+    /// Asks the daemon for the stored labels of long reasoning blocks this window holds.
+    /// A daemon with no summarizer answers with none, and that claims nothing.
+    private func askForSummaries(_ rows: [TranscriptRow]) {
+        let wanted = conversation.takeWantedSummaries(in: rows)
+        guard !wanted.isEmpty else { return }
+        read("block_summaries", body: ["blocks": .array(wanted.map { ["entry": .string($0.entry), "block": .int(Int64($0.block))] })])
+    }
+
     private func assign<T: Equatable>(_ path: ReferenceWritableKeyPath<SessionController, T>, _ value: T) {
         if self[keyPath: path] != value { self[keyPath: path] = value }
     }
@@ -801,7 +825,11 @@ final class SessionController {
         }
     }
 
+    /// Why an observer's command is not sent. The daemon would refuse it too.
+    static let observerWords = "An observer can watch a session but cannot change it."
+
     func abort() {
+        guard !isObserver else { lastError = Self.observerWords; return }
         let strand = focusedStrand
         perform { lane in _ = try await lane.abort(strand: strand) }
     }
@@ -809,11 +837,13 @@ final class SessionController {
     /// Answers with the record the person is looking at, captured by the view.
     /// A stale answer is refused by sequence, and the next cut redraws it.
     func approve(_ record: Escalation, remember: Bool = false) {
+        guard !isObserver else { lastError = Self.observerWords; return }
         guard isCurrent(record) else { return }
         perform { lane in _ = try await lane.approve(record, remember: remember) }
     }
 
     func deny(_ record: Escalation) {
+        guard !isObserver else { lastError = Self.observerWords; return }
         guard isCurrent(record) else { return }
         perform { lane in _ = try await lane.deny(record) }
     }

@@ -434,3 +434,26 @@ final class AgentMessageTests: XCTestCase {
         XCTAssertTrue(state.rows(strand: "main").allSatisfy(\.kind.opensTurn))
     }
 }
+
+final class SummaryLabelTests: XCTestCase {
+    private func thought(_ id: String, bytes: Int) -> TranscriptRow {
+        TranscriptRow(id: id, kind: .thinking(text: String(repeating: "x", count: bytes)))
+    }
+
+    func testOnlyLongUnlabelledBlocksAreAskedAboutAndEachOnlyOnce() {
+        var state = Conversation(sessionID: session)
+        let rows = [thought("e1/0", bytes: 600), thought("e2/1", bytes: 100), thought("e3/2", bytes: 512)]
+        let first = state.takeWantedSummaries(in: rows)
+        XCTAssertEqual(first.map { "\($0.entry)/\($0.block)" }, ["e1/0", "e3/2"])
+        XCTAssertTrue(state.takeWantedSummaries(in: rows).isEmpty, "a block with no label is asked once")
+    }
+
+    func testAPushedLabelAndAReadLabelBothLandUnderTheRowId() {
+        var state = Conversation(sessionID: session)
+        state.apply(push: EventEnvelope(replyTo: nil, event: "block_summary", seq: nil, body: ["subject": "block", "entry": "e1", "block": 0, "text": "Traced the retry path."]))
+        state.apply(push: EventEnvelope(replyTo: nil, event: "block_summary", seq: nil, body: ["subject": "stream", "strand": "main", "text": "live"]))
+        state.apply(push: EventEnvelope(replyTo: 3, event: "snapshot", seq: nil, body: ["mode": "block_summaries", "board": ["summaries": [["entry": "e2", "block": 1, "text": "Chose a bound."]]]]))
+        XCTAssertEqual(state.summaries, ["e1/0": "Traced the retry path.", "e2/1": "Chose a bound."])
+        XCTAssertTrue(state.takeWantedSummaries(in: [thought("e1/0", bytes: 700)]).isEmpty, "a labelled block needs no read")
+    }
+}
