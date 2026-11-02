@@ -131,7 +131,7 @@ public enum Refusal {
         case "moving": return "That session is being moved."
         case "not_movable": return "That session can't be moved."
         case "unavailable": return "The daemon can't do that right now."
-        case "conflict": return "That conflicts with the current state."
+        case "conflict": return "That can't happen while the session is working. Wait for it to stop, then try again."
         default: return nil
         }
     }

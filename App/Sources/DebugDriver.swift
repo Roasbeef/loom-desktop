@@ -368,6 +368,8 @@ enum Snapshot {
         if let session = model.currentSession {
             body["session"] = [
                 "isLive": session.isLive,
+                "thinkingLevel": session.strand?.thinkingLevel ?? "",
+                "profile": session.surfaces["profile"]?["profile"]?.string ?? "",
                 "isBusy": session.isBusy,
                 "isAdopted": session.isAdopted,
                 "blocks": session.blocks.count,

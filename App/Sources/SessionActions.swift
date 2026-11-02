@@ -69,6 +69,7 @@ final class SessionActions {
     var renaming: SessionRecord?
     var moving: SessionRecord?
     var sharing: SessionRecord?
+    var settings: SessionRecord?
     var showsPeople = false
 
     /// A folder the next new-session form starts with, set by a project heading.
@@ -245,6 +246,9 @@ struct SessionActionPresenter: ViewModifier {
             .sheet(item: $actions.moving) { record in
                 MoveSheet(record: record)
             }
+            .sheet(item: $actions.settings) { record in
+                SessionSettingsSheet(record: record)
+            }
             .sheet(item: $actions.sharing) { record in
                 SharingSheet(record: record)
             }
@@ -326,6 +330,9 @@ struct SessionLifecycleMenuItems: View {
         }
         Button("Delete Session…") {
             if let record = model.currentRecord { model.askToDelete(record) }
+        }
+        Button("Session Settings…") {
+            if let record = model.currentRecord, record.state.isResident { model.actions.settings = record }
         }
         Button("Share Session…") {
             if let record = model.currentRecord { model.actions.sharing = record }

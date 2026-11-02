@@ -402,8 +402,8 @@ The web page has no schedule surface beyond these two commands.
 |---|---|---|---|---|---|
 | SE-01 | Theme: system, light or dark | wc:layout_rule.gleam:348 | local | partial (LoomApp.swift:213 has no theme setting, so it follows the system) | 3 |
 | SE-02 | Saved layout: columns and tab | wc:shell.gleam:539 | local | partial (SessionScreen.swift:974 keeps the inspector tab; column state is not saved by the app) | 3 |
-| SE-03 | Show the session's profile, and switch it | sv:commands.gleam:620; sv:commands.gleam:624 | `profile_get`, `profile_set` | no | 2 |
-| SE-04 | Reasoning effort | sv:command.gleam:344 | `set_config` | no | 2 |
+| SE-03 | Show the session's profile, and switch it | sv:commands.gleam:620; sv:commands.gleam:624 | `profile_get`, `profile_set` | yes (SessionSettingsSheet.swift; `profile_get` and `profile_set`, after a question) | 2 |
+| SE-04 | Reasoning effort | sv:command.gleam:344 | `set_config` | yes (SessionSettingsSheet.swift; `set_config` `thinking_level` on the focused strand) | 2 |
 
 ## Session panel and top bar
 

@@ -310,3 +310,26 @@ def people_are_renamed_rotated_and_revoked(c):
     c.app.press("Revoke Access")
     c.app.see("Credential: No credential")
     c.app.press("Done")
+
+
+# Session settings.
+
+
+@scenario("SE-03", "SE-04")
+def effort_and_profile_are_changed_on_a_running_session(c):
+    """Reasoning effort applies to the strand, and a profile switch restarts the session under it."""
+    sid = c.app.dispatch("Settings subject demo", WORKSPACE)
+    c.app.open_session("Settings subject")
+    wait_for(lambda: record(c, sid)["activity"] == "idle", 40, "the run to finish")
+    c.app.menu("Session Settings…")
+    c.app.see("Reasoning effort")
+    c.app.press("High")
+    wait_for(lambda: c.app.session()["thinkingLevel"] == "high", what="the strand to carry the new effort")
+    wait_for(lambda: c.app.session()["profile"] == "" and "review" in " ".join(c.app.texts()), what="the profile choices to load")
+    # The daemon refuses a switch while any strand is working, even briefly.
+    wait_for(lambda: not c.app.session()["isBusy"], what="the strand to rest")
+    time.sleep(1)
+    c.app.press("review")
+    c.app.press("Switch Profile")
+    wait_for(lambda: c.app.session().get("profile") == "review", 60, "the session to restart under the review profile")
+    c.app.press("Done")
