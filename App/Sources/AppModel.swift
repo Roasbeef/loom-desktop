@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import LoomKit
 import SwiftUI
@@ -424,15 +425,21 @@ final class AppModel {
         }
     }
 
-    /// The last reply a person saw in each session, kept across launches. A session
-    /// whose latest reply differs finished something while they were away.
-    private(set) var seenReplies: [String: String] = UserDefaults.standard.dictionary(forKey: "seenReplies") as? [String: String] ?? [:]
+    /// A digest of the last reply a person saw in each session, kept across launches.
+    /// A session whose latest reply differs finished something while they were away.
+    /// Only the digest is stored, since replies belong to the daemon and preferences
+    /// are a plain file that backups and other programs can read.
+    private(set) var seenReplies: [String: String] = UserDefaults.standard.dictionary(forKey: "seenReplyDigests") as? [String: String] ?? [:]
+
+    private static func replyDigest(_ reply: String) -> String {
+        SHA256.hash(data: Data(reply.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+    }
 
     func hasUnseenReply(_ sessionID: String) -> Bool {
         guard let reply = activity[sessionID]?.lastMessage else { return false }
         if case .session(sessionID) = destination { return false }
         guard let seen = seenReplies[sessionID] else { return false }
-        return seen != reply
+        return seen != Self.replyDigest(reply)
     }
 
     /// Takes the first reply seen from each session as already read. A session that
@@ -441,18 +448,20 @@ final class AppModel {
         var changed = false
         for (id, row) in activity where seenReplies[id] == nil {
             if let reply = row.lastMessage {
-                seenReplies[id] = reply
+                seenReplies[id] = Self.replyDigest(reply)
                 changed = true
             }
         }
-        if changed { UserDefaults.standard.set(seenReplies, forKey: "seenReplies") }
+        if changed { UserDefaults.standard.set(seenReplies, forKey: "seenReplyDigests") }
     }
 
     /// Records what the open session shows, called as its activity changes.
     func markSeen(_ sessionID: String) {
-        guard let reply = activity[sessionID]?.lastMessage, seenReplies[sessionID] != reply else { return }
-        seenReplies[sessionID] = reply
-        UserDefaults.standard.set(seenReplies, forKey: "seenReplies")
+        guard let reply = activity[sessionID]?.lastMessage else { return }
+        let digest = Self.replyDigest(reply)
+        guard seenReplies[sessionID] != digest else { return }
+        seenReplies[sessionID] = digest
+        UserDefaults.standard.set(seenReplies, forKey: "seenReplyDigests")
     }
 
     /// The session the main window shows, which the Session menu acts on.

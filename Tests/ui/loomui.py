@@ -119,14 +119,21 @@ class App:
         self.seq = 0
 
     def launch(self):
-        env = dict(os.environ, LOOM_DEBUG_DRIVER=str(self.dir), LOOM_STATE_DIR=str(self.state_root))
+        # Preferences follow CFFIXED_USER_HOME, so each run starts from empty ones and
+        # never reads or writes those of the person running the tests. The directory
+        # outlives a relaunch, which the scenarios about remembered choices rely on.
+        home = self.dir / "home"
+        home.mkdir(exist_ok=True)
+        env = dict(
+            os.environ,
+            LOOM_DEBUG_DRIVER=str(self.dir),
+            LOOM_STATE_DIR=str(self.state_root),
+            CFFIXED_USER_HOME=str(home),
+        )
         if self.active:
             env["LOOM_FORCE_ACTIVE"] = "1"
         self.log = open(self.dir / "app.log", "ab")
-        # The form prefills the folder it last used, which is stored in the app's
-        # defaults and would otherwise carry from one run into the next. An argument
-        # overrides the stored value for the whole run.
-        self.proc = subprocess.Popen([str(self.binary), "-lastWorkspace", ""], env=env, stdout=self.log, stderr=self.log)
+        self.proc = subprocess.Popen([str(self.binary)], env=env, stdout=self.log, stderr=self.log)
         wait_for(lambda: self.ready(), 30, "the app to answer")
         return self
 
