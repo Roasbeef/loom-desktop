@@ -529,15 +529,21 @@ struct ApprovalCard: View {
             .background(Color(nsColor: .textBackgroundColor).opacity(0.6), in: .rect(cornerRadius: Theme.radiusInner))
             .overlay(RoundedRectangle(cornerRadius: Theme.radiusInner).strokeBorder(Theme.hairline, lineWidth: 0.5))
 
-            HStack(spacing: 8) {
-                Text("A sample of the call, written by the model. Allowing covers the whole action.")
-                    .font(Theme.caption)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                if !isArmed {
-                    Text("Arming…").font(Theme.caption).foregroundStyle(.tertiary)
+            // A narrow column cannot hold the sentence beside the buttons without
+            // crushing both, and the buttons are the one thing that must stay whole.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    sampleNote.fixedSize()
+                    Spacer(minLength: 8)
+                    answers
                 }
-                ApprovalButtons(record: record, controller: controller, isArmed: isArmed)
+                VStack(alignment: .leading, spacing: 8) {
+                    sampleNote.fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        answers
+                    }
+                }
             }
         }
         // A card that appears under a person's hands must not take the Return or
@@ -550,6 +556,21 @@ struct ApprovalCard: View {
         .padding(13)
         .background(Theme.attention.opacity(0.09), in: .rect(cornerRadius: Theme.radiusFloating))
         .overlay(RoundedRectangle(cornerRadius: Theme.radiusFloating).strokeBorder(Theme.attention.opacity(0.4), lineWidth: 1))
+    }
+
+    private var sampleNote: some View {
+        Text("A sample of the call, written by the model. Allowing covers the whole action.")
+            .font(Theme.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    @ViewBuilder
+    private var answers: some View {
+        if !isArmed {
+            Text("Arming…").font(Theme.caption).foregroundStyle(.tertiary).fixedSize()
+        }
+        ApprovalButtons(record: record, controller: controller, isArmed: isArmed)
+            .fixedSize()
     }
 }
 
