@@ -28,9 +28,13 @@ The test tools exist to answer one question: does the app a person runs do what 
 | `app.hitch(seconds)`, `app.stats()` | Frame gaps and CPU. |
 | `app.audit()` | Controls with no accessibility name. |
 | `cluster.kill(name)` | Fault injection against `orch` or `exec`. |
+| `app.snap()["sidebar"]` | The sidebar's rows in every grouping, the saved rows, the machine filter and its counts. The rows are not in the accessibility tree, and the sidebar draws these same values from `SidebarRows`. `app.cmd("select <id>")` selects a row as a click does. |
+| `app.cmd("attach <name> <address>")`, `app.cmd("unattach <name>")` | Connect a second daemon without saving it, with the credential in the driver directory's `token` file, and remove it. A scenario that connects through the Connect a Daemon sheet removes the saved daemon with `unattach`. |
 | `app.cmd("run <command> <json>")` | Sends one session command from the open session, for set-up a scenario does not itself test. |
 
 The scripted model in `scripts/fake_provider.py` chooses its reply from keywords in the prompt: `demo`, `escalate`, `long`, `slow`, `hang`, `explode`, and for the tools a panel shows `todoboard`, `writenote`, `proposerule`, `heartbeat`, `backgroundjob` and `commitwork`. It reports token usage, and the cluster prices the model, so a session has an estimated cost. The advisor is routed to the same model, and it ignores these keywords.
+
+The cluster has an orchestrator `orch`, an executor `box` with a pool `boxes`, a plain repository `proj`, and a second repository with a linked worktree for the rows that name one. It has a single orchestrator. Linking a second one needs a membership ledger, which a static deployment does not have, so the rows that need two stay at `code`. Scenarios that kill the executor run last, and `tests/ui/scenarios_down.py` holds them.
 
 ## Adding a scenario
 

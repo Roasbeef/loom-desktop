@@ -683,6 +683,8 @@ def context_figure_and_breakdown(c):
     c.app.see(r"tokens until the session compacts itself", 10)
     c.app.see(r"System prompt", 5)
     c.app.see(r"What is in the context", 5)
+    c.app.press("What is in the context")
+    c.app.see(r"Tools|Messages", 5)
     c.app.press("Refresh")
     c.app.shot(c.out / "panels" / "context-breakdown.png")
     # A short session has nothing to compact, and the daemon says so. The panel
