@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Holds docs/parity.md to what the UI scenarios prove.
 
-A row may say `yes` only if a scenario lists its id in `covers`. Implemented work with
-no scenario says `code`. This also fails on a scenario naming a row that does not exist,
-so a renamed row cannot quietly lose its proof.
+A row may say `yes` only if a scenario lists its id in `covers`, and a scenario may list
+only rows that say `yes`. Implemented work with no passing scenario says `code`, and a row
+that is partial or absent says so. This also fails on a scenario naming a row that does
+not exist, so a renamed row cannot quietly lose its proof.
 """
 import collections
 import re
@@ -31,6 +32,9 @@ def main():
     for row, (state, _, name) in sorted(rows.items()):
         if state == "yes" and row not in covered:
             errors.append(f"{row} says yes but no scenario covers it: {name}")
+        if state != "yes" and row in covered:
+            owners = ", ".join(s.name for s in scenarios.ALL if row in s.covers)
+            errors.append(f"{row} says {state} but {owners} covers it: {name}")
 
     counts = collections.Counter((state, tier) for state, tier, _ in rows.values())
     print(f"{'state':10}{'tier 1':>8}{'tier 2':>8}{'tier 3':>8}{'total':>8}")

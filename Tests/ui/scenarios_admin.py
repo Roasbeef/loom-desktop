@@ -36,7 +36,7 @@ def section_of(c, title, grouping="Project"):
     return next((s for s in sidebar(c)[grouping] if s["title"] == title), None)
 
 
-@scenario("HM-01", "HM-10", "HM-20")
+@scenario("HM-01", "HM-10")
 def sidebar_groups_by_project_newest_first(c):
     """Rows sit under their project, newest first, and a worktree names its directory."""
     old = c.app.dispatch("Sidebar older please demo", WORKSPACE)
@@ -55,7 +55,7 @@ def sidebar_groups_by_project_newest_first(c):
     check(row_of(c, new)["created"] == "just now", f"created was {row_of(c, new)['created']!r}")
 
 
-@scenario("HM-02", "HM-09", "HM-19")
+@scenario("HM-02")
 def sidebar_rows_say_what_each_session_is_doing(c):
     """A row says working, idle or needs you, and a saved row says saved."""
     waiting = c.app.dispatch("Sidebar asks escalate", WORKSPACE)
@@ -75,7 +75,7 @@ def sidebar_rows_say_what_each_session_is_doing(c):
     check(any(r["id"] == idle for r in sidebar(c)["saved"]), "a stopped session is listed with the saved rows")
 
 
-@scenario("HM-03", "HM-04", "HM-05")
+@scenario("HM-04", "HM-05")
 def sidebar_opens_running_and_saved_rows(c):
     """Selecting a running row opens it, a saved row resumes, and the saved fold is remembered."""
     sid = c.app.dispatch("Sidebar reopen please demo", WORKSPACE)
@@ -148,11 +148,13 @@ def close_form(c):
         wait_for(lambda: not c.app.snap()["isDispatching"], what="the form to close")
 
 
-@scenario("NS-04", "NS-22")
+@scenario("NS-04", "NS-22", "MA-15")
 def a_session_starts_on_another_daemon(c):
     """With a second daemon connected, the form offers it, and the session is created there."""
     second_daemon(c)
     try:
+        # With two daemons the sidebar's foot names each by its label.
+        c.app.see(r"^other$", 10)
         open_form(c)
         try:
             c.app.press("other")
@@ -188,7 +190,7 @@ def appearance_follows_the_menu_choice(c):
     check(c.app.snap()["appearance"] == "system", "the choice should return to the system's")
 
 
-@scenario("SE-02")
+@scenario()
 def the_inspector_stays_open_across_launches(c):
     """The inspector column is open again after the app is quit and started."""
     if not c.app.snap()["showsInspector"]:

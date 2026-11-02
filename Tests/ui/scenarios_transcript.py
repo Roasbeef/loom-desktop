@@ -108,7 +108,7 @@ def clear_hides_the_window_and_keeps_the_session(c):
     check(not c.app.session()["hasOlder"], "a cleared window offers no older turns")
 
 
-@scenario("CO-32")
+@scenario("CO-31", "CO-32")
 def unschedule_retires_a_schedule(c):
     """/unschedule with a schedule's name retires it, and /schedules no longer lists it."""
     sid = c.app.dispatch("Retire heartbeat", WORKSPACE)
@@ -460,7 +460,7 @@ def a_peer_message_is_a_card_that_can_be_answered_and_followed(c):
     wait_for(lambda: c.app.snap()["destination"] == f"session:{sender}", 5, "the sender's session to open")
 
 
-@scenario("TR-43")
+@scenario()
 def an_observer_sees_the_session_and_can_change_nothing(c):
     """Drawn as an observer, the session keeps its transcript and loses the editor and the answer buttons."""
     pending_approval(c, "Watched")
@@ -502,7 +502,7 @@ def long_reasoning_carries_the_summarizers_label(c):
 # The inspector. These need the inspector's tabs laid out, so they cannot run on a locked screen.
 
 
-@scenario("ST-04", needs_display=True)
+@scenario(needs_display=True)
 def the_strands_tab_counts_the_approvals_waiting(c):
     """While a strand waits on a person, the Strands tab's title carries the count."""
     pending_approval(c, "Badge count")
@@ -515,7 +515,7 @@ def the_strands_tab_counts_the_approvals_waiting(c):
     c.app.not_see(r"Strands \(\d\)")
 
 
-@scenario("ST-07", needs_display=True)
+@scenario(needs_display=True)
 def escape_leaves_a_strands_page(c):
     """Escape on a strand's page returns to the list of all strands."""
     c.app.dispatch("Crumb check", WORKSPACE)
@@ -533,7 +533,7 @@ def escape_leaves_a_strands_page(c):
     c.app.see(r"Strand main", 5)
 
 
-@scenario("ST-10", needs_display=True)
+@scenario(needs_display=True)
 def a_card_names_its_model_where_it_differs_from_main(c):
     """Once main runs another model, a card for a strand on the first model says which."""
     c.app.dispatch("Model on card", WORKSPACE)
@@ -550,7 +550,7 @@ def a_card_names_its_model_where_it_differs_from_main(c):
     c.app.not_see(r"Strand main.*model ")
 
 
-@scenario("KB-07", needs_display=True)
+@scenario(needs_display=True)
 def escape_in_a_note_goes_back_to_the_list(c):
     """Escape on an open note returns to the list of notes."""
     sid = c.app.dispatch("Note keys todoboard", WORKSPACE)
