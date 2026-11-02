@@ -293,7 +293,7 @@ The web page has no schedule surface beyond these two commands.
 | WT-06 | Omitted files and the diff-cut note | view/worktree.gleam:73; view/worktree.gleam:134 | `worktree_diff` | code (SessionScreen.swift draws the omitted-files count and the diff-cut note from `omitted` and `extent`; no scripted diff is large enough to be cut) | 3 |
 | WT-07 | Edit board from this session's edits, as a fallback | view/changes.gleam:178; sv:changes_view.gleam:217 | `entry` | no (the Changes tab shows the failure with no board of this session's edits as a fallback) | 2 |
 | WT-08 | Edit diffs in a step | view/diff.gleam:52 | `entry` | yes (SessionScreen.swift:472) | 1 |
-| WT-09 | Read refused or failed, one sentence | view/changes.gleam:240 | `worktree_diff` | code (the Changes tab draws the daemon's message for a failed read; a_failed_changes_read_says_why_in_one_sentence is written and needs an unlocked screen, so it has not run) | 3 |
+| WT-09 | Read refused or failed, one sentence | view/changes.gleam:240 | `worktree_diff` | code (the Changes tab draws the daemon's message for a failed read; a scenario on a folder that is not a repository could not open the inspector and was not kept, so the row is unproven) | 3 |
 | WT-10 | Trace tab: programs, state, result, calls, budget | view/trace.gleam:62; view/trace.gleam:96 | `entry` | code (TracePane.swift, TraceBoard.swift; the test cluster has no code-mode toolchain, so only the empty state is driven) | 2 |
 
 ## Permissions

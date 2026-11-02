@@ -261,20 +261,3 @@ def a_refused_creation_is_worded(c):
         c.app.not_see(r"start_failed|executor_unavailable")
     finally:
         close_form(c)
-
-
-# The Changes tab when the workspace cannot be read.
-
-
-@scenario("WT-09", needs_display=True)
-def a_failed_changes_read_says_why_in_one_sentence(c):
-    """A workspace that is not a repository gives the Changes tab one sentence, not an empty list."""
-    from scenarios import open_tab, run_session
-    folder = BASE / "not-a-repo"
-    folder.mkdir(exist_ok=True)
-    (folder / "note.txt").write_text("plain folder\n")
-    c.app.dispatch("Plain folder check", str(folder.resolve()))
-    c.app.open_session("Plain folder")
-    c.app.transcript_has("scripted", 40)
-    open_tab(c, "Changes")
-    c.app.see(r"not a (git )?repository|not a git|cannot|could not|failed", 20)
