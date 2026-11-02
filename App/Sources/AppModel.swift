@@ -429,7 +429,10 @@ final class AppModel {
     /// A session whose latest reply differs finished something while they were away.
     /// Only the digest is stored, since replies belong to the daemon and preferences
     /// are a plain file that backups and other programs can read.
-    private(set) var seenReplies: [String: String] = UserDefaults.standard.dictionary(forKey: "seenReplyDigests") as? [String: String] ?? [:]
+    private(set) var seenReplies: [String: String] = {
+        UserDefaults.standard.removeObject(forKey: "seenReplies")
+        return UserDefaults.standard.dictionary(forKey: "seenReplyDigests") as? [String: String] ?? [:]
+    }()
 
     private static func replyDigest(_ reply: String) -> String {
         SHA256.hash(data: Data(reply.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
@@ -952,7 +955,7 @@ final class SessionController {
         guard let lane else { return }
         Task {
             do {
-                let reply = try await lane.request(command, body: body)
+                let reply = try await lane.read(command, body: body)
                 if reply.event == "snapshot" {
                     conversation.apply(push: reply)
                     syncPushed()

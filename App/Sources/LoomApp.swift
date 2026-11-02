@@ -129,7 +129,7 @@ private struct SessionMenuItems: View {
         }
         .keyboardShortcut("a", modifiers: [.command, .shift])
         Button("Allow Request for This Session") {
-            if let session, let record = session.escalations.first, record.canRemember {
+            if let session, session.role == "owner", let record = session.escalations.first, record.canRemember {
                 session.approve(record, remember: true)
             }
         }
@@ -205,7 +205,11 @@ final class Announcer {
     }
 
     private var isUnderTest: Bool {
+        #if DEBUG
         ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] != nil
+        #else
+        false
+        #endif
     }
 
     private func update(_ items: [AttentionItem]) {

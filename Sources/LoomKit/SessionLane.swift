@@ -162,11 +162,20 @@ public actor SessionLane {
     /// command needs no method of its own to keep the credit's order. A reply that is
     /// a `snapshot` should go to `Conversation.apply(push:)`, the same as a push.
     public func request(_ cmd: String, body: JSONValue = .object([:])) async throws -> EventEnvelope {
+        let reply = try await read(cmd, body: body)
+
+        // A committed mutation is worth seeing now, not at the next tick.
+        dirty = true
+        return reply
+    }
+
+    /// Sends a command that changes nothing, so its reply needs no early reconcile. A
+    /// panel that polls with this does not cost a catch-up transfer on every poll.
+    public func read(_ cmd: String, body: JSONValue = .object([:])) async throws -> EventEnvelope {
         await credit.acquire()
         do {
             let reply = try await exchange(cmd, body: body)
             await credit.release()
-            dirty = true
             return reply
         } catch {
             await credit.release()
@@ -175,18 +184,8 @@ public actor SessionLane {
     }
 
     private func mutate(_ cmd: String, body: JSONValue) async throws -> String {
-        await credit.acquire()
-        do {
-            let reply = try await exchange(cmd, body: body)
-            await credit.release()
-
-            // A committed mutation is worth seeing now, not at the next tick.
-            dirty = true
-            return reply.body["status"]?.string ?? reply.event
-        } catch {
-            await credit.release()
-            throw error
-        }
+        let reply = try await request(cmd, body: body)
+        return reply.body["status"]?.string ?? reply.event
     }
 
     // MARK: The credited exchange

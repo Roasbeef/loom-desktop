@@ -142,7 +142,7 @@ public struct TransferAssembler: Sendable {
     }
 
     /// Validates `snapshot_end` and yields the cut for atomic adoption.
-    public func finish(end body: JSONValue, metadataRequired: Bool = true) throws -> Cut {
+    public func finish(end body: JSONValue) throws -> Cut {
         guard body["snapshot_id"]?.string == snapshotID, body["next_seq"]?.int == nextSeq else {
             throw LoomError.protocolViolation("snapshot_end does not match its header")
         }

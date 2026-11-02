@@ -998,7 +998,7 @@ def inspector_toggles_and_shows_changes(c):
     c.app.see("fetch.py", 10)
     c.app.menu("Hide Inspector")
     c.app.key("i", "cmd,opt")
-    wait_for(lambda: not c.app.snap()["showsInspector"], 3, "the inspector to close") if c.app.snap()["showsInspector"] else None
+    wait_for(lambda: c.app.snap()["showsInspector"], 3, "the key to show the inspector")
 
 
 @scenario("MA-12", "MA-14")

@@ -91,7 +91,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-18 | Settled reasoning: preview, line count, time, body | view/lane.gleam:1400 | `entry` | yes (ReasoningRow: preview, line count, time, body) | 1 |
 | TR-19 | Summarizer's label on long reasoning | view/lane.gleam:1467 | `block_summaries`, `block_summary` | yes (SessionController.askForSummaries reads block_summaries for reasoning over 512 bytes and the label draws as Summarized; the cluster routes the summarize role to the scripted model) | 2 |
 | TR-20 | A person's message with sender name and role | view/lane.gleam:713 | `entry`, `presence` | yes (SessionScreen.swift RowView shows the sender's name and the fixed word operator, as the web page does) | 2 |
-| TR-21 | Long message shortened with a toggle | view/lane.gleam:1341 | local | yes (the whole message is drawn, so no toggle is needed; a_long_message_is_drawn_whole) | 3 |
+| TR-21 | Long message shortened with a toggle | view/lane.gleam:1341 | local | no (deliberate difference: the whole message is drawn, so no toggle is needed; a_long_message_is_drawn_whole) | 3 |
 | TR-22 | Memory context as a closed row in the fold | sv:turns.gleam:213 | `entry` | yes (MemoryContext.swift, MemoryRow; the notes index the daemon attaches draws closed inside the turn's fold and opens to its text) | 2 |
 | TR-23 | Spawned line for a sub-agent | view/lane.gleam:780 | `entry` | yes (SpawnedLine; the scripted model starts a subagent with agent_spawn) | 2 |
 | TR-24 | Sub-agent result line, opening to the report | view/lane.gleam:1550 | `entry` | yes (AgentReportLine; agent_wait returns the child's report and the line opens to it) | 2 |
@@ -167,8 +167,8 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | AP-01 | Pending card in a region above the composer | operator_page.gleam:712 | escalation cells in metadata | yes (SessionScreen.swift:633) | 1 |
 | AP-02 | Who asks and what for, in a sentence | operator_page.gleam:779 | metadata | yes (SessionScreen.swift ApprovalCard, ApprovalWords.swift) | 1 |
 | AP-03 | Literal action and authority lists | operator_page.gleam:803 | metadata | yes (SessionScreen.swift:781 and :821) | 1 |
-| AP-04 | Deny, naming the tool | operator_page.gleam:775 | `deny` | yes (SessionScreen.swift:854; no tool in the label) | 1 |
-| AP-05 | Allow once, naming the tool | operator_page.gleam:819 | `approve` | yes (SessionScreen.swift:857; no tool in the label) | 1 |
+| AP-04 | Deny, naming the tool | operator_page.gleam:775 | `deny` | partial (Deny works, SessionScreen.swift:854; the label names no tool) | 1 |
+| AP-05 | Allow once, naming the tool | operator_page.gleam:819 | `approve` | partial (Allow works, SessionScreen.swift:857; the label names no tool) | 1 |
 | AP-06 | Allow for this session, on the owner's page where eligible | operator_page.gleam:874 | `approve` `scope` | yes (SessionScreen.swift ApprovalButtons; Escalation.canRemember now includes the exact-action wall grant, proven by unit test since the cluster cannot raise one) | 2 |
 | AP-07 | Grants outside the ceiling, listed with their reason | operator_page.gleam:844 | `remote-escalation` cells | code (SessionScreen.swift:802; a remote child's request needs a second orchestrator, which the cluster lacks) | 3 |
 | AP-08 | "Cannot be approved from the page" with its reason | operator_page.gleam:830 | metadata | code (the cluster raises only grants the app can translate, so the count of untranslatable ones is covered by unit tests only) | 3 |
@@ -457,12 +457,7 @@ The web page has no schedule surface beyond these two commands.
 
 ## Summary
 
-| Native | Tier 1 | Tier 2 | Tier 3 | Total |
-|---|---|---|---|---|
-| yes | 34 | 21 | 17 | 72 |
-| partial | 13 | 25 | 25 | 63 |
-| no | 5 | 76 | 76 | 157 |
-| Total | 52 | 122 | 118 | 292 |
+`python3 tests/ui/parity_check.py` prints the counts by state and tier from the rows above, so they are not repeated here.
 
 ### Native capabilities the web UI does not have
 
