@@ -396,3 +396,62 @@ def a_message_names_its_sender_and_role(c):
     c.app.transcript_has("scripted", 30)
     settle(c)
     c.app.see(r"^Owner · operator$", 5)
+
+
+# Messages from other agents.
+
+
+@scenario("TR-28")
+def a_brief_from_another_strand_is_a_card_without_its_framing(c):
+    """A subagent's first message is a card from the strand that sent it, with the harness's contract apart."""
+    c.app.dispatch("Brief card spawnagent", WORKSPACE)
+    c.app.open_session("Brief card")
+    c.app.transcript_has("The subagent has reported", 60)
+    settle(c)
+    child = next(x for x in c.app.session()["strands"] if x.startswith("sub:"))
+    c.app.cmd(f"strand {child}")
+    wait_for(lambda: c.app.session()["focusedStrand"] == child, 5, "the child strand")
+    row = wait_for(lambda: next((t for t in c.app.session()["transcript"] if t.startswith("sibling main")), None), 10, "the sibling card")
+    check("task brief" not in row and "[end brief" not in row, f"the framing must be removed: {row}")
+    check("Name one file in the workspace" in row, row)
+    c.app.see(r"^From strand main$", 5)
+    c.app.see(r"^\[result contract, from the harness", 5)
+
+
+@scenario("TR-31")
+def a_delivered_nudge_is_an_advisor_row(c):
+    """A nudge the advisor queued reaches the primary, and the transcript labels it as the advisor's."""
+    c.app.dispatch("Nudge me advisenudge", WORKSPACE)
+    c.app.open_session("Nudge me")
+    c.app.transcript_has("scripted", 30)
+    row = wait_for(lambda: next((t for t in c.app.session()["transcript"] if t.startswith("Advisor nudge")), None), 90, "the delivered nudge")
+    check("per-host budget" in row, row)
+    c.app.see(r"^Advisor nudge$", 5)
+    settle(c)
+
+
+@scenario("TR-25", "TR-26", "TR-27")
+def a_peer_message_is_a_card_that_can_be_answered_and_followed(c):
+    """A message from another session is a card naming its sender, with Reply drafting an answer and Open going there."""
+    receiver = c.app.dispatch("Peer receiver", WORKSPACE)
+    c.app.open_session("Peer receiver")
+    settle(c)
+    sender = c.app.dispatch(f"Peer sender peersend {receiver}", WORKSPACE)
+    # The link lets the sender message the receiver's main strand and wake it.
+    reply = c.app.cmd(f"peerlink {sender} {receiver}")
+    check(reply == "ok", reply)
+    c.app.go(f"session {sender}")
+    wait_for(lambda: c.app.snap()["destination"] == f"session:{sender}", 5, "the sender")
+    c.app.prompt(sender, f"send it again, peersend {receiver}")
+    c.app.go(f"session {receiver}")
+    wait_for(lambda: c.app.snap()["destination"] == f"session:{receiver}", 5, "the receiver")
+    row = wait_for(lambda: next((t for t in c.app.session()["transcript"] if t.startswith("peer ")), None), 60, "the peer card")
+    check("missing cancellation check" in row, row)
+    c.app.see(r"^Peer · Peer sender peersend .* · main$", 5)
+    c.app.see(r"^Origin checked by the daemon$", 5)
+    c.app.press("Reply to Peer")
+    wait_for(lambda: c.app.session()["draft"].startswith("Reply to Peer sender"), 5, "the drafted reply")
+    check(sender in c.app.session()["draft"], c.app.session()["draft"])
+    name_open = name_starting(c, "Open Peer sender")
+    c.app.press(name_open)
+    wait_for(lambda: c.app.snap()["destination"] == f"session:{sender}", 5, "the sender's session to open")

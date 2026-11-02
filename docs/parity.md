@@ -95,13 +95,13 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-22 | Memory context as a closed row in the fold | sv:turns.gleam:213 | `entry` | yes (MemoryContext.swift, MemoryRow; the notes index the daemon attaches draws closed inside the turn's fold and opens to its text) | 2 |
 | TR-23 | Spawned line for a sub-agent | view/lane.gleam:780 | `entry` | yes (SpawnedLine; the scripted model starts a subagent with agent_spawn) | 2 |
 | TR-24 | Sub-agent result line, opening to the report | view/lane.gleam:1550 | `entry` | yes (AgentReportLine; agent_wait returns the child's report and the line opens to it) | 2 |
-| TR-25 | Peer message card with session, strand and receipt | view/lane.gleam:834 | `entry` | partial (SessionScreen.swift:301 draws a bubble with an author; framing is not removed) | 2 |
-| TR-26 | Reply to a peer, which drafts the reply | view/lane.gleam:935 | local, then `prompt` | no | 2 |
-| TR-27 | Open the peer's session | view/lane.gleam:956 | local; `ui.link` equivalent | no | 2 |
-| TR-28 | Sibling strand's message card | view/lane.gleam:850 | `entry` | partial (SessionScreen.swift:301 draws a bubble with an author; framing is not removed) | 2 |
+| TR-25 | Peer message card with session, strand and receipt | view/lane.gleam:834 | `entry` | yes (PeerCard: the sender's name, strand and the daemon's origin check, over the message; two sessions linked with peers.link and a scripted peer_send) | 2 |
+| TR-26 | Reply to a peer, which drafts the reply | view/lane.gleam:935 | local, then `prompt` | yes (PeerCard Reply to Peer drafts an answer in the composer and sends nothing) | 2 |
+| TR-27 | Open the peer's session | view/lane.gleam:956 | local; `ui.link` equivalent | yes (PeerCard Open goes to the sender's session when this app holds it) | 2 |
+| TR-28 | Sibling strand's message card | view/lane.gleam:850 | `entry` | yes (StrandFraming removes the Agency's head and foot, and a spawn brief's result contract draws apart in SiblingCard) | 2 |
 | TR-29 | Decided approval row in the lane | sv:decisions.gleam:89 | `escalations_decided` | yes (`escalations_decided` rows placed by sequence; a_decided_approval_stays_in_the_lane) | 2 |
 | TR-30 | Cache miss row | sv:turns.gleam:351 | `usage` | yes (CacheWatch.detect in Conversation.rows; a 61 second pause, then a request that re-reads 12,000 cached tokens) | 3 |
-| TR-31 | Delivered advisor nudge row | sv:turns.gleam:324 | `entry` | partial (Conversation.swift:602 draws a `[loom]` note as a one-line notice) | 3 |
+| TR-31 | Delivered advisor nudge row | sv:turns.gleam:324 | `entry` | yes (AdvisorFrame reads advice, nudge, continuation and feed frames; the scripted advisor answers a feed with an advise nudge, and the primary's transcript labels the delivery) | 3 |
 | TR-32 | Compaction, branch and oversized notices | sv:transcript_lines.gleam:2672 | `entry` | yes (the compaction row is proven through /compact; the branch and oversized notices by unit test, since the cluster makes neither) | 2 |
 | TR-33 | Provider failure and Stopped rows | sv:transcript_lines.gleam:35 | `entry` | yes (a stopped run leaves a Stopped row; the provider's own error is shown as before) | 2 |
 | TR-34 | Load older, by turns | view/lane.gleam:566 | `history_lineage` | yes (`history_lineage` paging until a whole turn arrives, older_turns_page_in) | 1 |

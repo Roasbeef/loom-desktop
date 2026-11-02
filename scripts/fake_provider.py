@@ -20,6 +20,8 @@ keyword in the last user turn selects a script:
   think      streams three lines of reasoning, a second apart, then answers
   tour       a write, a command and a read that fails, then a short answer
   program    a code_mode call with a small program
+  advisenudge the advisor answers the review of this turn with a nudge
+  peersend   sends a message to the session whose id is in the prompt, with `peer_send`
   spawnagent starts a subagent with `agent_spawn`, waits for its report, then answers
   stopmid    one finished step, then a reply that hangs, for a turn the person stops
   readpicture reads pixel.png from the workspace, which returns an image
@@ -175,7 +177,24 @@ def script(messages):
     # The advisor is fed a digest of the primary's turn, which repeats the
     # primary's own words. It must not act them out a second time.
     if "[advisor feed" in prompt:
-        yield from text_stream("Nothing to add.")
+        # A nudge is wanted only when the primary's prompt, rendered into the feed, asks for one.
+        if "advisenudge" in prompt and steps == 0:
+            yield call(0, "advise", {"verdict": "nudge", "text": "Check the per-host budget once more before you finish."})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("Nothing to add.")
+        return
+
+    if "peersend" in prompt:
+        if steps == 0:
+            target = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", prompt)
+            yield call(0, "peer_send", {
+                "session": target.group(0) if target else "missing", "strand": "main",
+                "message_id": "peer-msg-1", "text": "Review found a missing cancellation check.",
+            })
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The message is sent.")
         return
 
     if "spawnagent" in prompt:
