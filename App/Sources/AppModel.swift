@@ -567,6 +567,8 @@ final class SessionController {
     private(set) var lastError: String?
     private(set) var isLoadingOlder = false
     private(set) var busySince: Date?
+    /// When the daemon recorded the input the running turn answers.
+    private(set) var turnStartedAt: Date?
     var isSearching = false
 
     // What the panels draw, each set only when it changes so the transcript is
@@ -586,6 +588,10 @@ final class SessionController {
     /// Why a background read was refused, by command, for a panel to say.
     private(set) var readFailures: [String: String] = [:]
 
+    /// The draft, the sent lines, notices and held-input edits. It lives here and
+    /// not in the view so a draft survives the view being rebuilt.
+    let composer = ComposerModel()
+
     var focusedStrand = "main" {
         didSet {
             if focusedStrand != oldValue { syncAll(force: true) }
@@ -595,6 +601,7 @@ final class SessionController {
     @ObservationIgnored private var conversation: Conversation
     @ObservationIgnored private var projectedRevision = -1
     @ObservationIgnored private var olderCursor: Int?
+    @ObservationIgnored private var hasReadDecisions = false
     @ObservationIgnored private var streamFlush: Task<Void, Never>?
     @ObservationIgnored private let endpoint: DaemonEndpoint
     @ObservationIgnored private var lane: SessionLane?
@@ -690,17 +697,26 @@ final class SessionController {
     }
 
     private func syncAll(force: Bool = false) {
+        // The strands come first because a turn is live while its strand is busy.
+        assign(\.strands, conversation.strands)
         if force || projectedRevision != conversation.revision {
             projectedRevision = conversation.revision
-            assign(\.blocks, TranscriptBlock.group(conversation.rows(strand: focusedStrand)))
+            let rows = conversation.rows(strand: focusedStrand)
+            assign(\.blocks, TranscriptBlock.group(rows, running: isBusy))
             assign(\.hasOlder, conversation.hasOlder(strand: focusedStrand))
             assign(\.strandLines, conversation.strandLines())
             assign(\.trace, conversation.traceBoard(strand: focusedStrand))
             assign(\.todo, conversation.todoBoard(strand: focusedStrand) ?? notesTodo())
             askForNotesIfNoBoard()
+            let input = rows.last { if case .user = $0.kind { return true }; return false }?.at
+            assign(\.turnStartedAt, input.map { Date(timeIntervalSince1970: Double($0) / 1000) })
         }
-        assign(\.strands, conversation.strands)
+        let held = escalations.count
         assign(\.escalations, conversation.escalations)
+
+        // The ledger of answered approvals is read when the session opens and
+        // whenever a pending one goes away, since that is when it gains a row.
+        if !hasReadDecisions || conversation.escalations.count < held { readDecisions() }
         assign(\.pendingInputs, conversation.pendingInputs)
         assign(\.branch, conversation.branch)
         assign(\.usage, conversation.usage)
@@ -834,17 +850,67 @@ final class SessionController {
         }
     }
 
+    /// Pages in older records by turns. Each request follows the strand's own
+    /// parent links with `history_lineage`, so a long session costs one read per
+    /// hundred of this strand's records however many another strand wrote between
+    /// them. It stops once a whole earlier turn has arrived.
     func loadOlder() {
-        guard let before = olderCursor ?? conversation.oldestSeq, !isLoadingOlder, let lane else { return }
+        guard !isLoadingOlder, let lane else { return }
         isLoadingOlder = true
+        let strand = focusedStrand
         Task {
             defer { isLoadingOlder = false }
             do {
-                olderCursor = try await lane.loadOlder(beforeSeq: before)
+                let wanted = conversation.inputCount(strand: strand) + 1
+                var pages = 0
+                while pages < 6, conversation.inputCount(strand: strand) < wanted {
+                    pages += 1
+                    guard let anchor = conversation.olderAnchor(strand: strand) else {
+                        // A record too large to decode hides its parent, so the
+                        // lineage walk cannot continue past it; page by sequence.
+                        if let before = olderCursor ?? conversation.oldestSeq {
+                            olderCursor = try await lane.loadOlder(beforeSeq: before)
+                        }
+                        break
+                    }
+                    let cut = try await lane.lineage(from: anchor)
+                    if conversation.apply(cut: cut) { syncAll(force: true) }
+                    if cut.entries.isEmpty { break }
+                }
+                syncAll(force: true)
             } catch {
                 lastError = error.localizedDescription
             }
         }
+    }
+
+    private func readDecisions() {
+        guard let lane else { return }
+        hasReadDecisions = true
+        Task {
+            guard let cut = try? await lane.decided() else { return }
+            if conversation.apply(cut: cut) { syncAll(force: true) }
+        }
+    }
+
+    /// Sends any session command and returns its reply, applying a snapshot reply
+    /// the way a push is. A refusal throws, and the caller words it.
+    func request(_ command: String, body: JSONValue = .object([:])) async throws -> EventEnvelope {
+        guard let lane else { throw LoomError.closed("this session is not attached") }
+        let reply = try await lane.request(command, body: body)
+        if reply.event == "snapshot" {
+            conversation.apply(push: reply)
+            syncPushed()
+        }
+        return reply
+    }
+
+    /// The names the daemon has offered for `/model` and `/profile` completion.
+    var catalogue: SlashCommand.Catalogue {
+        SlashCommand.Catalogue(
+            models: (surfaces["models"]?["models"]?.array ?? []).compactMap { $0["name"]?.string },
+            profiles: (surfaces["profile"]?["available"]?.array ?? []).compactMap(\.string)
+        )
     }
 
     /// Reads a page of a subagent running on another orchestrator.

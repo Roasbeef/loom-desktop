@@ -142,6 +142,22 @@ public actor SessionLane {
         }
     }
 
+    /// Reads one page of a strand's records by following its parent links, ending
+    /// at `from`. A page whose newest record is another entry is refused, because
+    /// it is not the path that was asked for (protocol section 4.6.1).
+    public func lineage(from: String) async throws -> Cut {
+        let cut = try await transfer(cmd: "history_lineage", body: ["from": .string(from)])
+        if let newest = cut.entries.last, newest["id"]?.string != from {
+            throw LoomError.protocolViolation("history_lineage ended at another entry")
+        }
+        return cut
+    }
+
+    /// Reads the session's decided approvals, newest sixteen.
+    public func decided() async throws -> Cut {
+        try await transfer(cmd: "escalations_decided", body: .object([:]))
+    }
+
     /// Sends any session command and returns its reply. New surfaces use this, so a
     /// command needs no method of its own to keep the credit's order. A reply that is
     /// a `snapshot` should go to `Conversation.apply(push:)`, the same as a push.
@@ -241,7 +257,7 @@ public actor SessionLane {
 
                     // A history window pages backward and must not move the
                     // reconcile cursor, or the live tail would be skipped.
-                    if cut.window != "history" && cut.window != "lineage" {
+                    if !["history", "lineage", "decided", "escalations"].contains(cut.window) {
                         nextSeq = max(nextSeq, cut.nextSeq)
                     }
                     continuation.yield(.cut(cut))

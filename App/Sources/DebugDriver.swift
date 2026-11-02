@@ -190,6 +190,28 @@ enum DebugDriver {
         case "prompt" where parts.count > 2:
             let text = parts.dropFirst(2).joined(separator: " ")
             model.daemon(holding: parts[1])?.attach(parts[1])?.send(text: text)
+        case "scrollup":
+            // Scrolls the widest scroll view to its top, as a reader dragging up would.
+            func scrollViews(_ view: NSView) -> [NSScrollView] {
+                ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews)
+            }
+            if let content = window?.contentView,
+               let scroll = scrollViews(content).max(by: { $0.frame.width < $1.frame.width }) {
+                scroll.contentView.scroll(to: .zero)
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+        case "detach" where parts.count > 1:
+            // Ends the session's socket so the daemon connection attaches a fresh
+            // lane, which opens on the recent window and not on everything held.
+            model.controller(for: parts[1])?.detach()
+        case "strand" where parts.count > 1:
+            model.currentSession?.focusedStrand = parts[1]
+        case "lanedelay" where parts.count > 1:
+            // Holds each send before it reaches the lane, so a test can see the
+            // pending line that a quick daemon answer would remove at once.
+            ComposerModel.debugSendDelay = Int(parts[1]).flatMap { $0 > 0 ? Duration.milliseconds($0) : nil }
+        case "pasteimage" where parts.count > 1:
+            pasteImage(at: rest)
         case "approve" where parts.count > 1:
             if let controller = model.controller(for: parts[1]), let record = controller.escalations.first {
                 controller.approve(record)
@@ -214,6 +236,36 @@ enum DebugDriver {
             }
         default:
             break
+        }
+    }
+
+    // MARK: Paste
+
+    /// Pastes an image file through the real Edit > Paste path. The general
+    /// pasteboard is borrowed for the moment of the paste and restored after, so
+    /// a person's clipboard is not left holding a test image.
+    private static func pasteImage(at path: String) {
+        guard let data = FileManager.default.contents(atPath: path), let image = NSImage(data: data) else {
+            reply = "error: cannot read an image at \(path)"
+            return
+        }
+        let board = NSPasteboard.general
+        let saved: [[(NSPasteboard.PasteboardType, Data)]] = (board.pasteboardItems ?? []).map { item in
+            item.types.compactMap { type in item.data(forType: type).map { (type, $0) } }
+        }
+        board.clearContents()
+        board.writeObjects([image])
+
+        // The window is key but the app is not active, so the responder is addressed
+        // directly instead of through the application's own search for a target.
+        let responder = window?.firstResponder
+        let handled = NSApp.sendAction(#selector(NSText.paste(_:)), to: responder, from: nil)
+        reply = "handled=\(handled) responder=\(responder.map { "\(type(of: $0))" } ?? "none") target=\(PasteBridge.target != nil)"
+        board.clearContents()
+        for item in saved {
+            let restored = NSPasteboardItem()
+            for (type, data) in item { restored.setData(data, forType: type) }
+            board.writeObjects([restored])
         }
     }
 
@@ -395,14 +447,43 @@ enum Snapshot {
                 "strands": session.strands.map(\.id),
                 "transcript": session.blocks.map { block -> String in
                     switch block {
-                    case .activity(let rows): return ToolSummary.describe(rows)
+                    case .fold(let fold):
+                        return fold.title + ": " + ToolSummary.describe(fold.rows.filter { if case .tool = $0.kind { return true }; return false })
                     case .row(let row):
                         switch row.kind {
                         case .user(let text, _), .assistant(let text), .thinking(let text), .notice(let text), .failure(let text): return text
                         case .tool(let name, _, _, _): return name
+                        case .spawned(let child, let purpose): return "spawned \(child) \(purpose)"
+                        case .agentReport(let child, let outcome, let report): return "report \(child) \(outcome) \(report)"
+                        case .decision(let tool, let summary, let outcome): return "decision \(outcome) \(tool) \(summary)"
                         }
                     }
                 },
+                "folds": session.blocks.compactMap { block -> [String: Any]? in
+                    guard case .fold(let fold) = block else { return nil }
+                    return ["title": fold.title, "steps": fold.steps, "files": fold.files, "failed": fold.failed, "live": fold.isLive,
+                            "added": fold.added, "removed": fold.removed, "rows": fold.rows.count]
+                },
+                "focusedStrand": session.focusedStrand,
+                "hasOlder": session.hasOlder,
+                "isLoadingOlder": session.isLoadingOlder,
+                "turnStartedAt": session.turnStartedAt != nil,
+                "streamThinking": session.stream?.thinking.count ?? 0,
+                "pendingInputs": session.pendingInputs.map { ["text": $0.text, "kind": $0.kind, "editable": $0.editable] as [String: Any] },
+                "pendingDrafts": session.composer.ledger.lines.map(\.text),
+                "draft": session.composer.draft,
+                "images": session.composer.images.map(\.name),
+                "userImages": session.blocks.reduce(0) { total, block in
+                    if case .row(let row) = block { return total + row.images }
+                    return total
+                },
+                "notice": session.composer.notice?.text ?? "",
+                "noticeIsWarning": session.composer.notice?.tone == .warning,
+                "slashRows": session.composer.suggestions(catalogue: session.catalogue).map(\.command),
+                "slashSelected": session.composer.selection,
+                "btwStatus": session.composer.btw?["status"]?.string ?? "",
+                "editing": session.composer.editing?.text ?? "",
+                "models": session.catalogue.models,
             ]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return "{}" }

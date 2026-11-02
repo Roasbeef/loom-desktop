@@ -3,6 +3,7 @@
 `covers` holds ids from docs/parity.md. tests/ui/parity_check.py fails if a row claims
 `yes` and no scenario covers it, so the table cannot drift from what is tested.
 """
+import re
 import time
 from dataclasses import dataclass
 
@@ -167,6 +168,408 @@ def a_failed_run_reaches_the_inbox(c):
     """A provider failure shows as a failed run, and the attention list carries it."""
     c.app.dispatch("Please explode now", WORKSPACE)
     wait_for(lambda: any(a["kind"] == "Failed runs" and "explode" in a["agent"] for a in c.app.snap()["attention"]), 60, "the failed run")
+
+
+# The composer.
+
+
+def settle(c):
+    """Waits for the open session's run to end."""
+    wait_for(lambda: not c.app.session()["isBusy"], 40, "the run to end")
+
+
+def send_line(c, text, mods=""):
+    """Types into the composer and presses Return, as a person would."""
+    c.app.type(text)
+    wait_for(lambda: c.app.session()["draft"] == text, 3, "the typed draft")
+    c.app.key("return", mods)
+
+
+def busy_session(c, title):
+    c.app.dispatch(f"{title} hang", WORKSPACE)
+    c.app.open_session(title)
+    wait_for(lambda: c.app.session().get("isBusy"), 20, "a busy session")
+
+
+@scenario("CO-03", "CO-04", "CO-02", "QU-01", "TR-41", "CO-09")
+def return_queues_and_the_chord_steers(c):
+    """Return queues behind a busy turn, and the steer chord joins the turn."""
+    busy_session(c, "Queueing")
+    send_line(c, "after this run")
+    held = wait_for(lambda: c.app.session()["pendingInputs"], 10, "the held input")
+    check(held[0]["kind"] == "queue", f"Return should queue, got {held}")
+    c.app.see("after this run")
+    wait_for(lambda: "Queued" in c.app.session()["notice"], 5, "the notice")
+    send_line(c, "change course", "cmd")
+    wait_for(lambda: not c.app.session()["lastError"], 5, "no error")
+    check(not c.app.session()["lastError"], c.app.session()["lastError"])
+    c.app.menu("Stop Run")
+    settle(c)
+
+
+@scenario("CO-04", "CO-01", "CO-16")
+def idle_composer_sends_with_return_or_the_chord(c):
+    """An empty draft cannot be sent, and Return and the chord both send when idle."""
+    c.app.dispatch("Chord check", WORKSPACE)
+    c.app.open_session("Chord check")
+    settle(c)
+    send = [n for n in c.app.tree() if n["name"] == "Send"]
+    check(send and not send[0]["enabled"], f"Send should be disabled with an empty draft: {send}")
+    send_line(c, "plain return")
+    c.app.transcript_has("plain return", 20)
+    settle(c)
+    send_line(c, "chord return", "cmd")
+    c.app.transcript_has("chord return", 20)
+    settle(c)
+
+
+@scenario("CO-05", "CO-06", "KB-06", "CO-21", "CO-22")
+def the_command_list_follows_the_draft(c):
+    """A slash opens the list, arrows and Tab drive it, Escape closes it."""
+    c.app.dispatch("Slash list", WORKSPACE)
+    c.app.open_session("Slash list")
+    settle(c)
+    c.app.type("/")
+    rows = wait_for(lambda: c.app.session()["slashRows"], 5, "the command list")
+    check("/model" in rows and "/effort" in rows, f"the list should offer commands: {rows}")
+    c.app.type("ef")
+    wait_for(lambda: c.app.session()["slashRows"] == ["/effort"], 5, "the list to narrow")
+    c.app.key("escape")
+    wait_for(lambda: not c.app.session()["slashRows"], 5, "Escape to close the list")
+    check(c.app.session()["draft"] == "/ef", "Escape must keep the draft")
+    c.app.type("f")
+    wait_for(lambda: c.app.session()["slashRows"], 5, "typing to reopen the list")
+    c.app.key("tab")
+    wait_for(lambda: c.app.session()["draft"] == "/effort ", 5, "Tab to complete")
+    levels = wait_for(lambda: c.app.session()["slashRows"], 5, "the argument rows")
+    check(len(levels) == 7, f"/effort offers seven levels: {levels}")
+    c.app.key("down")
+    wait_for(lambda: c.app.session()["slashSelected"] == 1, 5, "Down to move")
+    c.app.key("up")
+    c.app.key("up")
+    wait_for(lambda: c.app.session()["slashSelected"] == 6, 5, "Up to wrap")
+    c.app.key("return")
+    wait_for(lambda: c.app.session()["notice"], 10, "a notice after /effort")
+    check(c.app.session()["draft"] == "", "the command should leave the editor empty")
+
+    # The model names come from the daemon's catalogue.
+    c.app.type("/model ")
+    wait_for(lambda: c.app.session()["slashRows"] == ["/model fake"], 10, "the model rows")
+    c.app.key("return")
+    wait_for(lambda: "now uses fake" in c.app.session()["notice"], 10, "/model to answer")
+    check(not c.app.session()["noticeIsWarning"], c.app.session()["notice"])
+
+
+@scenario("CO-13", "CO-09", "CO-12")
+def a_refused_draft_returns_to_the_editor(c):
+    """A pending line shows until the daemon answers, and a refusal restores the text."""
+    busy_session(c, "Refusal")
+    c.app.cmd("lanedelay 2500")
+    c.app.type("slow one")
+    c.app.key("return")
+    wait_for(lambda: c.app.session()["pendingDrafts"] == ["slow one"], 3, "the pending line")
+    c.app.see("Sending: slow one", 3)
+    wait_for(lambda: not c.app.session()["pendingDrafts"], 10, "the line to go once taken")
+    c.app.cmd("lanedelay 0")
+    for number in range(2, 5):
+        send_line(c, f"queued {number}")
+        wait_for(lambda n=number: len(c.app.session()["pendingInputs"]) == n, 10, f"{number} held inputs")
+    send_line(c, "one too many")
+    wait_for(lambda: c.app.session()["draft"] == "one too many", 10, "the refused draft to return")
+    check(c.app.session()["noticeIsWarning"], "the refusal should be worded as a warning")
+    check("full" in c.app.session()["notice"], c.app.session()["notice"])
+    c.app.menu("Stop Run")
+
+
+@scenario("QU-02", "QU-03", "QU-04")
+def a_held_input_can_be_edited_and_withdrawn(c):
+    """The submitter edits a queued message in place, and removes another."""
+    busy_session(c, "Held edit")
+    send_line(c, "first words")
+    wait_for(lambda: c.app.session()["pendingInputs"], 10, "the held input")
+    wait_for(lambda: c.app.session()["pendingInputs"][0]["editable"], 5, "an editable input")
+    c.app.press("Edit queued message")
+    wait_for(lambda: c.app.session()["editing"] == "first words", 10, "the full text to load")
+    c.app.key("a", "cmd")
+    c.app.type("second words")
+    wait_for(lambda: c.app.session()["editing"] == "second words", 5, "the edited text")
+    c.app.press("Save")
+    wait_for(lambda: [p["text"] for p in c.app.session()["pendingInputs"]] == ["second words"], 10, "the saved edit")
+    c.app.press("Remove queued message")
+    wait_for(lambda: not c.app.session()["pendingInputs"], 10, "the input to be withdrawn")
+    c.app.menu("Stop Run")
+
+
+def write_png(path):
+    """Writes a 2x2 PNG with no dependency."""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    raw = b"".join(b"\x00" + bytes([200, 40, 40] * 2) for _ in range(2))
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+    )
+
+
+@scenario("CO-15", "TR-39")
+def a_pasted_image_goes_with_the_message(c):
+    """Paste attaches an image as a chip, and the message carries it to the daemon."""
+    from pathlib import Path
+    png = Path(BASE) / "pixel.png"
+    write_png(png)
+    c.app.dispatch("Image paste", WORKSPACE)
+    c.app.open_session("Image paste")
+    settle(c)
+    said = c.app.cmd(f"pasteimage {png}")
+    wait_for(lambda: c.app.session()["images"] == ["Pasted image"], 5, f"the attached chip ({said})")
+    c.app.see("Remove Pasted image")
+    c.app.press("Remove Pasted image")
+    wait_for(lambda: not c.app.session()["images"], 5, "the chip to go")
+    c.app.cmd(f"pasteimage {png}")
+    wait_for(lambda: c.app.session()["images"], 5, "the chip again")
+    send_line(c, "describe the picture")
+    wait_for(lambda: c.app.session()["userImages"] == 1, 20, "the image in the sent message")
+    c.app.see("1 image")
+    check(not c.app.session()["lastError"] and not c.app.session()["noticeIsWarning"], c.app.session()["notice"])
+    settle(c)
+
+
+def run_command(c, text):
+    """Types a command, presses Return, and returns the notice it produced."""
+    c.app.type(text)
+    wait_for(lambda: c.app.session()["draft"] == text, 3, "the typed command")
+    # Escape closes the command list, so Return submits the line as typed.
+    if c.app.session()["slashRows"]:
+        c.app.key("escape")
+    c.app.key("return")
+    return wait_for(lambda: c.app.session()["notice"], 15, f"a notice after {text}")
+
+
+@scenario("CO-31", "CO-32", "CO-09")
+def schedules_list_and_retire(c):
+    """/schedules lists, and /unschedule says plainly when nothing matches."""
+    c.app.dispatch("Schedule words", WORKSPACE)
+    c.app.open_session("Schedule words")
+    settle(c)
+    check("chedule" in run_command(c, "/schedules"), "schedules should answer")
+    note = run_command(c, "/unschedule nothing-here")
+    check(c.app.session()["noticeIsWarning"], f"retiring a missing schedule is refused: {note}")
+
+
+@scenario("CO-25", "KB-05")
+def fork_makes_a_strand_and_escape_returns(c):
+    """/fork adds a strand, and Escape in the composer returns to main."""
+    c.app.dispatch("Fork it", WORKSPACE)
+    c.app.open_session("Fork it")
+    settle(c)
+    run_command(c, "/fork branch-two")
+    name = wait_for(lambda: next((x for x in c.app.session()["strands"] if "branch-two" in x), None), 10, "the forked strand")
+    c.app.cmd(f"strand {name}")
+    wait_for(lambda: c.app.session()["focusedStrand"] == name, 5, "focus on the fork")
+    c.app.key("escape")
+    wait_for(lambda: c.app.session()["focusedStrand"] == "main", 5, "Escape to return to main")
+
+
+@scenario("CO-26", "CO-27", "CO-28", "CO-29", "CO-30")
+def goals_are_pinned_and_steered(c):
+    """/goal pins, checks, pauses, resumes and clears a session goal."""
+    c.app.dispatch("Goal words", WORKSPACE)
+    c.app.open_session("Goal words")
+    settle(c)
+    note = run_command(c, "/goal --budget 50000 ship the thing")
+    c.notes.append(f"goal_set: {note}")
+    check(not c.app.session()["noticeIsWarning"], note)
+    check("ship the thing" in note, note)
+    check("check" in run_command(c, "/goal check make check").lower(), "the check should be named")
+    check("paused" in run_command(c, "/goal pause"), "paused")
+    check("active" in run_command(c, "/goal resume"), "resumed")
+    check("cleared" in run_command(c, "/goal clear"), "cleared")
+
+
+@scenario("CO-17", "TR-32")
+def compact_runs_and_leaves_a_notice(c):
+    """/compact asks the daemon to compact, and the transcript says it happened."""
+    c.app.dispatch("Compact me demo", WORKSPACE)
+    c.app.open_session("Compact me")
+    c.app.transcript_has("Retry budget", 40)
+    settle(c)
+    note = run_command(c, "/compact")
+    c.notes.append(f"compact: {note}")
+    wait_for(lambda: any("compacted" in t for t in c.app.session()["transcript"]) or c.app.session()["noticeIsWarning"], 40, "a compaction or a refusal")
+
+
+@scenario("CO-36", "CO-37")
+def a_side_question_is_answered_apart(c):
+    """/btw asks a question beside the conversation, and closes."""
+    c.app.dispatch("Side question", WORKSPACE)
+    c.app.open_session("Side question")
+    settle(c)
+    c.app.type("/btw what is a lane")
+    c.app.key("escape")
+    c.app.key("return")
+    wait_for(lambda: c.app.session()["btwStatus"], 15, "the side panel")
+    c.app.see("Side question")
+    wait_for(lambda: c.app.session()["btwStatus"] != "running", 30, "the answer")
+    c.app.see("scripted")
+    c.app.press("Close side question")
+    wait_for(lambda: not c.app.session()["btwStatus"], 5, "the panel to close")
+
+
+@scenario("CO-23", "CO-24")
+def profile_is_shown(c):
+    """/profile names the session's profile and the ones it may switch to."""
+    c.app.dispatch("Profile words", WORKSPACE)
+    c.app.open_session("Profile words")
+    settle(c)
+    note = run_command(c, "/profile")
+    check(note.startswith("Profile:"), note)
+
+
+@scenario("CO-20", "CO-19")
+def typed_queue_and_steer_commands(c):
+    """/queue holds text behind the run, and /steer joins it."""
+    busy_session(c, "Typed queue")
+    run_command(c, "/queue after the hang")
+    wait_for(lambda: [p["kind"] for p in c.app.session()["pendingInputs"]] == ["queue"], 10, "the queued input")
+    run_command(c, "/steer go another way")
+    wait_for(lambda: not c.app.session()["lastError"], 5, "no error")
+    c.app.menu("Stop Run")
+
+
+@scenario("TR-21")
+def a_long_message_is_drawn_whole(c):
+    """A long message needs no toggle, since the whole text is on screen."""
+    c.app.dispatch("Long words", WORKSPACE)
+    c.app.open_session("Long words")
+    settle(c)
+    tail = "THE-END-OF-A-LONG-MESSAGE"
+    long = " ".join(["filler"] * 400) + " " + tail
+    c.app.cmd(f"prompt {c.app.session_id('Long words')} {long}")
+    c.app.see(tail, 20)
+
+
+@scenario("TR-33")
+def a_stopped_run_says_so(c):
+    """A run the person stopped leaves a row that says so."""
+    busy_session(c, "Stopped words")
+    c.app.menu("Stop Run")
+    settle(c)
+    wait_for(lambda: any("Stopped" in t for t in c.app.session()["transcript"]), 15, "a stopped row")
+
+
+# The transcript.
+
+
+def name_starting(c, prefix):
+    """The full accessibility name of the first control whose name begins with `prefix`."""
+    return wait_for(
+        lambda: next((n["name"] for n in c.app.tree() if n["name"].startswith(prefix)), None),
+        10, f"a control named {prefix!r}...",
+    )
+
+
+def fold_titles(c):
+    return [f["title"] for f in c.app.session()["folds"]]
+
+
+@scenario("TR-11", "TR-13", "TR-14", "TR-16", "TR-12", "TR-15")
+def a_turn_folds_to_one_line_with_figures(c):
+    """A turn's work sits behind one line, whose steps say what they did."""
+    c.app.dispatch("Folding tour", WORKSPACE)
+    c.app.open_session("Folding tour")
+    c.app.transcript_has("The tour is done", 40)
+    settle(c)
+    fold = wait_for(lambda: c.app.session()["folds"], 10, "a fold")[0]
+    check(fold["steps"] == 3 and fold["files"] == 1 and fold["failed"] == 1, f"figures were {fold}")
+    check(fold["added"] == 4, f"the write adds four lines: {fold}")
+    check(re.search(r"Worked .*3 steps · 1 file · 1 failed", fold["title"]), fold["title"])
+    c.app.not_see("Wrote tour-notes.txt")
+    c.app.press(fold["title"])
+    c.app.see("Wrote tour-notes.txt")
+    c.app.see("Ran echo tour-command-output")
+    c.app.see(r"Did not complete: read no-such-file-for-the-tour.txt")
+    c.app.see(r"Wrote tour-notes.txt.*4 added")
+    c.app.press("Ran echo tour-command-output")
+    c.app.see(r"tour-command-output")
+    c.app.see(r"\$ echo tour-command-output")
+
+
+@scenario("TR-03", "TR-04", "TR-18")
+def reasoning_is_live_then_settled(c):
+    """Reasoning shows as it streams, and settles to a row with its length."""
+    c.app.dispatch("Please think it over", WORKSPACE)
+    c.app.open_session("Please think it over")
+    wait_for(lambda: c.app.session()["isBusy"], 20, "a busy session")
+    check(c.app.session()["turnStartedAt"], "the elapsed time should come from the recorded input")
+    wait_for(lambda: c.app.session()["streamThinking"] > 0, 20, "reasoning to stream")
+    c.app.press("Thinking")
+    c.app.see("First, consider the retry budget")
+    c.app.transcript_has("forty-two", 40)
+    settle(c)
+    title = wait_for(lambda: fold_titles(c), 10, "the settled fold")[0]
+    c.app.press(title)
+    c.app.see(r"Thought, 3 lines")
+    c.app.press(name_starting(c, "Thought, 3 lines"))
+    c.app.see("Third, decide what to change")
+
+
+@scenario("TR-17")
+def a_program_draws_as_a_card(c):
+    """A code_mode call opens to its program and what it did."""
+    c.app.dispatch("Run a program card", WORKSPACE)
+    c.app.open_session("Run a program card")
+    c.app.transcript_has("The program has run", 40)
+    settle(c)
+    c.app.press(fold_titles(c)[0])
+    c.app.press("Ran a program import cap/fs")
+    c.app.see(r"Program: ")
+    c.app.see(r"Program · 5 lines")
+
+
+@scenario("TR-29")
+def a_decided_approval_stays_in_the_lane(c):
+    """After Allow, the transcript keeps a row saying what was allowed."""
+    pending_approval(c, "Decided row")
+    c.app.press("Allow")
+    wait_for(lambda: not c.app.session()["escalations"], what="the approval to clear")
+    wait_for(lambda: any(t.startswith("decision") for t in c.app.session()["transcript"]), 15, "a decision row")
+    c.app.see(r"Allowed")
+
+
+@scenario("TR-34", "TR-35")
+def older_turns_page_in(c):
+    """A long conversation opens at its end, and Load Older Turns reaches the start."""
+    sid = c.app.dispatch("Long history", WORKSPACE)
+    c.app.open_session("Long history")
+    settle(c)
+    for number in range(70):
+        c.app.prompt(sid, f"turn number {number}")
+        wait_for(lambda n=number: any(f"turn number {n}" in t for t in c.app.session()["transcript"]), 20, "the turn to land")
+        settle(c)
+    c.app.cmd(f"detach {sid}")
+    wait_for(lambda: c.app.session().get("isLive") is False, 10, "the lane to end")
+    wait_for(lambda: c.app.session().get("isLive") and c.app.session().get("isAdopted"), 20, "a fresh lane")
+    before = c.app.session()["blocks"]
+    check(c.app.session()["hasOlder"], f"a reopened long session should have older turns ({before} blocks held)")
+    c.app.cmd("scrollup")
+    wait_for(lambda: c.app.session()["blocks"] > before, 20, "older turns to arrive")
+
+    # Each page moves the top out of view, so the reader scrolls up again.
+    for _ in range(40):
+        if not c.app.session()["hasOlder"]:
+            break
+        c.app.cmd("scrollup")
+        time.sleep(0.5)
+    wait_for(lambda: not c.app.session()["hasOlder"], 30, "the start of the conversation")
+    def at_the_top():
+        c.app.cmd("scrollup")
+        return any("Beginning of the conversation" in t for t in c.app.texts())
+    wait_for(at_the_top, 20, "the beginning of the conversation", every=0.4)
 
 
 # Approvals.

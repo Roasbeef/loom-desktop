@@ -167,13 +167,86 @@ final class TranscriptBlockTests: XCTestCase {
         .init(id: id, kind: .tool(name: name, arguments: .null, result: result, isError: failed))
     }
 
-    func testGroupsConsecutiveToolsOnly() {
-        let text = TranscriptRow(id: "t", kind: .assistant(text: "hi"))
-        let blocks = TranscriptBlock.group([tool("a", "bash"), tool("b", "fs_read"), text, tool("c", "bash")])
-        XCTAssertEqual(blocks.count, 3)
-        guard case .activity(let first) = blocks[0] else { return XCTFail("expected a group") }
-        XCTAssertEqual(first.map(\.id), ["a", "b"])
+    func testFoldsATurnsWorkAndKeepsTheAnswerOutside() {
+        let user = TranscriptRow(id: "u", kind: .user(text: "go", author: nil), at: 1_000)
+        var think = TranscriptRow(id: "th", kind: .thinking(text: "hm"), at: 2_000)
+        think.tookMs = 1_000
+        var run = tool("a", "bash")
+        run.settledAt = 49_000
+        let answer = TranscriptRow(id: "ans", kind: .assistant(text: "done"), at: 50_000)
+        let blocks = TranscriptBlock.group([user, think, run, tool("b", "fs_read"), answer])
+        XCTAssertEqual(blocks.map(\.id), ["u", "fold/th", "ans"])
+        guard case .fold(let fold) = blocks[1] else { return XCTFail("expected a fold") }
+        XCTAssertEqual(fold.steps, 2)
+        XCTAssertEqual(fold.title, "Worked 48s · 2 steps")
         XCTAssertEqual(blocks.map(\.id).count, Set(blocks.map(\.id)).count)
+    }
+
+    func testNarrationBetweenStepsFoldsButTheLastProseStays() {
+        let rows = [
+            TranscriptRow(id: "u", kind: .user(text: "go", author: nil)),
+            TranscriptRow(id: "n", kind: .assistant(text: "looking")),
+            tool("a", "bash"),
+            TranscriptRow(id: "ans", kind: .assistant(text: "done")),
+        ]
+        let blocks = TranscriptBlock.group(rows)
+        guard case .fold(let fold) = blocks[1] else { return XCTFail("expected a fold") }
+        XCTAssertEqual(fold.rows.map(\.id), ["n", "a"])
+        XCTAssertEqual(blocks.last?.id, "ans")
+    }
+
+    func testATurnWithoutWorkIsNotFolded() {
+        let rows = [
+            TranscriptRow(id: "u", kind: .user(text: "hi", author: nil)),
+            TranscriptRow(id: "ans", kind: .assistant(text: "hello")),
+        ]
+        XCTAssertEqual(TranscriptBlock.group(rows).count, 2)
+    }
+
+    func testARunningTurnStaysLive() {
+        let rows = [TranscriptRow(id: "u", kind: .user(text: "go", author: nil)), tool("a", "bash")]
+        guard case .fold(let fold) = TranscriptBlock.group(rows, running: true)[1] else { return XCTFail("expected a fold") }
+        XCTAssertTrue(fold.isLive)
+        XCTAssertTrue(fold.title.hasPrefix("Working"))
+    }
+
+    func testStepWordsCountLinesAndNameTheSubject() {
+        let edit = StepWords.of(
+            name: "fs_edit",
+            arguments: ["path": "a.py", "old": "x\ny", "new": "x\nz\nw"],
+            isRunning: false
+        )
+        XCTAssertEqual(edit.verb, "Edited")
+        XCTAssertEqual(edit.subject, "a.py")
+        XCTAssertEqual(edit.added, 2)
+        XCTAssertEqual(edit.removed, 1)
+        let write = StepWords.of(name: "fs_write", arguments: ["path": "b.py", "content": "1\n2\n3"], isRunning: true)
+        XCTAssertEqual(write.verb, "Writing")
+        XCTAssertEqual(write.added, 3)
+        XCTAssertNil(write.removed)
+    }
+
+    func testAnchoredHunksCountTheLinesTheyReplaceAndAdd() {
+        let hunks: JSONValue = [
+            ["op": "replace", "from": ["line": 2, "anchor": "a"], "to": ["line": 4, "anchor": "b"], "lines": ["x", "y"]],
+            ["op": "delete", "from": ["line": 9, "anchor": "c"], "to": ["line": 9, "anchor": "c"]],
+            ["op": "insert_after", "at": ["line": 1, "anchor": "d"], "lines": ["z"]],
+        ]
+        let words = StepWords.of(name: "fs_edit", arguments: ["path": "f.py", "hunks": hunks], isRunning: false)
+        XCTAssertEqual(words.added, 3)
+        XCTAssertEqual(words.removed, 4)
+        XCTAssertEqual(words.file, "f.py")
+    }
+
+    func testAFailedStepIsASentenceWithTheFirstLineOfItsResult() {
+        let text = StepWords.failure(name: "bash", arguments: ["command": "make"], result: "make: *** boom\nmore")
+        XCTAssertEqual(text, "Did not complete: ran make. make: *** boom")
+    }
+
+    func testDurationsReadAsAPersonWouldSayThem() {
+        XCTAssertEqual(StepWords.duration(ms: 400), "under 1s")
+        XCTAssertEqual(StepWords.duration(ms: 48_000), "48s")
+        XCTAssertEqual(StepWords.duration(ms: 192_000), "3m 12s")
     }
 
     func testSummarizesInWordsAPersonWouldUse() {

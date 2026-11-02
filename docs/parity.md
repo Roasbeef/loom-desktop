@@ -73,45 +73,45 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 |---|---|---|---|---|---|
 | TR-01 | Live transcript from cuts and pushes | component.gleam:1673 | `subscribe`, `catch_up`, `snapshot_next`, `committed` | yes (SessionLane.swift:55; Conversation.swift:276) | 1 |
 | TR-02 | Streaming answer in a live region | view/live.gleam:187 | `stream_delta` | yes (SessionScreen.swift:563) | 1 |
-| TR-03 | Thinking row before anything streams, with elapsed time | view/live.gleam:174 | `op_transition`, `stream_delta` | partial (SessionScreen.swift:592 shows Working with a timer measured from when the client saw the run) | 1 |
-| TR-04 | Live reasoning row with a preview and expandable text | view/fold_row.gleam:189 | `stream_delta` | partial (SessionScreen.swift:568 shows the last 500 characters until text starts; not expandable) | 1 |
+| TR-03 | Thinking row before anything streams, with elapsed time | view/live.gleam:174 | `op_transition`, `stream_delta` | yes (WorkingLine reads Thinking from the recorded input time; reasoning_is_live_then_settled) | 1 |
+| TR-04 | Live reasoning row with a preview and expandable text | view/fold_row.gleam:189 | `stream_delta` | yes (LiveReasoning shows the newest line and opens to the text) | 1 |
 | TR-05 | Generation rate, `tok/s` | view/heading.gleam:227 | `usage`, `op_transition` | no | 2 |
 | TR-06 | Markdown answers | markdown_view.gleam:248 | `entry` | partial (Markdown.swift:5 and Theme.swift:225; no alert or footnote block) | 1 |
 | TR-07 | Code fences with syntax highlighting | code_view.gleam:67 | `entry` | yes (Theme.swift:395; Syntax.swift:58) | 1 |
 | TR-08 | Mermaid diagrams, source disclosure, Copy source, Expand | markdown_view.gleam:248; wc:mermaid.gleam:36 | `entry` | no | 2 |
 | TR-09 | Tables that scroll in their own box | markdown_view.gleam:295 | `entry` | yes (Theme.swift:328) | 2 |
 | TR-10 | Clickable links, validated before an anchor is drawn | wc:link.gleam:14 | `entry` | partial (Theme.swift:313 renders links; no `link_rule` equivalent) | 2 |
-| TR-11 | A turn's work folded behind one divider with figures | view/lane.gleam:1031 | `history_lineage` for fold steps | partial (SessionScreen.swift:355 folds runs of consecutive tool calls; no per-turn divider or duration) | 1 |
-| TR-12 | Failed count and "interrupted" on a divider | sv:turns.gleam:173 | `entry` | partial (Conversation.swift:195 counts failed calls; no interrupted word) | 2 |
-| TR-13 | Step rows with verb, subject and `+n −m` | view/fold_row.gleam:57; sv:step_words.gleam:121 | `entry` | partial (SessionScreen.swift:443 shows a command, path or pattern; no counts on the row) | 1 |
-| TR-14 | Open a step for its full program and result | view/fold_row.gleam:57 | `entry` | code (SessionScreen.swift:470) | 1 |
-| TR-15 | Running step with elapsed time from its record | view/fold_row.gleam:57 | `entry`, `tool_output` | partial (SessionScreen.swift:449 shows a spinner and output tail; no elapsed time) | 2 |
-| TR-16 | Failed step's plain sentence, then its remaining rows | view/lane.gleam:1638; sv:step_words.gleam:398 | `entry` | partial (SessionScreen.swift:487 shows raw result text in failure colour) | 2 |
-| TR-17 | Program card for `code_mode`: outcome, chips, calls, result | view/program_card.gleam:89 | `entry` | no (SessionScreen.swift:497 draws a generic row) | 2 |
-| TR-18 | Settled reasoning: preview, line count, time, body | view/lane.gleam:1400 | `entry` | partial (SessionScreen.swift:315 has a disclosure only) | 1 |
+| TR-11 | A turn's work folded behind one divider with figures | view/lane.gleam:1031 | `history_lineage` for fold steps | yes (Fold in Turns.swift; a_turn_folds_to_one_line_with_figures) | 1 |
+| TR-12 | Failed count and "interrupted" on a divider | sv:turns.gleam:173 | `entry` | partial (the divider counts failed steps and a stopped turn gets a Stopped row; the word interrupted is not on the divider) | 2 |
+| TR-13 | Step rows with verb, subject and `+n −m` | view/fold_row.gleam:57; sv:step_words.gleam:121 | `entry` | yes (StepWords.of; a write shows +4, hunk counts for edits are unit tested) | 1 |
+| TR-14 | Open a step for its full program and result | view/fold_row.gleam:57 | `entry` | yes (a step opens to its whole command or program and its result) | 1 |
+| TR-15 | Running step with elapsed time from its record | view/fold_row.gleam:57 | `entry`, `tool_output` | code (StepClock reads the call record's time; no scenario catches a step long enough to tick) | 2 |
+| TR-16 | Failed step's plain sentence, then its remaining rows | view/lane.gleam:1638; sv:step_words.gleam:398 | `entry` | yes (StepWords.failure, then the raw result when the step opens) | 2 |
+| TR-17 | Program card for `code_mode`: outcome, chips, calls, result | view/program_card.gleam:89 | `entry` | code (ProgramCardView draws a program, its calls and result from the call record, which is unit tested; the cluster's code mode returned no call record to show) | 2 |
+| TR-18 | Settled reasoning: preview, line count, time, body | view/lane.gleam:1400 | `entry` | yes (ReasoningRow: preview, line count, time, body) | 1 |
 | TR-19 | Summarizer's label on long reasoning | view/lane.gleam:1467 | `block_summaries`, `block_summary` | no | 2 |
 | TR-20 | A person's message with sender name and role | view/lane.gleam:713 | `entry`, `presence` | partial (SessionScreen.swift:301 names a non-Owner author; no role) | 2 |
-| TR-21 | Long message shortened with a toggle | view/lane.gleam:1341 | local | code (SessionScreen.swift:294 draws the whole text, so no toggle is needed) | 3 |
+| TR-21 | Long message shortened with a toggle | view/lane.gleam:1341 | local | yes (the whole message is drawn, so no toggle is needed; a_long_message_is_drawn_whole) | 3 |
 | TR-22 | Memory context as a closed row in the fold | sv:turns.gleam:213 | `entry` | no | 2 |
-| TR-23 | Spawned line for a sub-agent | view/lane.gleam:780 | `entry` | partial (SessionScreen.swift:498 uses a generic person icon) | 2 |
-| TR-24 | Sub-agent result line, opening to the report | view/lane.gleam:1550 | `entry` | partial (SessionScreen.swift:486 shows it as generic tool output) | 2 |
+| TR-23 | Spawned line for a sub-agent | view/lane.gleam:780 | `entry` | code (SpawnedLine; the scripted model cannot spawn a child here) | 2 |
+| TR-24 | Sub-agent result line, opening to the report | view/lane.gleam:1550 | `entry` | code (AgentReportLine; same limit) | 2 |
 | TR-25 | Peer message card with session, strand and receipt | view/lane.gleam:834 | `entry` | partial (SessionScreen.swift:301 draws a bubble with an author; framing is not removed) | 2 |
 | TR-26 | Reply to a peer, which drafts the reply | view/lane.gleam:935 | local, then `prompt` | no | 2 |
 | TR-27 | Open the peer's session | view/lane.gleam:956 | local; `ui.link` equivalent | no | 2 |
 | TR-28 | Sibling strand's message card | view/lane.gleam:850 | `entry` | partial (SessionScreen.swift:301 draws a bubble with an author; framing is not removed) | 2 |
-| TR-29 | Decided approval row in the lane | sv:decisions.gleam:89 | `escalations_decided` | no | 2 |
+| TR-29 | Decided approval row in the lane | sv:decisions.gleam:89 | `escalations_decided` | yes (`escalations_decided` rows placed by sequence; a_decided_approval_stays_in_the_lane) | 2 |
 | TR-30 | Cache miss row | sv:turns.gleam:351 | `usage` | no | 3 |
 | TR-31 | Delivered advisor nudge row | sv:turns.gleam:324 | `entry` | partial (Conversation.swift:602 draws a `[loom]` note as a one-line notice) | 3 |
-| TR-32 | Compaction, branch and oversized notices | sv:transcript_lines.gleam:2672 | `entry` | code (Conversation.swift:571) | 2 |
-| TR-33 | Provider failure and Stopped rows | sv:transcript_lines.gleam:35 | `entry` | partial (Conversation.swift:633 shows the raw error; no worded Stopped diagnostic) | 2 |
-| TR-34 | Load older, by turns | view/lane.gleam:566 | `history_lineage` | partial (SessionScreen.swift:187 and SessionLane.swift:132 page with `history`) | 1 |
-| TR-35 | Beginning-of-conversation and loading words | view/lane.gleam:556 | local | partial (SessionScreen.swift:187 says Loading; nothing at the beginning) | 3 |
+| TR-32 | Compaction, branch and oversized notices | sv:transcript_lines.gleam:2672 | `entry` | code (compaction, branch and oversized notices; the fake daemon never compacts) | 2 |
+| TR-33 | Provider failure and Stopped rows | sv:transcript_lines.gleam:35 | `entry` | yes (a stopped run leaves a Stopped row; the provider's own error is shown as before) | 2 |
+| TR-34 | Load older, by turns | view/lane.gleam:566 | `history_lineage` | yes (`history_lineage` paging until a whole turn arrives, older_turns_page_in) | 1 |
+| TR-35 | Beginning-of-conversation and loading words | view/lane.gleam:556 | local | yes (Beginning of the conversation) | 3 |
 | TR-36 | Frozen historical browsing, with return to latest | component.gleam:6717 | `history` | no | 2 |
 | TR-37 | Follow the tail, keep place when scrolled, Jump to latest | view/lane.gleam:210; wc:follow.gleam:3 | local | yes (SessionScreen.swift:221 and :233) | 1 |
 | TR-38 | Keep the reader's place per strand | wc:follow_rule.gleam:428 | local | no (SessionScreen.swift:171 keeps one scroll position; a strand change redraws it) | 2 |
 | TR-39 | Images in user messages and tool results | view/lane.gleam:1606; image.gleam:77 | `/ui/.../image` route | no | 2 |
 | TR-40 | Large result: View full result, page through, Download | tool_result.gleam:36 | `/ui/.../result` route | no | 3 |
-| TR-41 | Queued and steered inputs under the live region | view/live.gleam:98 | `pending_inputs` in metadata | code (SessionScreen.swift:640) | 1 |
+| TR-41 | Queued and steered inputs under the live region | view/live.gleam:98 | `pending_inputs` in metadata | yes (held inputs under the live region) | 1 |
 | TR-42 | Timeline dots and tags that focus a strand | view/lane.gleam:640; wc:shell_rule.gleam:1035 | local | no | 3 |
 | TR-43 | Observer page is read-only | view/shell.gleam:71 | role in `snapshot_begin` | partial (Transfer.swift:84 reads the role; controls are not hidden) | 2 |
 
@@ -121,41 +121,41 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 |---|---|---|---|---|---|
 | CO-01 | Send when idle | operator_page.gleam:1138 | `prompt` | yes (SessionScreen.swift:754) | 1 |
 | CO-02 | Steer when busy | operator_page.gleam:1141 | `steer` | yes (AppModel.swift:681) | 1 |
-| CO-03 | Queue when busy, runs after the turn | operator_page.gleam:1140 | `prompt` (held by the daemon) | no (AppModel.swift:684 always steers when busy) | 1 |
-| CO-04 | Send key: Command or Control with Enter | wc:composer_rule.gleam:356 | local | code (SessionScreen.swift:686, with Return; Shift or Option adds a line) | 1 |
-| CO-05 | Slash command list as the draft grows | wc:composer_rule.gleam:361; completion.gleam:39 | local | no | 1 |
-| CO-06 | Argument rows for effort, goal, model and profile | sv:command.gleam:305; completion.gleam:106 | local | no | 2 |
+| CO-03 | Queue when busy, runs after the turn | operator_page.gleam:1140 | `prompt` (held by the daemon) | yes (ComposerModel.swift submit queues with `prompt` when busy; return_queues_and_the_chord_steers) | 1 |
+| CO-04 | Send key: Command or Control with Enter | wc:composer_rule.gleam:356 | local | yes (ComposerViews.swift: Return queues or sends, ⌘↩ steers or sends; idle_composer_sends_with_return_or_the_chord) | 1 |
+| CO-05 | Slash command list as the draft grows | wc:composer_rule.gleam:361; completion.gleam:39 | local | yes (SlashCommand.swift; CommandList in ComposerViews.swift; the_command_list_follows_the_draft) | 1 |
+| CO-06 | Argument rows for effort, goal, model and profile | sv:command.gleam:305; completion.gleam:106 | local | yes (effort levels and model names proven; goal words and profile names are unit tested) | 2 |
 | CO-07 | Addressed strand shown above the editor | operator_page.gleam:1066 | local | code (SessionScreen.swift:751, in the placeholder) | 2 |
 | CO-08 | Busy mark and hint | operator_page.gleam:950 | local | yes (SessionScreen.swift:751 and :592) | 1 |
-| CO-09 | Notice line after a command | operator_page.gleam:1164; sv:notice_words.gleam:35 | reply outcome | partial (SessionScreen.swift:654 shows errors only) | 2 |
+| CO-09 | Notice line after a command | operator_page.gleam:1164; sv:notice_words.gleam:35 | reply outcome | yes (ComposerModel.Notice; schedules_list_and_retire, a_refused_draft_returns_to_the_editor) | 2 |
 | CO-10 | Who the page acts as, `Owner · operator` | operator_page.gleam:1093 | `snapshot_begin` | no | 3 |
 | CO-11 | Cache outlook of the addressed strand | operator_page.gleam:1108 | `usage` | no | 2 |
-| CO-12 | Sent draft as a pending line until taken | wc:pending_rule.gleam:126 | local | no | 2 |
-| CO-13 | Refused draft restored to the editor | wc:pending_rule.gleam:148 | error reply | no (SessionScreen.swift:758 clears the text before the reply) | 2 |
+| CO-12 | Sent draft as a pending line until taken | wc:pending_rule.gleam:126 | local | yes (DraftLedger; a pending line shows until the daemon takes the draft, a_refused_draft_returns_to_the_editor) | 2 |
+| CO-13 | Refused draft restored to the editor | wc:pending_rule.gleam:148 | error reply | yes (a refused draft returns to the editor with the daemon's words) | 2 |
 | CO-14 | Returned prompt put back in the editor | operator_page.gleam:1050 | returned draft event | no | 2 |
-| CO-15 | Attach images by button, paste or drop, with chips and limits | operator_page.gleam:975; wc:attach.gleam:96 | `prompt_content` | no | 2 |
-| CO-16 | Submit disabled when empty | wc:composer_rule.gleam:384 | local | code (SessionScreen.swift:737) | 3 |
-| CO-17 | `/compact` | sv:command.gleam:556 | `compact` | no | 2 |
+| CO-15 | Attach images by button, paste or drop, with chips and limits | operator_page.gleam:975; wc:attach.gleam:96 | `prompt_content` | yes (paste proven through the real `paste:`; the Attach button and drop share `ComposerModel.attach`; prompt_content) | 2 |
+| CO-16 | Submit disabled when empty | wc:composer_rule.gleam:384 | local | yes (the Send control is disabled with an empty draft) | 3 |
+| CO-17 | `/compact` | sv:command.gleam:556 | `compact` | code (`compact` is sent and its refusal is worded; the fake daemon never has anything to compact, so success is not proven) | 2 |
 | CO-18 | `/abort` | sv:command.gleam:557 | `abort` | yes (equivalent Stop button and key, SessionScreen.swift:693 and :723) | 1 |
-| CO-19 | `/steer <text>` | sv:command.gleam:596 | `steer` | yes (equivalent, AppModel.swift:686) | 2 |
-| CO-20 | `/queue <text>` | sv:command.gleam:598 | `follow_up` | no | 2 |
-| CO-21 | `/model <name>` | sv:command.gleam:564 | `set_config` `model_name` | no | 1 |
-| CO-22 | `/effort <level>` | sv:command.gleam:593 | `set_config` `thinking_level` | no | 2 |
-| CO-23 | `/profile`, `/model-profile` show | sv:command.gleam:566 | `profile_get` | no | 2 |
-| CO-24 | `/profile <name>`, `/profile default` | sv:command.gleam:567 | `profile_set` | no | 2 |
-| CO-25 | `/fork <name>` | sv:command.gleam:591 | `fork` | no | 2 |
-| CO-26 | `/goal <objective>`, `--budget` | sv:command.gleam:595 | `goal_set` | no | 2 |
-| CO-27 | `/goal check [command]` | sv:command.gleam:692 | `goal_check` | no | 3 |
-| CO-28 | `/goal clear` | sv:command.gleam:677 | `goal_clear` | no | 2 |
-| CO-29 | `/goal pause` | sv:command.gleam:678 | `goal_pause` | no | 2 |
-| CO-30 | `/goal resume` | sv:command.gleam:679 | `goal_resume` | no | 2 |
-| CO-31 | `/schedules` | sv:command.gleam:522 | `schedules` | no | 2 |
-| CO-32 | `/unschedule <name> [target]` | sv:command.gleam:600 | `schedule_cancel` | no | 3 |
+| CO-19 | `/steer <text>` | sv:command.gleam:596 | `steer` | yes (typed `/steer`, typed_queue_and_steer_commands) | 2 |
+| CO-20 | `/queue <text>` | sv:command.gleam:598 | `follow_up` | yes (`/queue` sends `follow_up`) | 2 |
+| CO-21 | `/model <name>` | sv:command.gleam:564 | `set_config` `model_name` | yes (`/model <name>` sends `set_config`; the_command_list_follows_the_draft) | 1 |
+| CO-22 | `/effort <level>` | sv:command.gleam:593 | `set_config` `thinking_level` | yes (`/effort <level>` sends `set_config` `thinking_level`) | 2 |
+| CO-23 | `/profile`, `/model-profile` show | sv:command.gleam:566 | `profile_get` | yes (`/profile` shows the profile and the names available) | 2 |
+| CO-24 | `/profile <name>`, `/profile default` | sv:command.gleam:567 | `profile_set` | code (`profile_set` is sent; the cluster defines no named profile, so only `default` was tried) | 2 |
+| CO-25 | `/fork <name>` | sv:command.gleam:591 | `fork` | yes (`/fork`; fork_makes_a_strand_and_escape_returns) | 2 |
+| CO-26 | `/goal <objective>`, `--budget` | sv:command.gleam:595 | `goal_set` | yes (`/goal [--budget N] <objective>`; the dev cluster now routes an advisor) | 2 |
+| CO-27 | `/goal check [command]` | sv:command.gleam:692 | `goal_check` | yes (`/goal check`) | 3 |
+| CO-28 | `/goal clear` | sv:command.gleam:677 | `goal_clear` | yes (`/goal clear`) | 2 |
+| CO-29 | `/goal pause` | sv:command.gleam:678 | `goal_pause` | yes (`/goal pause`) | 2 |
+| CO-30 | `/goal resume` | sv:command.gleam:679 | `goal_resume` | yes (`/goal resume`) | 2 |
+| CO-31 | `/schedules` | sv:command.gleam:522 | `schedules` | yes (`/schedules`) | 2 |
+| CO-32 | `/unschedule <name> [target]` | sv:command.gleam:600 | `schedule_cancel` | code (`/unschedule` is sent and a missing schedule is refused in words; no schedule exists to retire) | 3 |
 | CO-33 | `/approvals [id]` | sv:command.gleam:532 | `escalations_get`, `escalations_decided` | no | 3 |
-| CO-34 | `/approve <id>` | sv:command.gleam:585 | `approve` | partial (buttons only, SessionScreen.swift:857) | 3 |
-| CO-35 | `/deny <id>` | sv:command.gleam:587 | `deny` | partial (buttons only, SessionScreen.swift:854) | 3 |
-| CO-36 | `/btw <question>` | sv:command.gleam:550 | `btw` | no | 2 |
-| CO-37 | `/btw`, `/btw refresh`, `/btw clear`, `/btw cancel`, `/btw close` | sv:command.gleam:541 | `btw`; close is local | no | 3 |
+| CO-34 | `/approve <id>` | sv:command.gleam:585 | `approve` | code (typed `/approve <id>`; the buttons remain) | 3 |
+| CO-35 | `/deny <id>` | sv:command.gleam:587 | `deny` | code (typed `/deny <id>`; the buttons remain) | 3 |
+| CO-36 | `/btw <question>` | sv:command.gleam:550 | `btw` | yes (`/btw <question>` opens a side panel and the answer fills it) | 2 |
+| CO-37 | `/btw`, `/btw refresh`, `/btw clear`, `/btw cancel`, `/btw close` | sv:command.gleam:541 | `btw`; close is local | partial (ask and close proven; refresh, clear and cancel are sent and not exercised) | 3 |
 | CO-38 | `/peek <child>`, `/peek close` | sv:command.gleam:547 | `child_history` | code (equivalent row press, SessionScreen.swift:888 and :1134; no typed form) | 2 |
 | CO-39 | `/clear`, clears this client's transcript | sv:command.gleam:560 | local | no | 3 |
 | CO-40 | Skill slash command as a prompt | sv:command.gleam:897 | `prompt` | no (the page loads no skill list, so it refuses these as unknown; native sends the text as a plain prompt) | 3 |
@@ -264,10 +264,10 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| QU-01 | Held input row with excerpt and words | view/queue_input.gleam:96 | `pending_inputs` | code (SessionScreen.swift:640) | 1 |
-| QU-02 | Open a held input to edit it | view/queue_input.gleam:316 | `queued_input` | no | 2 |
-| QU-03 | Save the edit at its revision | view/queue_input.gleam:348 | `edit_queued_input` | no | 2 |
-| QU-04 | Remove a held input | view/queue_input.gleam:388 | `remove_queued_input` | no | 2 |
+| QU-01 | Held input row with excerpt and words | view/queue_input.gleam:96 | `pending_inputs` | yes (a held input row with its text and a word for its kind) | 1 |
+| QU-02 | Open a held input to edit it | view/queue_input.gleam:316 | `queued_input` | yes (`queued_input` loads the full text into an inline editor) | 2 |
+| QU-03 | Save the edit at its revision | view/queue_input.gleam:348 | `edit_queued_input` | yes (`edit_queued_input` at the revision) | 2 |
+| QU-04 | Remove a held input | view/queue_input.gleam:388 | `remove_queued_input` | yes (`remove_queued_input` at the revision) | 2 |
 
 ## Context
 
@@ -431,8 +431,8 @@ The web page has no schedule surface beyond these two commands.
 | KB-02 | Switcher: Up, Down, Enter, Escape, typed filter | wc:switcher_rule.gleam:126 | local | yes (MissionViews.swift:516, :480, :524) | 1 |
 | KB-03 | Command or Control B toggles the sidebar | wc:shell_rule.gleam:946 | local | partial (system control, no ⌘B binding in LoomApp.swift) | 2 |
 | KB-04 | Command or Control Alt B toggles the panel | wc:shell_rule.gleam:949 | local | yes (⌥⌘I, LoomApp.swift:78) | 2 |
-| KB-05 | Escape returns to main | wc:shell_rule.gleam:940 | local | no (SessionScreen.swift:691 uses Escape to stop a run) | 2 |
-| KB-06 | Composer list: Up, Down, Tab, Enter, Escape | wc:composer_rule.gleam:361 | local | no | 2 |
+| KB-05 | Escape returns to main | wc:shell_rule.gleam:940 | local | yes (Escape in the composer returns to the main strand) | 2 |
+| KB-06 | Composer list: Up, Down, Tab, Enter, Escape | wc:composer_rule.gleam:361 | local | yes (Up, Down, Tab, Return and Escape drive the command list) | 2 |
 | KB-07 | Escape in a note goes back | wc:notes.gleam:114 | local | no | 3 |
 
 ## Not applicable natively

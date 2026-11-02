@@ -163,7 +163,10 @@ reference client: only filesystem and full-network grants, and never a mixed req
 | ⌘N, ⇧⌘N | New agent, connect a daemon |
 | ⌘1, ⌘2, ⌘3 | Inbox, Mission Control, Machines |
 | ⌘J | Next session needing you |
-| ↩, ⇧↩ | Send or steer, new line |
+| ↩ | Send, or queue behind the running turn |
+| ⌘↩ | Send, or steer the running turn |
+| ⇧↩, ⌥↩ | New line |
+| ↑, ↓, ⇥, ⎋ | Move in, complete from, or close the command list |
 | ⎋, ⌘. | Stop the run |
 | ⇧⌘A, ⇧⌘D | Allow, deny the first request |
 | ⌘F | Find in transcript |
