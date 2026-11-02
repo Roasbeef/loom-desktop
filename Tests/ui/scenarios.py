@@ -388,4 +388,7 @@ def a_daemon_loss_recovers(c):
     wait_for(lambda: daemon_state(c)["state"] == "unavailable", 20, "the daemon to read unavailable")
     check(c.app.alive(), "the app must survive its daemon")
     c.app.go("mission")
+
+    # The monkey may have hidden the sidebar, which is where the footer says this.
+    c.app.menu("Show Sidebar")
     c.app.see("unavailable")

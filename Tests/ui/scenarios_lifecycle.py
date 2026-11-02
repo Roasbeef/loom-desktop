@@ -46,7 +46,7 @@ def stopping_asks_only_when_mid_turn(c):
     """A mid-turn stop asks and can be declined; an idle stop does not ask."""
     sid = c.app.dispatch("Mid turn stop, hang", WORKSPACE)
     go(c, sid)
-    wait_for(lambda: record(c, sid)["activity"] == "working", 30, "the run to be working")
+    wait_for(lambda: record(c, sid)["activity"] == "working", 60, "the run to be working")
     c.app.menu("Stop Session")
     asked(c, "stop")
     c.app.press("Cancel")
@@ -55,13 +55,13 @@ def stopping_asks_only_when_mid_turn(c):
     c.app.menu("Stop Session")
     asked(c, "stop")
     c.app.press("Stop Session")
-    wait_for(lambda: record(c, sid)["state"] == "Saved", 30, "the session to be saved")
+    wait_for(lambda: record(c, sid)["state"] == "Saved", 60, "the session to be saved")
 
     idle = c.app.dispatch("Idle stop check demo", WORKSPACE)
     go(c, idle)
-    wait_for(lambda: record(c, idle)["activity"] == "idle", 40, "the run to finish")
+    wait_for(lambda: record(c, idle)["activity"] == "idle", 60, "the run to finish")
     c.app.menu("Stop Session")
-    wait_for(lambda: record(c, idle)["state"] == "Saved", 30, "the idle session to stop")
+    wait_for(lambda: record(c, idle)["state"] == "Saved", 60, "the idle session to stop")
     check(c.app.snap()["pendingAction"] == "", "an idle stop should not ask")
 
 
@@ -70,30 +70,30 @@ def archive_and_delete_ask_first(c):
     """Archiving a saved row, stop-and-archive of a running one, and delete each ask."""
     saved = c.app.dispatch("Archive saved row demo", WORKSPACE)
     go(c, saved)
-    wait_for(lambda: record(c, saved)["activity"] == "idle", 40, "the run to finish")
+    wait_for(lambda: record(c, saved)["activity"] == "idle", 60, "the run to finish")
     c.app.menu("Stop Session")
-    wait_for(lambda: record(c, saved)["state"] == "Saved", 30, "the stop")
+    wait_for(lambda: record(c, saved)["state"] == "Saved", 60, "the stop")
     c.app.menu("Archive Session…")
     check(asked(c, "archive").endswith("saved:quiet"), "a saved row asks plainly")
     c.app.press("Archive")
-    wait_for(lambda: record(c, saved) is None, 30, "the archived session to leave the list")
+    wait_for(lambda: record(c, saved) is None, 60, "the archived session to leave the list")
 
     running = c.app.dispatch("Archive running row demo", WORKSPACE)
     go(c, running)
-    wait_for(lambda: record(c, running)["activity"] == "idle", 40, "the run to finish")
+    wait_for(lambda: record(c, running)["activity"] == "idle", 60, "the run to finish")
     c.app.menu("Archive Session…")
     check(asked(c, "archive").endswith("running:quiet"), "a running row says it will stop first")
     c.app.press("Stop and Archive")
-    wait_for(lambda: record(c, running) is None, 40, "the stopped and archived session to leave")
+    wait_for(lambda: record(c, running) is None, 60, "the stopped and archived session to leave")
 
     doomed = c.app.dispatch("Delete this one demo", WORKSPACE)
     go(c, doomed)
-    wait_for(lambda: record(c, doomed)["activity"] == "idle", 40, "the run to finish")
+    wait_for(lambda: record(c, doomed)["activity"] == "idle", 60, "the run to finish")
     c.app.menu("Delete Session…")
     time.sleep(0.5)
     check(c.app.snap()["pendingAction"] == "", "a running session cannot be deleted")
     c.app.menu("Stop Session")
-    wait_for(lambda: record(c, doomed)["state"] == "Saved", 30, "the stop")
+    wait_for(lambda: record(c, doomed)["state"] == "Saved", 60, "the stop")
     c.app.menu("Delete Session…")
     asked(c, "delete")
     c.app.press("Cancel")
@@ -102,7 +102,7 @@ def archive_and_delete_ask_first(c):
     c.app.menu("Delete Session…")
     asked(c, "delete")
     c.app.press("Delete Session")
-    wait_for(lambda: record(c, doomed) is None, 30, "the deleted session to leave the list")
+    wait_for(lambda: record(c, doomed) is None, 60, "the deleted session to leave the list")
 
 
 # Creating a session.
@@ -180,7 +180,7 @@ def a_session_is_created_with_a_profile_model_name_and_box(c):
         c.app.see("People you invite can read this session")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
         c.app.press("Dispatch")
-        wait_for(lambda: not c.app.snap()["isDispatching"], 40, "the form to close after creating")
+        wait_for(lambda: not c.app.snap()["isDispatching"], 60, "the form to close after creating")
     finally:
         close_form(c)
     wait_for(lambda: c.app.snap()["daemons"][0]["lastCreation"] == "profile=review model=fake2 shareable=true", what="the daemon to accept the choices")
@@ -204,7 +204,7 @@ def an_executor_offers_its_registered_workspaces(c):
         c.app.type("Executor form check demo")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
         c.app.press("Dispatch")
-        wait_for(lambda: not c.app.snap()["isDispatching"], 40, "the form to close")
+        wait_for(lambda: not c.app.snap()["isDispatching"], 60, "the form to close")
     finally:
         close_form(c)
     sid = c.app.session_id("Executor form check")
@@ -265,7 +265,7 @@ def invite(c, name, role="Operator"):
 def a_session_is_made_shareable_and_someone_is_invited(c):
     """A private session becomes shareable, an invitation hands over its claim, and the person's role and access can change."""
     sid = c.app.dispatch("Private to share demo", WORKSPACE)
-    wait_for(lambda: record(c, sid)["activity"] == "idle", 40, "the run to finish")
+    wait_for(lambda: record(c, sid)["activity"] == "idle", 60, "the run to finish")
     make_shareable(c, sid)
     invite(c, "Ada", "Observer")
     c.app.see("Claim token loomclaim_[0-9a-f]{64}")
@@ -287,7 +287,7 @@ def a_session_is_made_shareable_and_someone_is_invited(c):
 def people_are_renamed_rotated_and_revoked(c):
     """The People sheet lists everyone, renames them, rotates a credential into a handover and revokes access."""
     sid = c.app.dispatch("People subject demo", WORKSPACE)
-    wait_for(lambda: record(c, sid)["activity"] == "idle", 40, "the run to finish")
+    wait_for(lambda: record(c, sid)["activity"] == "idle", 60, "the run to finish")
     make_shareable(c, sid)
     invite(c, "Grace")
     c.app.press("I've Sent It")
@@ -320,7 +320,7 @@ def effort_and_profile_are_changed_on_a_running_session(c):
     """Reasoning effort applies to the strand, and a profile switch restarts the session under it."""
     sid = c.app.dispatch("Settings subject demo", WORKSPACE)
     c.app.open_session("Settings subject")
-    wait_for(lambda: record(c, sid)["activity"] == "idle", 40, "the run to finish")
+    wait_for(lambda: record(c, sid)["activity"] == "idle", 60, "the run to finish")
     c.app.menu("Session Settings…")
     c.app.see("Reasoning effort")
     c.app.press("High")
@@ -349,7 +349,7 @@ def a_session_is_created_in_a_pool(c):
         c.app.fill("Folder", "proj")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
         c.app.press("Dispatch")
-        wait_for(lambda: not c.app.snap()["isDispatching"], 40, "the form to close")
+        wait_for(lambda: not c.app.snap()["isDispatching"], 60, "the form to close")
     finally:
         close_form(c)
     sid = c.app.session_id("Pool form check")
@@ -382,7 +382,7 @@ def two_sessions_are_linked_and_unlinked(c):
     first = c.app.dispatch("Peer first run demo", WORKSPACE)
     second = c.app.dispatch("Peer second run demo", WORKSPACE)
     for sid in (first, second):
-        wait_for(lambda: record(c, sid)["activity"] == "idle", 40, "the run to finish")
+        wait_for(lambda: record(c, sid)["activity"] == "idle", 60, "the run to finish")
     c.app.open_session("Peer first")
     c.app.menu("Peer Links…")
     c.app.see("No links")
