@@ -28,9 +28,10 @@ The test tools exist to answer one question: does the app a person runs do what 
 | `app.hitch(seconds)`, `app.stats()` | Frame gaps and CPU. |
 | `app.audit()` | Controls with no accessibility name. |
 | `cluster.kill(name)` | Fault injection against `orch` or `exec`. |
+| `app.cmd("attachfile <path>")`, `app.cmd("asrole <role>")`, `app.cmd("shutdown")`, `app.cmd("peerlink <from> <to>")`, `app.cmd("staleapprove")` | Debug hooks for what the cluster cannot produce on its own: a file attached through the drop path, a session drawn as another role, a draining daemon (`cluster.restart_orch()` starts it again), two linked sessions, and an answer built from a record that moved. |
 | `app.cmd("run <command> <json>")` | Sends one session command from the open session, for set-up a scenario does not itself test. |
 
-The scripted model in `scripts/fake_provider.py` chooses its reply from keywords in the prompt: `demo`, `escalate`, `long`, `slow`, `hang`, `explode`, and for the tools a panel shows `todoboard`, `writenote`, `proposerule`, `heartbeat`, `backgroundjob` and `commitwork`. It reports token usage, and the cluster prices the model, so a session has an estimated cost. The advisor is routed to the same model, and it ignores these keywords.
+The scripted model in `scripts/fake_provider.py` chooses its reply from keywords in the prompt: `demo`, `escalate`, `long`, `slow`, `hang`, `explode`, and for the tools a panel shows `todoboard`, `writenote`, `proposerule`, `heartbeat`, `backgroundjob` and `commitwork`. Others make the model start a subagent (`spawnagent`), run a seven second command (`slowstep`), stop mid-reply (`stopmid`), read a picture (`readpicture`), message another session (`peersend` with its id), report a cached prefix or its loss (`cachehit`, `cachemiss`), write a markdown reply (`markdown`), think at length (`longthink`), and make the advisor nudge (`advisenudge`). The cluster starts with a 100-token recent tail, so `/compact` has something to cut, and routes the summarize role to the same model, so long reasoning gets a label. It reports token usage, and the cluster prices the model, so a session has an estimated cost. The advisor is routed to the same model, and it ignores these keywords.
 
 ## Adding a scenario
 

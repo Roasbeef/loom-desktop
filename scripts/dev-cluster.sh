@@ -75,10 +75,13 @@ max_output_tokens = 4096
 [roles]
 main = ["fake"]
 advisor = ["fake"]
-summarize = ["fake"]
 
+# The review profile also routes the summarizer, so a session that switches to it gets
+# labels for long reasoning. Routing it for every session makes background work that
+# keeps strands busy, which other scenarios cannot wait through.
 [profiles.review.roles]
 main = ["fake2"]
+summarize = ["fake"]
 
 [pools.boxes]
 executors = ["box"]

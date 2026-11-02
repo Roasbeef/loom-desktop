@@ -139,17 +139,27 @@ def last_tool_text(messages):
     return ""
 
 
-def is_prompt(message):
-    """Whether a user message is something a person wrote. The daemon also writes user
-    messages: the notes index at run start, and the image a tool returned. Neither
-    carries the keyword in the prompt it follows."""
+INJECTED = ("Notes saved in this repository", "Images from tool call", "Human author (name and principal")
+
+
+def prompt_text(message):
+    """What a person wrote in a user message, or an empty string. The daemon puts its own
+    text in user messages too: the notes index at run start, the image message after a tool
+    returns one, and the author line. Those parts can share a message with the prompt or
+    stand alone, and neither carries the keyword the prompt does."""
     if message.get("role") != "user":
-        return False
+        return ""
     content = message.get("content", "")
-    if isinstance(content, list) and not any(part.get("type") == "text" for part in content):
-        return False
-    text = json.dumps(content)
-    return "Notes saved in this repository" not in text and "Images from tool call" not in text
+    if isinstance(content, str):
+        parts = [content]
+    else:
+        parts = [part.get("text", "") for part in content if part.get("type") == "text"]
+    return json.dumps([part for part in parts if not part.startswith(INJECTED)]) if any(
+        part and not part.startswith(INJECTED) for part in parts) else ""
+
+
+def is_prompt(message):
+    return bool(prompt_text(message))
 
 
 def steps_taken(messages):
@@ -166,7 +176,7 @@ def steps_taken(messages):
 def last_user_text(messages):
     for message in reversed(messages):
         if is_prompt(message):
-            return json.dumps(message.get("content", ""))
+            return prompt_text(message)
     return ""
 
 

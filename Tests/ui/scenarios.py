@@ -680,7 +680,8 @@ def bar_figures_and_tabs(c):
 @scenario("CX-01", "CX-02", "CX-03", "CX-04", "CX-05", "CX-07", needs_display=True)
 def context_figure_and_breakdown(c):
     """The bar says how full the window is, and its breakdown explains it and can compact."""
-    run_session(c, "Context", "demo please", "Retry budget is now per host")
+    # One reply leaves nothing to cut, since the newest reply always stays, so the refusal below holds.
+    run_session(c, "Context", "check", "scripted")
     wait_for(lambda: c.app.session().get("context", "").startswith("ctx ~"), 20, "the context figure")
     c.app.press("Context window")
     c.app.see(r"Context window ~", 10)
@@ -1122,5 +1123,6 @@ def a_daemon_loss_recovers(c):
     c.app.go("mission")
 
     # The monkey may have hidden the sidebar, which is where the footer says this.
-    c.app.menu("Show Sidebar")
+    if not c.app.snap()["showsSidebar"]:
+        c.app.menu("Toggle Sidebar")
     c.app.see("unavailable")

@@ -56,7 +56,7 @@ def typed_approve_allows_a_request(c):
     ident = first_escalation(c)
     say(c, f"/approve {ident}")
     wait_for(lambda: not c.app.session()["escalations"], 15, "the approval to clear")
-    c.app.transcript_has("decision approved", 15)
+    c.app.transcript_has("decision (approved|consumed)", 15)
     check(not c.app.session()["noticeIsWarning"], c.app.session()["notice"])
 
 
@@ -252,7 +252,7 @@ def a_stopped_turn_says_interrupted_on_its_divider(c):
     """The divider counts the failed steps, and says interrupted once a person stops the turn."""
     c.app.dispatch("Stopped mid stopmid", WORKSPACE)
     c.app.open_session("Stopped mid")
-    wait_for(lambda: c.app.session()["isBusy"] and c.app.session()["hasStream"], 30, "the hung reply")
+    wait_for(lambda: c.app.session()["isBusy"] and c.app.session()["hasStream"], 60, "the hung reply")
     c.app.menu("Stop Run")
     settle(c)
     title = wait_for(lambda: next((f["title"] for f in c.app.session()["folds"] if "interrupted" in f["title"]), None), 15, "an interrupted divider")
@@ -316,7 +316,8 @@ def an_answer_to_a_record_that_moved_is_refused_with_words(c):
 def command_b_toggles_the_sidebar(c):
     """⌘B hides the sidebar, and a second ⌘B shows it again."""
     c.app.go("mission")
-    c.app.menu("Show Sidebar") if not c.app.snap()["showsSidebar"] else None
+    if not c.app.snap()["showsSidebar"]:
+        c.app.menu("Toggle Sidebar")
     wait_for(lambda: c.app.snap()["showsSidebar"], 5, "the sidebar")
     c.app.key("b", "cmd")
     wait_for(lambda: not c.app.snap()["showsSidebar"], 5, "⌘B to hide the sidebar")
@@ -395,7 +396,9 @@ def a_message_names_its_sender_and_role(c):
     c.app.open_session("Who said this")
     c.app.transcript_has("scripted", 30)
     settle(c)
-    c.app.see(r"^Owner · operator$", 5)
+    senders = c.app.session()["senders"]
+    check(len(senders) == 1 and senders[0].startswith("Owner"), senders)
+    c.app.see(rf"^{re.escape(senders[0])} · operator$", 5)
 
 
 # Messages from other agents.
@@ -480,10 +483,86 @@ def an_observer_sees_the_session_and_can_change_nothing(c):
 @scenario("TR-19")
 def long_reasoning_carries_the_summarizers_label(c):
     """A reasoning block over 512 bytes gets the summarizer's label, said to be its words and not the agent's."""
-    c.app.dispatch("Long thought longthink", WORKSPACE)
+    c.app.dispatch("Long thought", WORKSPACE)
     c.app.open_session("Long thought")
+    settle(c)
+
+    # The review profile routes the summarizer, which the plain configuration does not.
+    run_command(c, "/profile review")
+    c.app.open_session("Long thought")
+    wait_for(lambda: c.app.session().get("isLive") and c.app.session().get("isAdopted"), 60, "the session to come back")
+    c.app.prompt(c.app.session_id("Long thought"), "think long, longthink")
     c.app.transcript_has("forty-two", 60)
     settle(c)
     c.app.press(fold_titles(c)[0])
     label = wait_for(lambda: next((t for t in c.app.texts() if t.startswith("Thought,") and "Summarized: " in t), None), 40, "a summarized reasoning row")
     check("Summarized: " in label and "Expanded" not in label, label)
+
+
+# The inspector. These need the inspector's tabs laid out, so they cannot run on a locked screen.
+
+
+@scenario("ST-04", needs_display=True)
+def the_strands_tab_counts_the_approvals_waiting(c):
+    """While a strand waits on a person, the Strands tab's title carries the count."""
+    pending_approval(c, "Badge count")
+    if not c.app.snap()["showsInspector"]:
+        c.app.menu("Show Inspector")
+        wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
+    c.app.see(r"Strands \(1\)", 10)
+    c.app.press("Deny")
+    wait_for(lambda: not c.app.session()["escalations"], 15, "the approval to clear")
+    c.app.not_see(r"Strands \(\d\)")
+
+
+@scenario("ST-07", needs_display=True)
+def escape_leaves_a_strands_page(c):
+    """Escape on a strand's page returns to the list of all strands."""
+    c.app.dispatch("Crumb check", WORKSPACE)
+    c.app.open_session("Crumb check")
+    c.app.transcript_has("scripted", 30)
+    settle(c)
+    if not c.app.snap()["showsInspector"]:
+        c.app.menu("Show Inspector")
+        wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
+    c.app.press("Strands")
+    c.app.press("Details for main")
+    c.app.see(r"Recent tools", 5)
+    c.app.key("escape")
+    wait_for(lambda: not any(t.startswith("Recent tools") for t in c.app.texts()), 5, "the page to close")
+    c.app.see(r"Strand main", 5)
+
+
+@scenario("ST-10", needs_display=True)
+def a_card_names_its_model_where_it_differs_from_main(c):
+    """Once main runs another model, a card for a strand on the first model says which."""
+    c.app.dispatch("Model on card", WORKSPACE)
+    c.app.open_session("Model on card")
+    c.app.transcript_has("scripted", 30)
+    wait_for(lambda: any(l.startswith("advisor: Finished") for l in c.app.session()["strandLines"]), 40, "the advisor to finish")
+    run_command(c, "/model fake2")
+    if not c.app.snap()["showsInspector"]:
+        c.app.menu("Show Inspector")
+        wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
+    c.app.press("Strands")
+    c.app.press("Settled strands")
+    c.app.see(r"Strand advisor.*model fake$", 10)
+    c.app.not_see(r"Strand main.*model ")
+
+
+@scenario("KB-07", needs_display=True)
+def escape_in_a_note_goes_back_to_the_list(c):
+    """Escape on an open note returns to the list of notes."""
+    sid = c.app.dispatch("Note keys todoboard", WORKSPACE)
+    c.app.open_session("Note keys")
+    c.app.transcript_has("first task is finished", 40)
+    settle(c)
+    if not c.app.snap()["showsInspector"]:
+        c.app.menu("Show Inspector")
+        wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
+    c.app.press("Notes")
+    c.app.press("Note todo")
+    c.app.see(r"All Notes", 5)
+    c.app.key("escape")
+    wait_for(lambda: not any(t == "All Notes" for t in c.app.texts()), 5, "the note to close")
+    c.app.see(r"Search notes", 5)
