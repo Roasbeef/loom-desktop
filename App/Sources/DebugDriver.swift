@@ -223,6 +223,17 @@ enum DebugDriver {
         case "connect" where parts.count > 2:
             let token = (try? String(contentsOf: directory.appendingPathComponent("token"), encoding: .utf8)) ?? ""
             try? model.addDaemon(name: parts[1], address: parts[2], token: token.trimmingCharacters(in: .whitespacesAndNewlines))
+        case "attach" where parts.count > 2:
+            // Connects another daemon without saving it. The token file is the one
+            // `connect` reads.
+            let token = (try? String(contentsOf: directory.appendingPathComponent("token"), encoding: .utf8)) ?? ""
+            do {
+                try model.attachForTest(name: parts[1], address: parts[2], token: token.trimmingCharacters(in: .whitespacesAndNewlines))
+            } catch {
+                reply = "error: \(error.localizedDescription)"
+            }
+        case "unattach" where parts.count > 1:
+            model.detachForTest(name: parts[1])
         case "dispatch" where parts.count > 3:
             guard let daemon = model.daemons.first else { return }
             do {

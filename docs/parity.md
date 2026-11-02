@@ -47,14 +47,14 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | NS-01 | Prompt box that becomes the first message | view/new_session.gleam:394 | `sessions.create`, `sessions.open`, `subscribe`, `prompt` | yes (RootView.swift:414; AppModel.swift:276) | 1 |
 | NS-02 | Session named from the message's first line | composer.gleam:490 | `sessions.create` | yes (RootView.swift:564) | 2 |
 | NS-03 | Recent places, "Start again where you worked" | view/new_session.gleam:325 | `sessions.list` | yes (NewSessionSheet.swift lists used folders newest first) | 1 |
-| NS-04 | Choose the agent machine | view/new_session.gleam:571 | `sessions.create` | partial (RootView.swift:426 picks among connected daemons; it does not list configured orchestrators) | 2 |
-| NS-05 | Agent option state: checking, unavailable | view/new_session.gleam:629 | in-process | partial (RootView.swift:351 shows daemon state in the footer, not in the picker) | 3 |
+| NS-04 | Choose the agent machine | view/new_session.gleam:571 | `sessions.create` | yes (the "Agent runs on" choice lists each connected daemon; a_session_starts_on_another_daemon creates a session on a second one) | 2 |
+| NS-05 | Agent option state: checking, unavailable | view/new_session.gleam:629 | in-process | yes (a daemon that is connecting or unreachable is named so in the choice, and a down executor says down; a_down_machine_is_named_and_may_still_be_chosen) | 3 |
 | NS-06 | Searchable code picker: folders and workspaces | view/new_session.gleam:771 | `deployment.status` | yes (NewSessionSheet.swift; the folder field filters recent places or an executor's registered names) | 2 |
 | NS-07 | Typed folder, judged before creation | creations.gleam:413 | `sessions.create` | yes (NewSessionSheet.swift and FolderCheck in Administration.swift judge the typed path before any request) | 1 |
 | NS-08 | Run on an executor | view/create.gleam:511 | `sessions.create` `executor`; `deployment.status` | yes (RootView.swift:431; ControlClient.swift:97) | 2 |
 | NS-09 | Run in a pool | view/create.gleam:511 | `sessions.create` `pool` | yes (NewSessionSheet.swift; pools are offered as a place and the daemon picks the executor) | 2 |
 | NS-10 | Executor and pool cards: state, free scopes, contradiction, declaration | placements.gleam:71 | `deployment.status` | partial (RootView.swift:542 shows name, platform, free scopes and state; no contradiction text) | 3 |
-| NS-11 | A down executor may still be chosen | view/create.gleam:511 | `sessions.create` | code (NewSessionSheet.swift allows a down executor with a warning; no scenario takes the executor down) | 3 |
+| NS-11 | A down executor may still be chosen | view/create.gleam:511 | `sessions.create` | yes (a down executor is chosen with a warning, and the session is created on it) | 3 |
 | NS-12 | Workspace select for an executor's registered names | view/create.gleam:852 | `deployment.status` node read | yes (NewSessionSheet.swift; `executor.workspaces` read from the node report, which the old decoder missed) | 2 |
 | NS-13 | Typed registered workspace when none is known | view/create.gleam:899 | `sessions.create` | yes (RootView.swift:530) | 3 |
 | NS-14 | Choose a model profile | view/new_session.gleam:116 | `sessions.create` | yes (NewSessionSheet.swift; profiles read from the daemon's loom.toml, local daemons only) | 2 |
@@ -64,8 +64,8 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | NS-18 | New session under a project heading | view/create.gleam:278 | `sessions.create` | code (a project heading's plus in RootView.swift; the Session menu's New Session in This Folder is proven, but the sidebar list is not in the accessibility tree) | 2 |
 | NS-19 | Remembered folders with "Forget this folder" | view/folders.gleam:136 | in-process (`manager.forget_folder`) | yes (NewSessionSheet.swift; a per-app list, since the daemon's forget is in-process) | 3 |
 | NS-20 | Refusal words for each reason | creations.gleam:251 | `error` reply | partial (RootView.swift:451 draws the daemon's message) | 2 |
-| NS-21 | Created but message unsent: "Open the session" | view/new_session.gleam:1141 | local | no | 3 |
-| NS-22 | Start on another orchestrator | view/new_session.gleam:617 | in-process (`ui_top.found`) | partial (RootView.swift:426 only through a direct daemon connection) | 3 |
+| NS-21 | Created but message unsent: "Open the session" | view/new_session.gleam:1141 | local | yes (CreatedButUnsent keeps the form open with Open the session when a created session cannot open; Dispatch stays off so no second session is made) | 3 |
+| NS-22 | Start on another orchestrator | view/new_session.gleam:617 | in-process (`ui_top.found`) | yes (through a direct connection to a second daemon, which the test points at the executor's daemon since the cluster has one orchestrator; the web's relayed start is not reproduced) | 3 |
 
 ## Transcript
 
@@ -338,7 +338,7 @@ The web page has no schedule surface beyond these two commands.
 |---|---|---|---|---|---|
 | MA-01 | Deployment section, summary line | view/admin_machines.gleam:155 | `deployment.status` | yes (MachinesView.swift:44) | 3 |
 | MA-02 | Machines grouped by role | view/admin_machines.gleam:127 | `deployment.status` | yes (MachinesView.swift groups orchestrators, executors and pools) | 3 |
-| MA-03 | Row facts and "not linked from here" | view/admin_machines.gleam:391 | `deployment.status` | code (MachinesView.swift and MachineDetailSheet.swift say not linked from here from the `edges` link; no scenario breaks a link) | 3 |
+| MA-03 | Row facts and "not linked from here" | view/admin_machines.gleam:391 | `deployment.status` | yes (MachinesView says Not linked from here once the executor is killed) | 3 |
 | MA-04 | Pools | view/admin_machines.gleam:554 | `deployment.status` | yes (MachinesView.swift PoolsGroup) | 3 |
 | MA-05 | Machine page tab: Overview | view/admin_machine.gleam:191; machines.gleam:551 | `deployment.status` `node` | yes (MachineDetailSheet.swift overview, declaration and ledger) | 3 |
 | MA-06 | Machine page tab: Sessions | view/admin_machine.gleam:428; view/admin_machine.gleam:539 | `deployment.status`, `sessions.elsewhere` | yes (MachineDetailSheet.swift lists the sessions that depend on the machine) | 3 |

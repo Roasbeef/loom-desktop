@@ -46,6 +46,7 @@ struct DispatchSheet: View {
     @State private var modelKey = ""
     @State private var isShareable = false
     @State private var error: String?
+    @State private var createdID: String?
     @State private var isSending = false
     @FocusState private var isPromptFocused: Bool
 
@@ -91,9 +92,11 @@ struct DispatchSheet: View {
 
             Form {
                 if model.daemons.count > 1 {
-                    Picker("Agent runs on", selection: $daemonID) {
-                        ForEach(model.daemons) { Text($0.label).tag($0.id) }
-                    }
+                    ChoicePicker(
+                        title: "Agent runs on",
+                        selection: $daemonID,
+                        options: model.daemons.map { (describe($0), $0.id) }
+                    )
                 }
                 if !options.isEmpty {
                     ChoicePicker(
@@ -129,6 +132,7 @@ struct DispatchSheet: View {
                     // A configuration path is read on the machine holding the session.
                     TextField("Configuration", text: $configuration, prompt: Text("Path on that machine"))
                         .font(.system(size: 12).monospaced())
+                        .accessibilityLabel("Configuration")
                 }
             }
             .formStyle(.columns)
@@ -144,6 +148,15 @@ struct DispatchSheet: View {
                     .padding(.bottom, 8)
                     .textSelection(.enabled)
             }
+            if let createdID {
+                Button("Open the session") {
+                    model.destination = .session(createdID)
+                    dismiss()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 18)
+                .padding(.bottom, 8)
+            }
 
             Divider()
 
@@ -155,7 +168,7 @@ struct DispatchSheet: View {
                 Button(isSending ? "Dispatching…" : "Dispatch", action: send)
                     .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent)
-                    .disabled(isSending || workspace.isEmpty || prompt.isEmpty || (!folderJudgement.isUsable && placement == .local && daemon?.isRemote != true))
+                    .disabled(isSending || createdID != nil || workspace.isEmpty || prompt.isEmpty || (!folderJudgement.isUsable && placement == .local && daemon?.isRemote != true))
             }
             .padding(14)
         }
@@ -270,6 +283,16 @@ struct DispatchSheet: View {
         return "⌘↩ to dispatch"
     }
 
+    /// A daemon's name with its state when it cannot take work yet, so the choice
+    /// says so before a request fails.
+    private func describe(_ daemon: DaemonConnection) -> String {
+        switch daemon.state {
+        case .connected: return daemon.label
+        case .connecting: return "\(daemon.label) · checking"
+        case .unavailable: return "\(daemon.label) · unavailable"
+        }
+    }
+
     private func describe(_ option: PlacementOption) -> String {
         var parts = [option.name]
         if case .pool = option.choice { parts.append("pool") }
@@ -318,6 +341,11 @@ struct DispatchSheet: View {
                 if placement == .local { lastWorkspace = workspace }
                 model.destination = .session(id)
                 dismiss()
+            } catch let partial as CreatedButUnsent {
+                // Sending again would create a second session, so the form offers
+                // the one that exists instead.
+                self.createdID = partial.sessionID
+                self.error = partial.localizedDescription
             } catch {
                 self.error = error.localizedDescription
             }

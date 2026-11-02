@@ -119,3 +119,50 @@ def the_sidebar_foot_opens_people_and_mission_control_lists_everyone(c):
     c.app.press("Open People")
     c.app.see("Your name")
     c.app.press("Done")
+
+
+# A second daemon, reached directly.
+
+
+def second_daemon(c, name="other"):
+    """Connects the executor's daemon as a second daemon, without saving it."""
+    from loomui import SLOT
+    token = (BASE / "exec/.loom/owner.token").read_text().strip()
+    (c.app.dir / "token").write_text(token)
+    reply = c.app.cmd(f"attach {name} ws://127.0.0.1:{7442 + SLOT * 10}")
+    check(not reply.startswith("error"), reply)
+    wait_for(lambda: any(d["label"] == name and d["state"] == "connected" for d in c.app.snap()["daemons"]), 30, "the second daemon")
+
+
+def open_form(c):
+    c.app.menu("New Agent…")
+    wait_for(lambda: c.app.snap()["isDispatching"], what="the new-session form")
+
+
+def close_form(c):
+    if c.app.snap()["isDispatching"]:
+        c.app.key("escape")
+        wait_for(lambda: not c.app.snap()["isDispatching"], what="the form to close")
+
+
+@scenario("NS-04", "NS-22")
+def a_session_starts_on_another_daemon(c):
+    """With a second daemon connected, the form offers it, and the session is created there."""
+    second_daemon(c)
+    try:
+        open_form(c)
+        try:
+            c.app.press("other")
+            c.app.focus("Prompt")
+            c.app.type("Other daemon check demo")
+            c.app.fill("Folder", WORKSPACE)
+            c.app.fill("Configuration", str(BASE / "orch/.loom/loom.toml"))
+            wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
+            c.app.press("Dispatch")
+            wait_for(lambda: not c.app.snap()["isDispatching"], 60, "the form to close")
+        finally:
+            close_form(c)
+        other = next(d for d in c.app.snap()["daemons"] if d["label"] == "other")
+        wait_for(lambda: any("Other daemon check" in s["title"] for s in next(d for d in c.app.snap()["daemons"] if d["label"] == "other")["sessions"]), 30, "the session on the second daemon")
+    finally:
+        c.app.cmd("unattach other")

@@ -1081,6 +1081,9 @@ def idle_is_quiet(c):
     check(share < 0.05, f"idle CPU {share:.1%}")
 
 
+import scenarios_down  # noqa: E402,F401
+
+
 @scenario()
 def an_executor_loss_is_reported(c):
     """Killing the executor reaches the Machines page and the Inbox, naming the sessions."""

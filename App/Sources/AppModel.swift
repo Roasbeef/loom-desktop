@@ -12,6 +12,17 @@ enum Destination: Hashable {
     case session(String)
 }
 
+/// A session that was created, whose first message never went out. The session is
+/// kept, so the person can open it and write the message there.
+struct CreatedButUnsent: LocalizedError {
+    let sessionID: String
+    let reason: String
+
+    var errorDescription: String? {
+        "The session was created, but its message was not sent: \(reason)"
+    }
+}
+
 /// A saved way to reach a daemon on another machine.
 struct SavedDaemon: Codable, Hashable, Identifiable {
     let id: UUID
@@ -295,8 +306,14 @@ final class DaemonConnection: Identifiable {
         )
         lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") shareable=\(options.isShareable)"
 
-        _ = try await control.openUntilResident(sessionID: record.id)
-        try await refresh(control)
+        // From here the session exists, so a failure must say so and name it.
+        do {
+            _ = try await control.openUntilResident(sessionID: record.id)
+            try await refresh(control)
+        } catch {
+            try? await refresh(control)
+            throw CreatedButUnsent(sessionID: record.id, reason: error.localizedDescription)
+        }
         guard let controller = attach(record.id) else { return record.id }
         await controller.waitUntilAdopted()
         controller.send(text: prompt)
@@ -516,6 +533,23 @@ final class AppModel {
         daemons.append(connection)
         connection.start()
     }
+
+    #if DEBUG
+    /// Connects a daemon for a test without saving it, so a run leaves no saved
+    /// address or keychain item behind on the machine that ran it.
+    func attachForTest(name: String, address: String, token: String) throws {
+        _ = try DaemonEndpoint(address: address, token: token)
+        let saved = SavedDaemon(id: UUID(), name: name, address: address)
+        let connection = DaemonConnection(id: saved.id.uuidString, source: .remote(saved, token: token))
+        daemons.append(connection)
+        connection.start()
+    }
+
+    func detachForTest(name: String) {
+        guard let connection = daemons.first(where: { $0.label == name && $0.isRemote }) else { return }
+        removeDaemon(connection)
+    }
+    #endif
 
     func removeDaemon(_ connection: DaemonConnection) {
         guard case .remote(let saved, _) = connection.source else { return }
