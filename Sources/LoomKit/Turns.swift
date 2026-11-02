@@ -36,9 +36,14 @@ public struct StepWords: Sendable, Equatable {
             return StepWords(verb: word("Wrote", "Writing"), subject: path, added: lines, removed: nil, file: path)
         case "fs_edit":
             let path = first(["path"])
-            let old = arguments["old"]?.string ?? arguments["old_string"]?.string ?? ""
-            let new = arguments["new"]?.string ?? arguments["new_string"]?.string ?? ""
-            let change = lineChange(old: old, new: new)
+            let change: (added: Int, removed: Int)
+            if let hunks = arguments["hunks"]?.array {
+                change = hunkChange(hunks)
+            } else {
+                let old = arguments["old"]?.string ?? arguments["old_string"]?.string ?? ""
+                let new = arguments["new"]?.string ?? arguments["new_string"]?.string ?? ""
+                change = lineChange(old: old, new: new)
+            }
             return StepWords(verb: word("Edited", "Editing"), subject: path, added: change.added, removed: change.removed, file: path)
         case "grep":
             return StepWords(verb: word("Searched", "Searching"), subject: first(["pattern", "query"]), added: nil, removed: nil, file: nil)
@@ -67,7 +72,27 @@ public struct StepWords: Sendable, Equatable {
     }
 
     static func lineCount(_ text: String) -> Int {
-        text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
+        // A final newline ends the last line and does not start another.
+        let body = text.hasSuffix("\n") ? String(text.dropLast()) : text
+        return body.isEmpty ? 0 : body.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+
+    /// The lines an `fs_edit` call adds and removes, read from its anchored hunks:
+    /// a replace or delete removes the lines from its first anchor to its last, and
+    /// every operation but a delete adds the lines it carries.
+    static func hunkChange(_ hunks: [JSONValue]) -> (added: Int, removed: Int) {
+        var added = 0
+        var removed = 0
+        for hunk in hunks {
+            let op = hunk["op"]?.string ?? ""
+            added += op == "delete" ? 0 : (hunk["lines"]?.array?.count ?? 0)
+            if op == "replace" || op == "delete" {
+                let from = hunk["from"]?["line"]?.int ?? 0
+                let to = hunk["to"]?["line"]?.int ?? from
+                removed += max(1, to - from + 1)
+            }
+        }
+        return (added, removed)
     }
 
     static func lineChange(old: String, new: String) -> (added: Int, removed: Int) {

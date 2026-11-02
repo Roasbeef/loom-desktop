@@ -189,6 +189,11 @@ private struct TranscriptView: View {
                     }
                     .buttonStyle(.link)
                     .frame(maxWidth: .infinity)
+
+                    // The button is built only once the reader scrolls to it, so
+                    // its appearing is the request, and each page that lands
+                    // changes the first block and asks for the next while it shows.
+                    .task(id: controller.blocks.first?.id) { controller.loadOlder() }
                 } else if controller.isAdopted, query.isEmpty, !controller.blocks.isEmpty {
                     Text("Beginning of the conversation")
                         .font(Theme.caption)
@@ -309,6 +314,11 @@ struct RowView: View {
                         .padding(.horizontal, 13)
                         .padding(.vertical, 9)
                         .background(Theme.tintStrong, in: .rect(cornerRadius: Theme.radius))
+                    if row.images > 0 {
+                        Label("\(row.images) image\(row.images == 1 ? "" : "s")", systemImage: "photo")
+                            .font(Theme.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if let author, author != "Owner" {
                         Text(author).font(Theme.meta).foregroundStyle(.secondary)
                     }

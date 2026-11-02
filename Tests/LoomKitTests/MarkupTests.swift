@@ -226,6 +226,18 @@ final class TranscriptBlockTests: XCTestCase {
         XCTAssertNil(write.removed)
     }
 
+    func testAnchoredHunksCountTheLinesTheyReplaceAndAdd() {
+        let hunks: JSONValue = [
+            ["op": "replace", "from": ["line": 2, "anchor": "a"], "to": ["line": 4, "anchor": "b"], "lines": ["x", "y"]],
+            ["op": "delete", "from": ["line": 9, "anchor": "c"], "to": ["line": 9, "anchor": "c"]],
+            ["op": "insert_after", "at": ["line": 1, "anchor": "d"], "lines": ["z"]],
+        ]
+        let words = StepWords.of(name: "fs_edit", arguments: ["path": "f.py", "hunks": hunks], isRunning: false)
+        XCTAssertEqual(words.added, 3)
+        XCTAssertEqual(words.removed, 4)
+        XCTAssertEqual(words.file, "f.py")
+    }
+
     func testAFailedStepIsASentenceWithTheFirstLineOfItsResult() {
         let text = StepWords.failure(name: "bash", arguments: ["command": "make"], result: "make: *** boom\nmore")
         XCTAssertEqual(text, "Did not complete: ran make. make: *** boom")

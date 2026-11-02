@@ -247,6 +247,7 @@ final class ComposerModel {
                     controller.abort()
                 case .steer(let text):
                     _ = try await controller.request("steer", body: ["strand": .string(strand), "text": .string(text)])
+                    say("Sent as a steer.")
                 case .queue(let text):
                     let id = ledger.sent(text, delivery: .queue)
                     do {

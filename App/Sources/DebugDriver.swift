@@ -169,6 +169,22 @@ enum DebugDriver {
         case "prompt" where parts.count > 2:
             let text = parts.dropFirst(2).joined(separator: " ")
             model.daemon(holding: parts[1])?.attach(parts[1])?.send(text: text)
+        case "scrollup":
+            // Scrolls the widest scroll view to its top, as a reader dragging up would.
+            func scrollViews(_ view: NSView) -> [NSScrollView] {
+                ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews)
+            }
+            if let content = window?.contentView,
+               let scroll = scrollViews(content).max(by: { $0.frame.width < $1.frame.width }) {
+                scroll.contentView.scroll(to: .zero)
+                scroll.reflectScrolledClipView(scroll.contentView)
+            }
+        case "detach" where parts.count > 1:
+            // Ends the session's socket so the daemon connection attaches a fresh
+            // lane, which opens on the recent window and not on everything held.
+            model.controller(for: parts[1])?.detach()
+        case "strand" where parts.count > 1:
+            model.currentSession?.focusedStrand = parts[1]
         case "lanedelay" where parts.count > 1:
             // Holds each send before it reaches the lane, so a test can see the
             // pending line that a quick daemon answer would remove at once.
@@ -218,7 +234,12 @@ enum DebugDriver {
         }
         board.clearContents()
         board.writeObjects([image])
-        _ = NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+
+        // The window is key but the app is not active, so the responder is addressed
+        // directly instead of through the application's own search for a target.
+        let responder = window?.firstResponder
+        let handled = NSApp.sendAction(#selector(NSText.paste(_:)), to: responder, from: nil)
+        reply = "handled=\(handled) responder=\(responder.map { "\(type(of: $0))" } ?? "none") target=\(PasteBridge.target != nil)"
         board.clearContents()
         for item in saved {
             let restored = NSPasteboardItem()
@@ -394,6 +415,10 @@ enum Snapshot {
                 "pendingDrafts": session.composer.ledger.lines.map(\.text),
                 "draft": session.composer.draft,
                 "images": session.composer.images.map(\.name),
+                "userImages": session.blocks.reduce(0) { total, block in
+                    if case .row(let row) = block { return total + row.images }
+                    return total
+                },
                 "notice": session.composer.notice?.text ?? "",
                 "noticeIsWarning": session.composer.notice?.tone == .warning,
                 "slashRows": session.composer.suggestions(catalogue: session.catalogue).map(\.command),
@@ -491,7 +516,7 @@ enum AccessibilityAudit {
                     "role": role(node),
                     "name": name(node),
                     "value": read(node, "accessibilityValue").map { "\($0)" } ?? "",
-                    "enabled": (node as? NSControl)?.isEnabled ?? true,
+                    "enabled": (node as? NSControl)?.isEnabled ?? (read(node, "isAccessibilityEnabled") as? Bool ?? true),
                     "depth": depth,
                     // A detached element reports an infinite frame, which JSON cannot hold.
                     "frame": [frame.origin.x, frame.origin.y, frame.width, frame.height].map { $0.isFinite ? $0 : 0 },

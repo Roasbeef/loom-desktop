@@ -61,6 +61,7 @@ max_output_tokens = 4096
 
 [roles]
 main = ["fake"]
+advisor = ["fake"]
 EOF
 
 if ! lsof -nP -iTCP:$provider -sTCP:LISTEN >/dev/null 2>&1; then

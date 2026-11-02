@@ -166,7 +166,7 @@ struct StepRow: View {
                 .buttonStyle(.plain)
                 .help(parts.name)
                 .accessibilityLabel(words.subject.isEmpty ? words.verb : "\(words.verb) \(words.subject)")
-                .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+                .accessibilityValue(changeValue(words) + (isOpen ? "Expanded" : "Collapsed"))
 
                 if parts.isError {
                     Text(StepWords.failure(name: parts.name, arguments: parts.arguments, result: parts.result))
@@ -190,10 +190,14 @@ struct StepRow: View {
         case "fs_write":
             DiffView(summary: Diff.between(old: "", new: parts.arguments["content"]?.string ?? ""))
         case "fs_edit":
-            DiffView(summary: Diff.between(
-                old: parts.arguments["old"]?.string ?? parts.arguments["old_string"]?.string ?? "",
-                new: parts.arguments["new"]?.string ?? parts.arguments["new_string"]?.string ?? ""
-            ))
+            if let hunks = parts.arguments["hunks"]?.array {
+                OutputBlock(text: hunks.map(Self.hunkText).joined(separator: "\n"), tint: .secondary)
+            } else {
+                DiffView(summary: Diff.between(
+                    old: parts.arguments["old"]?.string ?? parts.arguments["old_string"]?.string ?? "",
+                    new: parts.arguments["new"]?.string ?? parts.arguments["new_string"]?.string ?? ""
+                ))
+            }
         case "bash":
             // The whole command, which the line shows only the first row of.
             if let command = parts.arguments["command"]?.string {
@@ -213,6 +217,24 @@ struct StepRow: View {
         if parts.name != "code_mode", let result = parts.result, !result.isEmpty {
             OutputBlock(text: result, tint: parts.isError ? Theme.failure : .primary)
         }
+    }
+
+    /// The change counts, spoken ahead of the open state.
+    private func changeValue(_ words: StepWords) -> String {
+        var parts: [String] = []
+        if let added = words.added, added > 0 { parts.append("\(added) added") }
+        if let removed = words.removed, removed > 0 { parts.append("\(removed) removed") }
+        return parts.isEmpty ? "" : parts.joined(separator: ", ") + ". "
+    }
+
+    /// One anchored hunk as the lines it removes and adds.
+    private static func hunkText(_ hunk: JSONValue) -> String {
+        let op = hunk["op"]?.string ?? "edit"
+        let from = hunk["from"]?["line"]?.int ?? hunk["at"]?["line"]?.int
+        let to = hunk["to"]?["line"]?.int
+        let place = from.map { start in to.map { "lines \(start)–\($0)" } ?? "after line \(start)" } ?? "at the start"
+        let lines = (hunk["lines"]?.array ?? []).compactMap(\.string).map { "+ " + $0 }
+        return (["\(op) \(place)"] + lines).joined(separator: "\n")
     }
 
     private func icon(_ name: String) -> String {
@@ -510,7 +532,7 @@ private struct LiveReasoning: View {
                     if isSettling {
                         Image(systemName: "brain").foregroundStyle(.tertiary).frame(width: 14)
                     } else {
-                        ProgressView().controlSize(.mini).frame(width: 14)
+                        ProgressView().controlSize(.mini).frame(width: 14).accessibilityHidden(true)
                     }
                     Text(isSettling ? "Thought" : "Thinking").font(Theme.label).foregroundStyle(.secondary)
                     if !isOpen {

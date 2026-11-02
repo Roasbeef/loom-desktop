@@ -11,6 +11,9 @@ keyword in the last user turn selects a script:
   slow       like the default reply, but slow enough to catch mid-stream
   hang       streams one word, then waits long enough to be stopped
   explode    answers HTTP 400, for a run that fails without retries
+  think      streams three lines of reasoning, a second apart, then answers
+  tour       a write, a command and a read that fails, then a short answer
+  program    a code_mode call with a small program
 
 Anything else streams a short markdown reply. A tool result continues whichever
 script produced the call.
@@ -109,6 +112,36 @@ def script(messages):
     """Chooses the next reply from where the conversation stands."""
     prompt = last_user_text(messages)
     steps = steps_taken(messages)
+
+    if "think" in prompt:
+        for line in ("First, consider the retry budget.\n", "Second, check the per-host limits.\n", "Third, decide what to change.\n"):
+            yield chunk({"reasoning_content": line})
+            time.sleep(1.6)
+        yield from text_stream("After thinking it through, the answer is **forty-two**.")
+        return
+
+    if "tour" in prompt:
+        if steps == 0:
+            yield chunk({"content": "I will write a note, run a command, then read a file."})
+            yield call(0, "fs_write", {"path": "tour-notes.txt", "content": "alpha\nbeta\ngamma\ndelta\n"})
+            yield chunk({}, "tool_calls")
+        elif steps == 1:
+            yield call(0, "bash", {"command": "echo tour-command-output"})
+            yield chunk({}, "tool_calls")
+        elif steps == 2:
+            yield call(0, "fs_read", {"path": "no-such-file-for-the-tour.txt"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The tour is done.")
+        return
+
+    if "program" in prompt:
+        if steps == 0:
+            yield call(0, "code_mode", {"program": "import cap/fs\n\npub fn main() {\n  fs.read(\"README.md\")\n}\n", "within_ms": 5000})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The program has run.")
+        return
 
     if "demo" in prompt:
         if steps == 0:

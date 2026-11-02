@@ -82,7 +82,6 @@ struct Composer: View {
                 .onChange(of: composer.draft) {
                     if composer.draft.hasPrefix("/") { composer.loadCatalogue(controller) }
                 }
-                .onPasteCommand(of: [.fileURL, .image]) { composer.ingest($0) }
                 .accessibilityLabel("Message")
 
             HStack(spacing: 10) {
@@ -181,7 +180,13 @@ struct Composer: View {
                 if let data = try? Data(contentsOf: url) { composer.attach(data, name: url.lastPathComponent) }
             }
         }
-        .onAppear { isFocused = true }
+        .onAppear {
+            isFocused = true
+            PasteBridge.install()
+        }
+        .onChange(of: isFocused, initial: true) {
+            if isFocused { PasteBridge.target = composer }
+        }
     }
 
     private func chosen(_ rows: [SlashCommand.Suggestion], _ selection: Int) -> SlashCommand.Suggestion? {
@@ -307,6 +312,7 @@ private struct PendingLine: View {
 private struct HeldInput: View {
     let input: PendingInput
     let controller: SessionController
+    @FocusState private var isEditorFocused: Bool
 
     var body: some View {
         @Bindable var composer = controller.composer
@@ -349,6 +355,9 @@ private struct HeldInput: View {
                     .padding(8)
                     .background(Theme.tint, in: .rect(cornerRadius: Theme.radiusInner))
                     .disabled(edit.isLoading)
+                    .focused($isEditorFocused)
+                    .onAppear { isEditorFocused = true }
+                    .onChange(of: edit.isLoading) { isEditorFocused = true }
                     .accessibilityLabel("Edit queued message text")
                 HStack {
                     Spacer()

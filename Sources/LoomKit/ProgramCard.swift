@@ -41,7 +41,7 @@ public struct ProgramCard: Sendable, Equatable {
     /// Reads a program call and the result joined to it.
     public static func read(arguments: JSONValue, result: String?, isError: Bool, details: JSONValue?) -> ProgramCard {
         let program = arguments["program"]?.string ?? ""
-        let lines = program.isEmpty ? 0 : program.split(separator: "\n", omittingEmptySubsequences: false).count
+        let lines = StepWords.lineCount(program)
         guard let result else {
             return ProgramCard(
                 state: .running, statusWord: "running", outcome: "Running a program", countWords: nil,
