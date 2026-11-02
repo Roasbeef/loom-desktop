@@ -52,7 +52,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | NS-06 | Searchable code picker: folders and workspaces | view/new_session.gleam:771 | `deployment.status` | yes (NewSessionSheet.swift; the folder field filters recent places or an executor's registered names) | 2 |
 | NS-07 | Typed folder, judged before creation | creations.gleam:413 | `sessions.create` | yes (NewSessionSheet.swift and FolderCheck in Administration.swift judge the typed path before any request) | 1 |
 | NS-08 | Run on an executor | view/create.gleam:511 | `sessions.create` `executor`; `deployment.status` | yes (RootView.swift:431; ControlClient.swift:97) | 2 |
-| NS-09 | Run in a pool | view/create.gleam:511 | `sessions.create` `pool` | code (RootView.swift:433; ControlClient.swift:98) | 2 |
+| NS-09 | Run in a pool | view/create.gleam:511 | `sessions.create` `pool` | yes (NewSessionSheet.swift; pools are offered as a place and the daemon picks the executor) | 2 |
 | NS-10 | Executor and pool cards: state, free scopes, contradiction, declaration | placements.gleam:71 | `deployment.status` | partial (RootView.swift:542 shows name, platform, free scopes and state; no contradiction text) | 3 |
 | NS-11 | A down executor may still be chosen | view/create.gleam:511 | `sessions.create` | code (NewSessionSheet.swift allows a down executor with a warning; no scenario takes the executor down) | 3 |
 | NS-12 | Workspace select for an executor's registered names | view/create.gleam:852 | `deployment.status` node read | yes (NewSessionSheet.swift; `executor.workspaces` read from the node report, which the old decoder missed) | 2 |
@@ -337,15 +337,15 @@ The web page has no schedule surface beyond these two commands.
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
 | MA-01 | Deployment section, summary line | view/admin_machines.gleam:155 | `deployment.status` | yes (MachinesView.swift:44) | 3 |
-| MA-02 | Machines grouped by role | view/admin_machines.gleam:127 | `deployment.status` | partial (MachinesView.swift:79 grids by node and shows roles; not grouped) | 3 |
-| MA-03 | Row facts and "not linked from here" | view/admin_machines.gleam:391 | `deployment.status` | partial (MachinesView.swift:133 shows platform, enforcement and build; no link standing) | 3 |
-| MA-04 | Pools | view/admin_machines.gleam:554 | `deployment.status` | no (only in the dispatch picker) | 3 |
-| MA-05 | Machine page tab: Overview | view/admin_machine.gleam:191; machines.gleam:551 | `deployment.status` `node` | partial (MachinesView.swift:94 shows state, reasons and meters) | 3 |
-| MA-06 | Machine page tab: Sessions | view/admin_machine.gleam:428; view/admin_machine.gleam:539 | `deployment.status`, `sessions.elsewhere` | partial (MachinesView.swift:100 lists this daemon's dependents) | 3 |
+| MA-02 | Machines grouped by role | view/admin_machines.gleam:127 | `deployment.status` | yes (MachinesView.swift groups orchestrators, executors and pools) | 3 |
+| MA-03 | Row facts and "not linked from here" | view/admin_machines.gleam:391 | `deployment.status` | code (MachinesView.swift and MachineDetailSheet.swift say not linked from here from the `edges` link; no scenario breaks a link) | 3 |
+| MA-04 | Pools | view/admin_machines.gleam:554 | `deployment.status` | yes (MachinesView.swift PoolsGroup) | 3 |
+| MA-05 | Machine page tab: Overview | view/admin_machine.gleam:191; machines.gleam:551 | `deployment.status` `node` | yes (MachineDetailSheet.swift overview, declaration and ledger) | 3 |
+| MA-06 | Machine page tab: Sessions | view/admin_machine.gleam:428; view/admin_machine.gleam:539 | `deployment.status`, `sessions.elsewhere` | yes (MachineDetailSheet.swift lists the sessions that depend on the machine) | 3 |
 | MA-07 | Machine page tab: Access, ledger standing | view/admin_machine.gleam:663 | `ledger.status`, `ledger.entries` | no | 3 |
-| MA-08 | Copy enroll, renew and revoke commands | view/admin_machine.gleam:681; view/admin_machine.gleam:689; view/admin_machine.gleam:749 | none, the operator runs them | no | 3 |
-| MA-09 | Scopes tab: counts and scopes that block a reopen | view/admin_machine.gleam:901 | `deployment.status` | partial (MachinesView.swift:141 shows the scope meter only) | 3 |
-| MA-10 | Copy the release-scope command | view/admin_machine.gleam:777 | none, the operator runs it | no | 3 |
+| MA-08 | Copy enroll, renew and revoke commands | view/admin_machine.gleam:681; view/admin_machine.gleam:689; view/admin_machine.gleam:749 | none, the operator runs them | yes (MachineDetailSheet.swift prints the renew, revoke and enroll commands; the app runs none) | 3 |
+| MA-09 | Scopes tab: counts and scopes that block a reopen | view/admin_machine.gleam:901 | `deployment.status` | code (MachineDetailSheet.swift shows scope counts and each scope that did not close cleanly; the fixture has no unclean scope) | 3 |
+| MA-10 | Copy the release-scope command | view/admin_machine.gleam:777 | none, the operator runs it | code (MachineDetailSheet.swift prints `loomd executor release <session>` for each unclean scope; none exists in the fixture) | 3 |
 | MA-11 | Show a machine's sessions in the sidebar | admin.gleam:1399 | local | no | 3 |
 | MA-12 | Admin page Machines and People parts | admin.gleam:1305 | local | yes (Machines only: MachinesView.swift:9; people are in CR rows) | 3 |
 | MA-13 | Placement strip: "Agent on", "Commands on" | view/placement.gleam:42 | `sessions.list` | yes (SessionScreen.swift:102 and :1155) | 2 |

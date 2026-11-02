@@ -187,9 +187,9 @@ def a_session_is_created_with_a_profile_model_name_and_box(c):
     c.app.session_id("Named by the form")
 
 
-def find_box_label(c):
-    """The executor segment's name, which carries its platform and free scopes."""
-    return wait_for(lambda: next((n["name"] for n in c.app.tree() if n["role"] == "AXRadioButton" and n["name"].startswith("box")), None), what="the box segment")
+def find_box_label(c, prefix="box"):
+    """A placement segment's name, which carries its platform and free scopes."""
+    return wait_for(lambda: next((n["name"] for n in c.app.tree() if n["role"] == "AXRadioButton" and n["name"].startswith(prefix)), None), what=f"the {prefix} segment")
 
 
 @scenario("NS-12", "NS-08")
@@ -332,4 +332,42 @@ def effort_and_profile_are_changed_on_a_running_session(c):
     c.app.press("review")
     c.app.press("Switch Profile")
     wait_for(lambda: c.app.session().get("profile") == "review", 60, "the session to restart under the review profile")
+    c.app.press("Done")
+
+
+@scenario("NS-09", "MA-04")
+def a_session_is_created_in_a_pool(c):
+    """A pool is offered as a place, named on the Machines screen, and the daemon picks its executor."""
+    c.app.go("machines")
+    c.app.see("Pools")
+    c.app.see("Pool boxes, ready")
+    open_form(c)
+    try:
+        c.app.press(find_box_label(c, "boxes"))
+        c.app.focus("Prompt")
+        c.app.type("Pool form check demo")
+        c.app.fill("Folder", "proj")
+        wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
+        c.app.press("Dispatch")
+        wait_for(lambda: not c.app.snap()["isDispatching"], 40, "the form to close")
+    finally:
+        close_form(c)
+    sid = c.app.session_id("Pool form check")
+    wait_for(lambda: c.app.cmd(f"snapshot") and any(s["id"] == sid for s in c.app.sessions()), what="the session")
+
+
+@scenario("MA-02", "MA-05", "MA-06", "MA-08", "MA-09")
+def a_machine_is_read_in_detail(c):
+    """Machines are grouped by role, and a machine's detail shows its state, its sessions, its scopes and operator commands."""
+    sid = c.app.dispatch("Machine detail run demo", "proj", executor="box")
+    c.app.go("machines")
+    c.app.see("Orchestrators")
+    c.app.see("Executors")
+    c.app.press("Details for box")
+    c.app.see("Overview")
+    c.app.see("Its report agrees with the declaration")
+    c.app.see("Machine detail run")
+    c.app.see("Every closed scope ended cleanly")
+    c.app.see("loom distribution renew box")
+    c.app.see(r"loom distribution revoke box --reason 'REASON'")
     c.app.press("Done")

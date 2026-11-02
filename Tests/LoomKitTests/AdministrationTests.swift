@@ -104,4 +104,16 @@ final class AdministrationTests: XCTestCase {
         XCTAssertEqual(LoomError.server(code: "busy", message: "x", details: nil).errorDescription, Refusal.words(code: "busy"))
         XCTAssertEqual(LoomError.server(code: "zzz", message: "m", details: nil).errorDescription, "zzz: m")
     }
+
+    func testOperatorCommandsQuoteAndRefuseNames() {
+        XCTAssertEqual(OperatorCommands.renew("box"), "loom distribution renew box")
+        XCTAssertEqual(OperatorCommands.revoke("it's"), "loom distribution revoke 'it'\\''s' --reason 'REASON'")
+        XCTAssertNil(OperatorCommands.renew("-rf"))
+        XCTAssertNil(OperatorCommands.renew(""))
+        XCTAssertEqual(OperatorCommands.release(session: "01a1-b"), "loomd executor release 01a1-b")
+        XCTAssertEqual(
+            OperatorCommands.enroll("box", node: "loom@box", role: "executor", links: "hub"),
+            "loom distribution enroll box --node loom@box --role executor --links hub"
+        )
+    }
 }

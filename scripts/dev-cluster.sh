@@ -73,6 +73,9 @@ main = ["fake"]
 
 [profiles.review.roles]
 main = ["fake2"]
+
+[pools.boxes]
+executors = ["box"]
 EOF
 
 if ! lsof -nP -iTCP:$provider -sTCP:LISTEN >/dev/null 2>&1; then

@@ -70,6 +70,7 @@ final class SessionActions {
     var moving: SessionRecord?
     var sharing: SessionRecord?
     var settings: SessionRecord?
+    var machine: MachineRef?
     var showsPeople = false
 
     /// A folder the next new-session form starts with, set by a project heading.
@@ -245,6 +246,9 @@ struct SessionActionPresenter: ViewModifier {
             }
             .sheet(item: $actions.moving) { record in
                 MoveSheet(record: record)
+            }
+            .sheet(item: $actions.machine) { machine in
+                MachineDetailSheet(machine: machine)
             }
             .sheet(item: $actions.settings) { record in
                 SessionSettingsSheet(record: record)

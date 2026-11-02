@@ -523,3 +523,39 @@ extension ControlClient {
         ]))
     }
 }
+
+// MARK: Operator commands
+
+/// The commands an operator runs in a terminal on the machine that holds the
+/// authority key. The app prints them and runs none, as the web page does, since
+/// the key must not be on the machine that draws the interface.
+public enum OperatorCommands {
+    /// Quotes a name for a shell, or nil when it could not be a name at all: empty,
+    /// too long, with a control character, or starting with a dash.
+    public static func quote(_ name: String) -> String? {
+        guard !name.isEmpty, name.utf8.count <= 128, !name.hasPrefix("-"),
+              !name.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F }) else { return nil }
+        let bare = name.unicodeScalars.allSatisfy { scalar in
+            scalar.properties.isAlphabetic && scalar.isASCII || ("0"..."9").contains(Character(scalar)) || "-_.@:/".unicodeScalars.contains(scalar)
+        }
+        return bare ? name : "'" + name.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    public static func renew(_ machine: String) -> String? {
+        quote(machine).map { "loom distribution renew \($0)" }
+    }
+
+    public static func revoke(_ machine: String) -> String? {
+        quote(machine).map { "loom distribution revoke \($0) --reason 'REASON'" }
+    }
+
+    public static func enroll(_ machine: String, node: String, role: String, links: String) -> String? {
+        guard let machine = quote(machine), let node = quote(node), let links = quote(links) else { return nil }
+        return "loom distribution enroll \(machine) --node \(node) --role \(role) --links \(links)"
+    }
+
+    /// Releases the scope of a session that did not close cleanly on an executor.
+    public static func release(session: String) -> String? {
+        quote(session).map { "loomd executor release \($0)" }
+    }
+}

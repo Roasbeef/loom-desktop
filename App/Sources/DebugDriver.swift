@@ -501,7 +501,7 @@ enum AccessibilityAudit {
         for root in roots {
             visit(root) { node, _ in
                 guard target == nil, name(node) == label else { return }
-                if ["AXButton", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXRow", "AXCell"].contains(role(node)) {
+                if ["AXButton", "AXLink", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXRow", "AXCell"].contains(role(node)) {
                     target = node
                 }
             }

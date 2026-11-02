@@ -277,6 +277,8 @@ public struct PlacementOption: Sendable, Equatable, Identifiable {
     public let platform: String?
     public let enforcement: String?
     public let freeScopes: Int?
+    /// For a pool, the executors it lists. An executor has none.
+    public let members: [String]
     public var id: String { "\(choice)" }
 }
 
@@ -293,6 +295,8 @@ public struct Deployment: Sendable, Equatable {
     public let omitted: [String]
     public let others: [OtherOrchestrator]
     public let moves: [MoveInFlight]
+    /// How the asking daemon relates to each node: serves, peers, and the link.
+    public let edges: [DeploymentEdge]
 
     /// Whether this daemon has more than itself, which decides if a person sees
     /// any placement vocabulary at all.
@@ -310,6 +314,7 @@ public struct Deployment: Sendable, Equatable {
         omitted = (body["omitted"]?.array ?? []).compactMap(\.string)
         others = (body["orchestrators"]?.array ?? []).compactMap(OtherOrchestrator.init)
         moves = (body["moves"]?.array ?? []).compactMap(MoveInFlight.init)
+        edges = (body["edges"]?.array ?? []).compactMap(DeploymentEdge.init)
 
         let placements = body["placements"]
         executors = (placements?["executors"]?.array ?? []).compactMap { row in
@@ -321,19 +326,23 @@ public struct Deployment: Sendable, Equatable {
                 state: row["state"]?.string ?? "unknown",
                 platform: row["declared"]?["platform"]?.string,
                 enforcement: row["declared"]?["enforcement"]?.string,
-                freeScopes: row["free_scopes"]?.int
+                freeScopes: row["free_scopes"]?.int,
+                members: []
             )
         }
         pools = (placements?["pools"]?.array ?? []).compactMap { row in
             guard let name = row["name"]?.string else { return nil }
+            // A pool reports which of its executors qualify, not a state of its own.
+            let eligible = (row["eligible"]?.array ?? []).compactMap(\.string)
             return PlacementOption(
                 choice: .pool(name),
                 name: name,
                 node: nil,
-                state: row["state"]?.string ?? "unknown",
+                state: row["state"]?.string ?? (eligible.isEmpty ? "none eligible" : "ready"),
                 platform: row["declared"]?["platform"]?.string ?? row["platform"]?.string,
                 enforcement: nil,
-                freeScopes: row["free_scopes"]?.int
+                freeScopes: row["free_scopes"]?.int,
+                members: (row["executors"]?.array ?? []).compactMap(\.string)
             )
         }
     }
@@ -356,5 +365,24 @@ public struct ElsewhereGroup: Sendable, Equatable, Identifiable {
         address = body["address"]?.string
         hasMore = body["more"]?.bool ?? false
         sessions = (body["sessions"]?.array ?? []).compactMap(SessionRecord.init)
+    }
+}
+
+/// One relation the asking daemon holds to a node, with the state of the link.
+public struct DeploymentEdge: Sendable, Equatable {
+    public let from: String
+    public let to: String
+    public let kind: String
+    /// `connected` when the asking daemon reaches the node over its own link.
+    public let link: String
+    public let sessions: Int
+
+    init?(_ body: JSONValue) {
+        guard let from = body["from"]?.string, let to = body["to"]?.string else { return nil }
+        self.from = from
+        self.to = to
+        kind = body["kind"]?.string ?? ""
+        link = body["link"]?.string ?? "unknown"
+        sessions = body["sessions"]?.int ?? 0
     }
 }
