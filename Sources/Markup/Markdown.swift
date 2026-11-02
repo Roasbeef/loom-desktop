@@ -6,9 +6,20 @@ public enum MarkdownBlock: Sendable, Equatable {
     case paragraph(String)
     case list(ordered: Bool, items: [ListItem])
     case quote(String)
+    /// A quote whose first line is `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`.
+    case alert(kind: AlertKind, text: String)
+    /// A definition `[^label]: text`, drawn where the model wrote it.
+    case footnote(label: String, text: String)
     case code(language: String?, text: String, isClosed: Bool)
     case table(header: [String], rows: [[String]])
     case rule
+
+    public enum AlertKind: String, Sendable, Equatable, CaseIterable {
+        case note, tip, important, warning, caution
+
+        /// The fixed word that titles the block. It is never text from the model.
+        public var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    }
 
     public struct ListItem: Sendable, Equatable {
         public let marker: String
@@ -75,7 +86,11 @@ public enum Markdown {
                     quoted.append(body.hasPrefix(" ") ? String(body.dropFirst()) : String(body))
                     index += 1
                 }
-                blocks.append(.quote(quoted.joined(separator: "\n")))
+                blocks.append(quote(quoted))
+            } else if let note = footnote(trimmed) {
+                flush()
+                blocks.append(.footnote(label: note.label, text: note.text))
+                index += 1
             } else if listItem(line) != nil {
                 flush()
                 var items: [MarkdownBlock.ListItem] = []
@@ -112,7 +127,7 @@ public enum Markdown {
         var output: [String] = []
         for block in parse(source) {
             switch block {
-            case .heading(_, let text), .paragraph(let text), .quote(let text): output.append(text)
+            case .heading(_, let text), .paragraph(let text), .quote(let text), .alert(_, let text), .footnote(_, let text): output.append(text)
             case .list(_, let items): output += items.map(\.text)
             case .table(let header, _): output.append(header.joined(separator: " "))
             case .code, .rule: break
@@ -122,6 +137,43 @@ public enum Markdown {
             .replacingOccurrences(of: "**", with: "")
             .replacingOccurrences(of: "`", with: "")
             .replacingOccurrences(of: "\n", with: " ")
+    }
+
+    /// A quote, or an alert when its first line names a kind between `[!` and `]`.
+    private static func quote(_ lines: [String]) -> MarkdownBlock {
+        let head = lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
+        if head.hasPrefix("[!"), head.hasSuffix("]"),
+           let kind = MarkdownBlock.AlertKind(rawValue: head.dropFirst(2).dropLast().lowercased()) {
+            return .alert(kind: kind, text: lines.dropFirst().joined(separator: "\n"))
+        }
+        return .quote(lines.joined(separator: "\n"))
+    }
+
+    private static func footnote(_ line: String) -> (label: String, text: String)? {
+        guard line.hasPrefix("[^"), let close = line.firstIndex(of: "]") else { return nil }
+        let label = line[line.index(line.startIndex, offsetBy: 2)..<close]
+        let rest = line[line.index(after: close)...]
+        guard !label.isEmpty, !label.contains(where: \.isWhitespace), rest.hasPrefix(":") else { return nil }
+        return (String(label), rest.dropFirst().trimmingCharacters(in: .whitespaces))
+    }
+
+    /// Footnote references `[^1]` drawn as `[1]`, which links to nothing.
+    public static func footnoteReferences(in text: String) -> String {
+        var output = ""
+        var index = text.startIndex
+        while index < text.endIndex {
+            if text[index...].hasPrefix("[^"), let close = text[index...].firstIndex(of: "]") {
+                let label = text[text.index(index, offsetBy: 2)..<close]
+                if !label.isEmpty, !label.contains(where: \.isWhitespace), text[text.index(after: close)...].first != ":" {
+                    output += "[\(label)]"
+                    index = text.index(after: close)
+                    continue
+                }
+            }
+            output.append(text[index])
+            index = text.index(after: index)
+        }
+        return output
     }
 
     private static func fence(_ line: String) -> (marker: String, language: String?)? {

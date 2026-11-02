@@ -287,6 +287,28 @@ struct MarkdownView: View {
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .surface(radius: Theme.radiusInner)
+        case .alert(let kind, let text):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(kind.title)
+                    .font(Theme.label)
+                    .accessibilityAddTraits(.isHeader)
+                Text(Self.inline(text))
+                    .font(Theme.body)
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .surface(radius: Theme.radiusInner)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(kind.title): \(text)")
+        case .footnote(let label, let text):
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("[\(label)]").font(Theme.caption).foregroundStyle(.secondary)
+                Text(Self.inline(text)).font(Theme.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            }
         case .code(let language, let text, let closed):
             CodeBlockView(code: text, language: language, isStreaming: isStreaming && !closed)
         case .table(let header, let rows):
@@ -312,8 +334,16 @@ struct MarkdownView: View {
 
     private static func parseInline(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        guard var result = try? AttributedString(markdown: text, options: options) else {
+        guard var result = try? AttributedString(markdown: Markdown.footnoteReferences(in: text), options: options) else {
             return AttributedString(text)
+        }
+
+        // A link is followed only when its destination passes the same rule the web
+        // page applies. A refused one stays as its label, and says it was not followed.
+        for run in result.runs.reversed() {
+            guard let link = run.link, LinkRule.destination(link.absoluteString) == nil else { continue }
+            result[run.range].link = nil
+            result.insert(AttributedString(" (link not followed)"), at: run.range.upperBound)
         }
 
         // Inline code gets a monospaced face and a soft fill, not a colour.
