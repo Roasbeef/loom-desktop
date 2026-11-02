@@ -217,6 +217,9 @@ real model's, so this is a known limit and not a daily problem.
 
 ## Verifying a change
 
+[testing.md](testing.md) describes the test tools. This section covers the pieces beneath them.
+
+
 `swift test` covers the pure rules. `scripts/fake_provider.py` is a scripted model
 endpoint, so a throwaway daemon runs real sessions with no credential or spend.
 `scripts/dev-cluster.sh` starts a real orchestrator and executor on this machine.
