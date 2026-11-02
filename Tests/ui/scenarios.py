@@ -871,8 +871,9 @@ def side_question_panel(c):
     run_session(c, "Aside", "check", "scripted")
     c.app.press("Side Question")
     wait_for(lambda: c.app.session()["side"], 5, "the panel")
-    # The field takes focus when the panel opens, so typing needs no click.
-    c.app.type("what changed?")
+    # Focus reaches the field a moment after the panel opens and typed keys sent sooner
+    # are lost, so the question is filled by name.
+    c.app.fill("Side question", "what changed?")
     c.app.press("Ask")
     c.app.see(r"what changed\?", 15)
     c.app.see(r"scripted", 20)
