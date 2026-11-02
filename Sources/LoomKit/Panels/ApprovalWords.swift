@@ -38,3 +38,32 @@ extension Escalation {
     public static let staleWords =
         "That request changed before your answer was sent, so nothing was answered. Check the request shown now."
 }
+
+extension Decision {
+    /// How the ledger records an answer, as a person says it.
+    public var outcomeWord: String {
+        switch outcome {
+        case "rejected": return "denied"
+        case "consumed": return "allowed once"
+        default: return "allowed"
+        }
+    }
+
+    /// One line: what was asked, the answer, and the id a `/approvals <id>` names.
+    public var line: String {
+        "\(outcomeWord.prefix(1).uppercased() + outcomeWord.dropFirst()): \(summary) (\(tool.isEmpty ? "request" : tool), \(id))"
+    }
+
+    /// The reply to `/approvals [id]`. With an id prefix it names that one answer, and
+    /// without it the answers in the order they were given.
+    public static func ledgerWords(_ decisions: [Decision], matching prefix: String?) -> String {
+        let ordered = decisions.sorted { $0.seq < $1.seq }
+        if let prefix {
+            guard let found = ordered.first(where: { $0.id.hasPrefix(prefix) }) else {
+                return "No answered request starts with \(prefix)."
+            }
+            return found.line
+        }
+        return ordered.isEmpty ? "No request has been answered in this session." : ordered.map(\.line).joined(separator: "\n")
+    }
+}

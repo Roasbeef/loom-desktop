@@ -92,6 +92,14 @@ public struct ChildPeek: Sendable, Equatable {
     public let next: Int?
 }
 
+/// A held prompt the daemon returned while it drained.
+public struct ReturnedDraft: Sendable, Equatable {
+    public let strand: String
+    public let text: String
+    /// Images the prompt carried, which do not come back with the text.
+    public let attachmentCount: Int
+}
+
 /// An approval that was answered.
 public struct Decision: Sendable, Equatable {
     public let id: String
@@ -137,6 +145,9 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
     public var details: JSONValue?
     /// The record's place in the session's sequence, which orders decisions among rows.
     public var seq: Int?
+    /// What the request that wrote this message read and wrote of the prompt cache.
+    /// Only the first row of an assistant message carries it.
+    public var cache: CacheUse?
 
     public init(id: String, kind: Kind, callID: String? = nil, at: Int? = nil) {
         self.id = id
@@ -272,6 +283,9 @@ public struct Conversation: Sendable, Equatable {
     public private(set) var signals: [String: Int] = [:]
     /// Spend by children on other orchestrators, from the metadata document.
     public private(set) var remoteUsage: [RemoteUsage] = []
+    /// Prompts a draining daemon handed back, for the host to put in the editor.
+    /// Each is the prompt's last copy, so the host empties the list as it takes them.
+    public private(set) var returnedDrafts: [ReturnedDraft] = []
 
     /// Moves when what `rows` would return may have changed, so a host can keep
     /// its projection until then and a streamed token never rebuilds it.
@@ -371,6 +385,14 @@ public struct Conversation: Sendable, Equatable {
             if let call = frame.body["call_id"]?.string, let tail = frame.body["tail"]?.string {
                 toolTails[call] = tail
             }
+        case "held_input_returned":
+            // The daemon is draining and gives each held prompt back unsent
+            // (protocol-change/038), so the text is retained before the socket closes.
+            returnedDrafts.append(ReturnedDraft(
+                strand: frame.body["strand"]?.string ?? "main",
+                text: frame.body["text"]?.string ?? "",
+                attachmentCount: frame.body["attachment_count"]?.int ?? 0
+            ))
         case "goal_changed", "proposals_changed", "evolution_changed":
             signals[frame.event, default: 0] += 1
         case "snapshot":
@@ -401,6 +423,12 @@ public struct Conversation: Sendable, Equatable {
         default:
             break
         }
+    }
+
+    /// Hands over the returned prompts and forgets them.
+    public mutating func takeReturnedDrafts() -> [ReturnedDraft] {
+        defer { returnedDrafts = [] }
+        return returnedDrafts
     }
 
     /// Clears the connection-level errors already shown.
@@ -598,7 +626,7 @@ public struct Conversation: Sendable, Equatable {
     /// not held, and `hasOlder` says more can be paged in. Walking the chain
     /// rather than sorting by sequence is what keeps another strand's entries
     /// and an abandoned branch out of this transcript.
-    public func rows(strand: String) -> [TranscriptRow] {
+    public func rows(strand: String, clearedThrough: Int? = nil) -> [TranscriptRow] {
         guard let leaf = strands.first(where: { $0.id == strand })?.leaf else { return [] }
 
         var chain: [JSONValue] = []
@@ -609,9 +637,15 @@ public struct Conversation: Sendable, Equatable {
         }
         var rows = Self.rows(ordered: Array(chain.reversed()))
 
+        // `/clear` hides what this client had already drawn. The records stay in
+        // the session, so another client and a reopened window still show them.
+        if let clearedThrough {
+            rows.removeAll { ($0.seq ?? Int.max) <= clearedThrough }
+        }
+
         // A decision stands among the rows by the sequence of its record, so it
         // reads where the person answered and not at the end.
-        for decision in decisions.values.filter({ $0.strand == strand || $0.strand.isEmpty }).sorted(by: { $0.seq < $1.seq }) {
+        for decision in decisions.values.filter({ ($0.strand == strand || $0.strand.isEmpty) && $0.seq > (clearedThrough ?? -1) }).sorted(by: { $0.seq < $1.seq }) {
             let row = TranscriptRow(
                 id: "decision/\(decision.id)",
                 kind: .decision(tool: decision.tool, summary: decision.summary, outcome: decision.outcome),
@@ -631,11 +665,32 @@ public struct Conversation: Sendable, Equatable {
         var rows: [TranscriptRow] = []
         var toolIndex: [String: Int] = [:]
         var previous: Int?
+        var lastCache: (use: CacheUse, at: Int)?
         for entry in entries {
+            let before = rows.count
             append(entry, previous: previous, to: &rows, toolIndex: &toolIndex)
             previous = entry["timestamp"]?.int ?? previous
+
+            // A miss is noticed after the request that paid for it, and its row
+            // stands just before that request's reply.
+            if rows.count > before, let use = CacheUse(entry["message"]?["usage"]),
+               entry["message"]?["role"]?.string == "assistant", use.readsContext, let at = entry["timestamp"]?.int {
+                rows[before].cache = use
+                if let held = lastCache,
+                   let miss = CacheWatch.detect(previous: held.use, previousAt: held.at, current: use, currentAt: at) {
+                    var notice = TranscriptRow(id: "\(rows[before].id)/cache-miss", kind: .notice(text: miss.words), at: at)
+                    notice.seq = rows[before].seq
+                    rows.insert(notice, at: before)
+                }
+                lastCache = (use, at)
+            }
         }
         return rows
+    }
+
+    /// The highest record sequence this strand's chain holds, which `/clear` hides through.
+    public func newestSeq(strand: String) -> Int? {
+        rows(strand: strand).compactMap(\.seq).max()
     }
 
     /// The strand's todo board: the newest successful `todo` result on its chain.
@@ -822,6 +877,7 @@ public struct Conversation: Sendable, Equatable {
                 )
                 row.settledAt = at
                 row.details = details
+                row.seq = rows[index].seq
                 rows[index] = row
 
                 if name == "agent_spawn", !failed, let child = details?["strand"]?.string {
@@ -832,6 +888,7 @@ public struct Conversation: Sendable, Equatable {
                         at: row.at
                     )
                     spawned.settledAt = at
+                    spawned.seq = row.seq
                     rows[index] = spawned
                 }
                 if name == "agent_wait", !failed {
