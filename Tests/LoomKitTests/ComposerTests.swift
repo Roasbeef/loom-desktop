@@ -138,3 +138,43 @@ final class DraftTests: XCTestCase {
         XCTAssertEqual(blocks[1]["mimeType"]?.string, "image/png")
     }
 }
+
+final class ProgramCardTests: XCTestCase {
+    private let details: JSONValue = [
+        "status": "completed",
+        "calls": [
+            "started_unix_ms": 0, "elapsed_ms": 100, "total": 3, "failed": 1, "cancelled": 0, "unsettled": 0,
+            "items": [
+                ["cap": "fs.read", "args": "a", "status": "ok", "start_ms": 0, "duration_ms": 10],
+                ["cap": "fs.read", "args": "b", "status": "ok", "start_ms": 10, "duration_ms": 10],
+                ["cap": "net.fetch", "args": "u", "status": "failed", "start_ms": 50, "duration_ms": 50],
+            ],
+        ],
+    ]
+
+    func testACompletedProgramIsOneSentenceAndATimeAxis() {
+        let card = ProgramCard.read(arguments: ["program": "a\nb\n"], result: "ok", isError: false, details: details)
+        XCTAssertEqual(card.state, .completed)
+        XCTAssertEqual(card.outcome, "Read 2 files, made 1 request")
+        XCTAssertEqual(card.countWords, "3 calls · 1 failed")
+        XCTAssertEqual(card.lines, 2)
+        XCTAssertEqual(card.calls.map(\.count), [2, 1])
+        XCTAssertEqual(card.calls[1].offset, 50)
+        XCTAssertEqual(card.calls[1].width, 50)
+    }
+
+    func testARunningProgramHoldsOnlyItsSource() {
+        let card = ProgramCard.read(arguments: ["program": "x"], result: nil, isError: false, details: nil)
+        XCTAssertEqual(card.state, .running)
+        XCTAssertTrue(card.calls.isEmpty)
+    }
+
+    func testACompilerRefusalSaysNothingRan() {
+        let card = ProgramCard.read(
+            arguments: ["program": "x"], result: "boom", isError: true,
+            details: ["status": "compile_failed", "detail": "line 1: bad"]
+        )
+        XCTAssertEqual(card.state, .compileFailed)
+        XCTAssertEqual(card.failure, "line 1: bad")
+    }
+}

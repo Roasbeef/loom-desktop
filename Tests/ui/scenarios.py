@@ -361,7 +361,7 @@ def schedules_list_and_retire(c):
     check(c.app.session()["noticeIsWarning"], f"retiring a missing schedule is refused: {note}")
 
 
-@scenario("CO-25", "KB-05", "CO-07")
+@scenario("CO-25", "KB-05")
 def fork_makes_a_strand_and_escape_returns(c):
     """/fork adds a strand, and Escape in the composer returns to main."""
     c.app.dispatch("Fork it", WORKSPACE)
@@ -558,9 +558,18 @@ def older_turns_page_in(c):
     check(c.app.session()["hasOlder"], f"a reopened long session should have older turns ({before} blocks held)")
     c.app.cmd("scrollup")
     wait_for(lambda: c.app.session()["blocks"] > before, 20, "older turns to arrive")
+
+    # Each page moves the top out of view, so the reader scrolls up again.
+    for _ in range(40):
+        if not c.app.session()["hasOlder"]:
+            break
+        c.app.cmd("scrollup")
+        time.sleep(0.5)
     wait_for(lambda: not c.app.session()["hasOlder"], 30, "the start of the conversation")
-    c.app.cmd("scrollup")
-    c.app.see("Beginning of the conversation")
+    def at_the_top():
+        c.app.cmd("scrollup")
+        return any("Beginning of the conversation" in t for t in c.app.texts())
+    wait_for(at_the_top, 20, "the beginning of the conversation", every=0.4)
 
 
 # Approvals.

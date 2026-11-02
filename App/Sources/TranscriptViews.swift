@@ -168,7 +168,7 @@ struct StepRow: View {
                 .accessibilityLabel(words.subject.isEmpty ? words.verb : "\(words.verb) \(words.subject)")
                 .accessibilityValue(changeValue(words) + (isOpen ? "Expanded" : "Collapsed"))
 
-                if parts.isError {
+                if parts.isError, parts.name != "code_mode" {
                     Text(StepWords.failure(name: parts.name, arguments: parts.arguments, result: parts.result))
                         .font(Theme.caption)
                         .foregroundStyle(Theme.failure)
@@ -319,14 +319,17 @@ struct OutputBlock: View {
 
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
-            Text(text)
-                .font(Theme.code)
-                .foregroundStyle(tint)
-                .lineSpacing(2)
-                .textSelection(.enabled)
-                .fixedSize()
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
+            HStack(spacing: 0) {
+                Text(text)
+                    .font(Theme.code)
+                    .foregroundStyle(tint)
+                    .lineSpacing(2)
+                    .multilineTextAlignment(.leading)
+                    .textSelection(.enabled)
+                    .fixedSize()
+                Spacer(minLength: 0)
+            }
+            .padding(10)
         }
         .frame(maxHeight: 260)
         .fixedSize(horizontal: false, vertical: true)
@@ -505,7 +508,8 @@ struct LiveTail: View {
                 }
             }
         }
-        if let since = controller.turnStartedAt ?? controller.busySince {
+        if let observed = controller.busySince {
+            let since = controller.turnStartedAt ?? observed
             WorkingLine(since: since, isThinking: (stream?.thinking.isEmpty ?? true) && (stream?.text.isEmpty ?? true))
         }
     }
