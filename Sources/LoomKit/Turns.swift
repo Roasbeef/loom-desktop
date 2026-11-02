@@ -239,7 +239,7 @@ public enum TranscriptBlock: Sendable, Equatable, Identifiable {
         for row in rows {
             // The memory context follows the prompt it was attached to, so it joins
             // that turn and opens none of its own, since nobody asked for it.
-            if case .user = row.kind {
+            if row.kind.opensTurn {
                 flush(isLast: false)
                 inputAt = row.at
                 blocks.append(.row(row))

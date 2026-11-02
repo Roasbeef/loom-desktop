@@ -231,6 +231,13 @@ enum DebugDriver {
             } else {
                 reply = "error: cannot read \(rest)"
             }
+        case "peerlink" where parts.count > 2:
+            // Lets the first session message the second one's main strand and wake it.
+            do {
+                try await model.daemons.first?.control?.linkPeers(sessionID: parts[1], strand: "main", targetSession: parts[2], targetStrand: "main", wakes: true)
+            } catch {
+                reply = "error: \(error.localizedDescription)"
+            }
         case "approve" where parts.count > 1:
             if let controller = model.controller(for: parts[1]), let record = controller.escalations.first {
                 controller.approve(record)
@@ -477,6 +484,9 @@ enum Snapshot {
                         case .agentReport(let child, let outcome, let report): return "report \(child) \(outcome) \(report)"
                         case .decision(let tool, let summary, let outcome): return "decision \(outcome) \(tool) \(summary)"
                         case .memory(let lines, _): return MemoryContext.summary(lines: lines)
+                        case .peer(let session, let strand, let text): return "peer \(session.prefix(8)) \(strand) \(text)"
+                        case .sibling(let strand, let text, _): return "sibling \(strand) \(text)"
+                        case .advisor(let frame, let body): return "\(frame.label) \(body)"
                         }
                     }
                 },

@@ -274,6 +274,12 @@ extension TranscriptBlock {
                 return search(tool) || search(summary)
             case .memory(_, let text):
                 return search(text)
+            case .peer(let session, let strand, let text):
+                return search(session) || search(strand) || search(text)
+            case .sibling(let strand, let text, let trailer):
+                return search(strand) || search(text) || search(trailer ?? "")
+            case .advisor(let frame, let body):
+                return search(frame.label) || search(body)
             }
         }
         switch self {
@@ -351,6 +357,12 @@ struct RowView: View {
             DecisionLine(tool: tool, summary: summary, outcome: outcome)
         case .memory(let lines, let text):
             MemoryRow(lines: lines, text: text)
+        case .peer(let session, let strand, let text):
+            PeerCard(session: session, strand: strand, text: text)
+        case .sibling(let strand, let text, let trailer):
+            SiblingCard(strand: strand, text: text, trailer: trailer)
+        case .advisor(let frame, let body):
+            AdvisorLine(frame: frame, text: body)
         case .notice(let text):
             HStack(spacing: 10) {
                 VStack { Divider() }

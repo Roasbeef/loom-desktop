@@ -146,6 +146,115 @@ struct MemoryRow: View {
     }
 }
 
+/// A message another session's strand sent here. The head names the sender, and the
+/// word under it is the daemon's, not the sender's: the origin was checked and the
+/// message stored, which is all the daemon knows. Reply drafts an answer in the
+/// composer, and Open goes to the sender's session when this app holds it.
+struct PeerCard: View {
+    @Environment(AppModel.self) private var model
+    let session: String
+    let strand: String
+    let text: String
+
+    private var sender: SessionRecord? { model.sessions.first { $0.id == session } }
+    private var name: String { sender?.title ?? String(session.prefix(8)) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left.arrow.right").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text("Peer · \(name) · \(strand)").font(Theme.label).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text("Origin checked by the daemon").font(Theme.meta).foregroundStyle(.tertiary)
+            }
+            Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button("Reply to Peer") {
+                    model.currentSession?.composer.draft = "Reply to \(name) (session \(session), strand \(strand)): "
+                }
+                .accessibilityLabel("Reply to Peer")
+                if sender != nil {
+                    Button("Open \(name)") { model.destination = .session(session) }
+                        .accessibilityLabel("Open \(name)")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(radius: Theme.radiusInner)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// A message another strand of this session sent through the Agency. There is no peer
+/// link behind it, so it has no receipt and no Reply. A spawn brief's result contract is
+/// the harness's instruction, so it follows the sender's words as a second block.
+struct SiblingCard: View {
+    let strand: String
+    let text: String
+    let trailer: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("From strand \(StrandName.display(strand))").font(Theme.label).foregroundStyle(.secondary)
+            Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            if let trailer {
+                Text(trailer).font(Theme.caption).foregroundStyle(.tertiary).textSelection(.enabled).lineLimit(6)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(radius: Theme.radiusInner)
+    }
+}
+
+/// Advisor traffic: advice and nudges the primary received, a goal continuation, and the
+/// feed the advisor reads. The label is a fixed word. The body is the advisor's, drawn as
+/// plain text, and a feed stays closed because it is context and not a message to anyone.
+struct AdvisorLine: View {
+    let frame: AdvisorFrame
+    let text: String
+    @State private var isOpen = false
+
+    private var isClosed: Bool { frame == .feed || frame == .continuation }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if isClosed {
+                Button {
+                    withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "eye").font(.system(size: 11)).foregroundStyle(.tertiary)
+                        Text(frame.label).font(Theme.label).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(frame.label)
+                .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+                if isOpen { OutputBlock(text: text, tint: .secondary) }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "eye").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(frame.label).font(Theme.label).foregroundStyle(.secondary)
+                }
+                Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(radius: Theme.radiusInner)
+    }
+}
+
 // MARK: Steps
 
 /// One tool call: a verb, what it acted on, and what it changed.

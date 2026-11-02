@@ -128,6 +128,22 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
         case decision(tool: String, summary: String, outcome: String)
         /// The memory context the daemon attached to a run: a notes index nobody typed.
         case memory(lines: Int, text: String)
+        /// A message another session's strand sent. The daemon stored it and checked its
+        /// origin, and does not know that it was read.
+        case peer(session: String, strand: String, text: String)
+        /// A message another strand of this session sent through the Agency, with the
+        /// framing removed and a spawn brief's result contract apart from the sender's words.
+        case sibling(strand: String, text: String, trailer: String?)
+        /// Advisor traffic, which the harness wrote as a user turn.
+        case advisor(frame: AdvisorFrame, body: String)
+
+        /// Whether this row starts a turn of its own: something asked the strand to act.
+        public var opensTurn: Bool {
+            switch self {
+            case .user, .peer, .sibling, .advisor: return true
+            default: return false
+            }
+        }
     }
 
     public let id: String
@@ -837,8 +853,17 @@ public struct Conversation: Sendable, Equatable {
             // The harness writes its own notes into the conversation as user
             // turns with no author. Drawing one as a person's message would put
             // words in their mouth.
+            let kind = origin?["kind"]?.string
             if let lines = MemoryContext.lines(in: body) {
                 rows.append(.init(id: id, kind: .memory(lines: lines, text: body)))
+            } else if kind == "peer", let session = origin?["session"]?.string, let strand = origin?["strand"]?.string {
+                rows.append(.init(id: id, kind: .peer(session: session, strand: strand, text: body)))
+            } else if kind == "strand" || (kind == nil && origin?["name"] == nil && origin?["strand"]?.string != nil),
+                      let sender = origin?["strand"]?.string {
+                let framed = StrandFraming.strip(body, sender: sender)
+                rows.append(.init(id: id, kind: .sibling(strand: sender, text: framed.body, trailer: framed.trailer)))
+            } else if origin == nil || origin == .null, let advisor = AdvisorFrame.read(body) {
+                rows.append(.init(id: id, kind: .advisor(frame: advisor.frame, body: advisor.body)))
             } else if author == nil, body.hasPrefix("[loom] ") {
                 rows.append(.init(id: id, kind: .notice(text: String(body.dropFirst(7)))))
             } else {
