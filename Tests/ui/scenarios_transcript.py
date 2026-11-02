@@ -455,3 +455,35 @@ def a_peer_message_is_a_card_that_can_be_answered_and_followed(c):
     name_open = name_starting(c, "Open Peer sender")
     c.app.press(name_open)
     wait_for(lambda: c.app.snap()["destination"] == f"session:{sender}", 5, "the sender's session to open")
+
+
+@scenario("TR-43")
+def an_observer_sees_the_session_and_can_change_nothing(c):
+    """Drawn as an observer, the session keeps its transcript and loses the editor and the answer buttons."""
+    pending_approval(c, "Watched")
+    c.app.see(r"Write to /Users/Shared", 5)
+    c.app.cmd("asrole observer")
+    try:
+        wait_for(lambda: c.app.session()["isObserver"], 5, "the observer view")
+        c.app.see(r"You are watching this session", 5)
+        c.app.see(r"Only an operator can answer", 5)
+        check(not any(n["name"] in ("Message", "Allow", "Deny") for n in c.app.tree()), "an observer has no editor and no answer buttons")
+        c.app.menu("Allow Request")
+        wait_for(lambda: "observer can watch" in c.app.session()["lastError"], 5, "the menu command to be refused")
+        check(c.app.session()["escalations"], "the request stays pending")
+    finally:
+        c.app.cmd("asrole none")
+    c.app.press("Deny")
+    wait_for(lambda: not c.app.session()["escalations"], 15, "the owner's answer to clear it")
+
+
+@scenario("TR-19")
+def long_reasoning_carries_the_summarizers_label(c):
+    """A reasoning block over 512 bytes gets the summarizer's label, said to be its words and not the agent's."""
+    c.app.dispatch("Long thought longthink", WORKSPACE)
+    c.app.open_session("Long thought")
+    c.app.transcript_has("forty-two", 60)
+    settle(c)
+    c.app.press(fold_titles(c)[0])
+    label = wait_for(lambda: next((t for t in c.app.texts() if t.startswith("Thought,") and "Summarized: " in t), None), 40, "a summarized reasoning row")
+    check("Summarized: " in label and "Expanded" not in label, label)

@@ -75,6 +75,7 @@ max_output_tokens = 4096
 [roles]
 main = ["fake"]
 advisor = ["fake"]
+summarize = ["fake"]
 
 [profiles.review.roles]
 main = ["fake2"]

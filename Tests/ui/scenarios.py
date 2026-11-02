@@ -1098,6 +1098,11 @@ def an_executor_loss_is_reported(c):
     c.app.see("box is down")
 
 
+# The drain returns held prompts and ends the orchestrator, then starts it again, so it runs
+# after the executor fault and before the faults that expect the orchestrator to be up.
+import scenarios_drain  # noqa: E402,F401
+
+
 @scenario("PA-11")
 def a_session_says_why_it_ended(c):
     """When the daemon is lost, the open session says it is disconnected and why."""

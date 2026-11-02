@@ -17,6 +17,7 @@ keyword in the last user turn selects a script:
   heartbeat  creates a recurring schedule with `schedule_create`
   commitwork writes a file and commits it, for the committed-in-this-session patch
   backgroundjob starts a background shell job that outlives the run
+  longthink  streams six long lines of reasoning, over 512 bytes, then answers
   think      streams three lines of reasoning, a second apart, then answers
   tour       a write, a command and a read that fails, then a short answer
   program    a code_mode call with a small program
@@ -238,6 +239,13 @@ def script(messages):
 
     if "markdown" in prompt:
         yield from text_stream(MARKDOWN)
+        return
+
+    if "longthink" in prompt:
+        for number in range(6):
+            yield chunk({"reasoning_content": f"Step {number}: weigh the per-host retry budget against the shared worker pool, and check what a dead host costs. " * 2 + "\n"})
+            time.sleep(0.3)
+        yield from text_stream("After a long think, the answer is **forty-two**.")
         return
 
     if "think" in prompt:

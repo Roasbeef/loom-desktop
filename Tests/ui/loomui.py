@@ -74,6 +74,19 @@ class Cluster:
         log = self.base / "logs/exec.log"
         wait_for(lambda: log.exists() and "executor_serving" in log.read_text(errors="ignore"), 30, "the executor")
 
+    def restart_orch(self):
+        """Starts the orchestrator again after it drained, with the command dev-cluster.sh uses."""
+        env = dict(os.environ, HOME=str(self.base / "orch"), FAKE_KEY="x", LOOM_COMPACTION_KEEP_RECENT="100",
+                   LOOM_DISTRIBUTION_OPTFILE=str(self.base / "orch/.loom/distribution/dist.options"))
+        env["PATH"] = f"/usr/local/bin:{Path.home()}/.local/bin:" + env["PATH"]
+        log = open(self.base / "logs/orch.log", "ab")
+        proc = subprocess.Popen(
+            [os.environ.get("LOOMD_BIN", "loomd"), "--config", str(self.base / "orch/.loom/loom.toml"),
+             "--bind", f"127.0.0.1:{7441 + SLOT * 10}"],
+            env=env, stdout=log, stderr=log, start_new_session=True,
+        )
+        (self.base / "orch.pid").write_text(str(proc.pid))
+
     def _pid(self, name):
         path = self.base / f"{name}.pid"
         return int(path.read_text()) if path.exists() else None

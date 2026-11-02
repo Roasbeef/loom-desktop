@@ -89,7 +89,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-16 | Failed step's plain sentence, then its remaining rows | view/lane.gleam:1638; sv:step_words.gleam:398 | `entry` | yes (StepWords.failure, then the raw result when the step opens) | 2 |
 | TR-17 | Program card for `code_mode`: outcome, chips, calls, result | view/program_card.gleam:89 | `entry` | yes (ProgramCardView; the scripted model now runs a valid program, so the card shows its outcome, status, one proc.run call, the program and the result) | 2 |
 | TR-18 | Settled reasoning: preview, line count, time, body | view/lane.gleam:1400 | `entry` | yes (ReasoningRow: preview, line count, time, body) | 1 |
-| TR-19 | Summarizer's label on long reasoning | view/lane.gleam:1467 | `block_summaries`, `block_summary` | no | 2 |
+| TR-19 | Summarizer's label on long reasoning | view/lane.gleam:1467 | `block_summaries`, `block_summary` | yes (SessionController.askForSummaries reads block_summaries for reasoning over 512 bytes and the label draws as Summarized; the cluster routes the summarize role to the scripted model) | 2 |
 | TR-20 | A person's message with sender name and role | view/lane.gleam:713 | `entry`, `presence` | yes (SessionScreen.swift RowView shows the sender's name and the fixed word operator, as the web page does) | 2 |
 | TR-21 | Long message shortened with a toggle | view/lane.gleam:1341 | local | yes (the whole message is drawn, so no toggle is needed; a_long_message_is_drawn_whole) | 3 |
 | TR-22 | Memory context as a closed row in the fold | sv:turns.gleam:213 | `entry` | yes (MemoryContext.swift, MemoryRow; the notes index the daemon attaches draws closed inside the turn's fold and opens to its text) | 2 |
@@ -113,7 +113,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-40 | Large result: View full result, page through, Download | tool_result.gleam:36 | `/ui/.../result` route | no | 3 |
 | TR-41 | Queued and steered inputs under the live region | view/live.gleam:98 | `pending_inputs` in metadata | yes (held inputs under the live region) | 1 |
 | TR-42 | Timeline dots and tags that focus a strand | view/lane.gleam:640; wc:shell_rule.gleam:1035 | local | no | 3 |
-| TR-43 | Observer page is read-only | view/shell.gleam:71 | role in `snapshot_begin` | partial (Transfer.swift:84 reads the role; controls are not hidden) | 2 |
+| TR-43 | Observer page is read-only | view/shell.gleam:71 | role in `snapshot_begin` | code (the editor, answer buttons and menu commands go for a role of observer, SessionController.isObserver; the scenario forces the role with a debug command because the cluster has only the owner's attachment, so the daemon granting that role is not exercised) | 2 |
 
 ## Composer and slash commands
 
@@ -132,7 +132,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | CO-11 | Cache outlook of the addressed strand | operator_page.gleam:1108 | `usage` | yes (CacheWatch.swift, ComposerFigures.swift CacheOutlookFigure; the label counts idle time only, because the OpenAI dialect never reports a one-hour write and the web page's countdown needs one) | 2 |
 | CO-12 | Sent draft as a pending line until taken | wc:pending_rule.gleam:126 | local | yes (DraftLedger; a pending line shows until the daemon takes the draft, a_refused_draft_returns_to_the_editor) | 2 |
 | CO-13 | Refused draft restored to the editor | wc:pending_rule.gleam:148 | error reply | yes (a refused draft returns to the editor with the daemon's words) | 2 |
-| CO-14 | Returned prompt put back in the editor | operator_page.gleam:1050 | returned draft event | no | 2 |
+| CO-14 | Returned prompt put back in the editor | operator_page.gleam:1050 | returned draft event | yes (ComposerModel.restoreReturned; the scenario queues a prompt, drains the orchestrator with daemon.shutdown and finds the text in the editor, then starts the orchestrator again) | 2 |
 | CO-15 | Attach images by button, paste or drop, with chips and limits | operator_page.gleam:975; wc:attach.gleam:96 | `prompt_content` | yes (paste proven through the real `paste:`; the Attach button and drop share `ComposerModel.attach`; prompt_content) | 2 |
 | CO-16 | Submit disabled when empty | wc:composer_rule.gleam:384 | local | yes (the Send control is disabled with an empty draft) | 3 |
 | CO-17 | `/compact` | sv:command.gleam:556 | `compact` | yes (typed /compact on a conversation with two replies cuts it and leaves the compaction row; the cluster starts with LOOM_COMPACTION_KEEP_RECENT=100 so a short scripted run has something to cut) | 2 |
