@@ -110,7 +110,10 @@ class App:
         if self.active:
             env["LOOM_FORCE_ACTIVE"] = "1"
         self.log = open(self.dir / "app.log", "ab")
-        self.proc = subprocess.Popen([str(self.binary)], env=env, stdout=self.log, stderr=self.log)
+        # The form prefills the folder it last used, which is stored in the app's
+        # defaults and would otherwise carry from one run into the next. An argument
+        # overrides the stored value for the whole run.
+        self.proc = subprocess.Popen([str(self.binary), "-lastWorkspace", ""], env=env, stdout=self.log, stderr=self.log)
         wait_for(lambda: self.ready(), 30, "the app to answer")
         return self
 
