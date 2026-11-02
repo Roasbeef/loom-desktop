@@ -110,6 +110,9 @@ enum DebugDriver {
             let json = rest.dropFirst(parts[1].count).trimmingCharacters(in: .whitespaces)
             let body = (try? JSONValue.parse(Data((json.isEmpty ? "{}" : json).utf8))) ?? .object([:])
             model.currentSession?.run(String(parts[1]), body: body)
+        case "shutdown":
+            // Asks the first daemon to drain, which hands every held prompt back.
+            do { try await model.daemons.first?.control?.shutdown() } catch { reply = "error: \(error.localizedDescription)" }
         case "stopall":
             // Frees every daemon slot, so one scenario cannot starve the next, and
             // closes the inspector, so the next one starts from the default layout.
@@ -484,6 +487,10 @@ enum Snapshot {
                 "btwStatus": session.showsSideQuestion ? session.surfaces["btw"]?["board"]?["status"]?.string ?? "" : "",
                 "editing": session.composer.editing?.text ?? "",
                 "models": session.catalogue.models,
+                "to": StrandName.display(session.focusedStrand),
+                "who": session.who ?? "",
+                "cacheOutlook": session.cacheOutlook(at: Date()) ?? "",
+                "peers": session.peers.map { "\($0.name) · \($0.role)" },
             ]
         }
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return "{}" }

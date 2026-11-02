@@ -580,6 +580,12 @@ final class SessionController {
     private(set) var signals: [String: Int] = [:]
     private(set) var remoteUsage: [RemoteUsage] = []
     private(set) var role = ""
+    private(set) var connectionID = ""
+    /// The newest request on the focused strand, which the cache outlook counts from.
+    private(set) var cacheStamp: CacheStamp?
+    /// The highest record sequence `/clear` hid on each strand, so a cleared window
+    /// stays cleared while the session goes on.
+    private(set) var clearedThrough: [String: Int] = [:]
     private(set) var trace = TraceBoard(programs: [], omitted: 0)
     /// Why the connection ended, in words, once a lane has closed.
     private(set) var ended: EndingWords?
@@ -646,6 +652,7 @@ final class SessionController {
                     } else {
                         syncPushed()
                     }
+                    if frame.event == "held_input_returned" { restoreReturnedDrafts() }
                 case .closed(let error):
                     isLive = false
                     ended = EndingWords.notice(for: error)
@@ -657,6 +664,29 @@ final class SessionController {
             isLive = false
             lastError = error.localizedDescription
         }
+    }
+
+    /// Puts prompts a draining daemon handed back into the editor. An empty editor
+    /// takes the text outright, and an occupied one keeps what the person is typing
+    /// with the return below it, since both are theirs.
+    private func restoreReturnedDrafts() {
+        for draft in conversation.takeReturnedDrafts() {
+            composer.restoreReturned(draft.text, strand: draft.strand, attachments: draft.attachmentCount)
+        }
+    }
+
+    /// Hides everything this window has drawn on the focused strand. The records stay
+    /// in the session, and a reopened window or another client shows them again.
+    func clearTranscript() {
+        guard let newest = conversation.newestSeq(strand: focusedStrand) else { return }
+        clearedThrough[focusedStrand] = newest
+        syncAll(force: true)
+    }
+
+    /// The answered approvals, read again first so one just given is included.
+    func decidedApprovals() async -> [Decision] {
+        if let lane, let cut = try? await lane.decided(), conversation.apply(cut: cut) { syncAll(force: true) }
+        return Array(conversation.decisions.values)
     }
 
     /// Coalesces tokens to the display's pace. A provider can deliver hundreds a
@@ -692,6 +722,7 @@ final class SessionController {
         assign(\.signals, conversation.signals)
         assign(\.remoteUsage, conversation.remoteUsage)
         assign(\.role, conversation.role)
+        assign(\.connectionID, conversation.connectionID)
         if todo == nil, let seeded = notesTodo() { todo = seeded }
         setStream()
     }
@@ -701,9 +732,14 @@ final class SessionController {
         assign(\.strands, conversation.strands)
         if force || projectedRevision != conversation.revision {
             projectedRevision = conversation.revision
-            let rows = conversation.rows(strand: focusedStrand)
+            let cleared = clearedThrough[focusedStrand]
+            let rows = conversation.rows(strand: focusedStrand, clearedThrough: cleared)
             assign(\.blocks, TranscriptBlock.group(rows, running: isBusy))
-            assign(\.hasOlder, conversation.hasOlder(strand: focusedStrand))
+
+            // Older records are paged in from the chain, so a cleared window would
+            // fetch and hide them again. It offers none.
+            assign(\.hasOlder, cleared == nil && conversation.hasOlder(strand: focusedStrand))
+            assign(\.cacheStamp, CacheStamp.newest(rows))
             assign(\.strandLines, conversation.strandLines())
             assign(\.trace, conversation.traceBoard(strand: focusedStrand))
             assign(\.todo, conversation.todoBoard(strand: focusedStrand) ?? notesTodo())
