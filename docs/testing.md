@@ -21,6 +21,7 @@ The test tools exist to answer one question: does the app a person runs do what 
 | `app.see(regex)`, `app.not_see(regex)` | Whether text reached the accessibility tree, which is what a person's screen reader gets. |
 | `app.press(label)` | Presses a control by accessibility name, through the action VoiceOver uses. It needs no coordinates and takes no focus. |
 | `app.menu(title)` | Invokes a menu item. Native menus cannot be pressed while tracking, so an action reachable only inside a `Menu` also belongs in the menu bar. |
+| `app.focus(label)`, `app.fill(label, text)`, `app.enabled(label)` | Put the caret in a text field of the open sheet by its accessibility name, replace its contents, and read whether a control is enabled. Typing goes to the open sheet, as it does for a person. |
 | `app.key(name, mods)`, `app.type(text)` | Real key events. Text goes to the focused field. Shift-modified menu shortcuts cannot be synthesized this way. |
 | `app.dispatch`, `app.prompt`, `app.open_session` | Create and drive sessions. |
 | `app.shot(path)` | A capture from the window server, with glass composited, which `cacheDisplay` would not show. |
@@ -55,6 +56,9 @@ Then change the row in `docs/parity.md` to `yes`. Every scenario starts with all
 `appearance_and_size_matrix` runs first, on a fresh daemon with fixed content, and compares three screens in both appearances at two sizes against `tests/ui/baselines/`. Differences appear as images in `build/uitest/diffs/`. After a deliberate change, run `make uitest-update` and review the changed baselines in the diff.
 
 ## What the tools cannot do
+
+- The sidebar's rows are not in the accessibility tree, so a scenario cannot press a row, a project heading or a row's context menu. Each row action is also in the Session menu, which acts on the session in the window, and scenarios use that.
+- A pop-up menu opens as its own tracking menu, which neither the tree nor `press` can reach. A choice among a few options is drawn as segments, which `press` can select.
 
 - Windows are captured without being frontmost, so controls render in their inactive state. `LOOM_FORCE_ACTIVE=1` approximates active controls. Only `open -b com.roasbeef.loom-desktop` gives the true state, and that takes focus.
 - A scripted model cannot show how a real model behaves over a long session.

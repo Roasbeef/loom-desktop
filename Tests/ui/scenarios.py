@@ -293,6 +293,11 @@ def machines_lists_each_node(c):
     c.app.see("orchestrator")
 
 
+# Scenarios for session life-cycle, creation, sharing and administration live in
+# their own file, imported here so they run before the faults damage the cluster.
+import scenarios_lifecycle  # noqa: E402,F401
+
+
 # Faults. These run last among the functional scenarios, since they damage the cluster.
 
 
@@ -384,8 +389,3 @@ def a_daemon_loss_recovers(c):
     check(c.app.alive(), "the app must survive its daemon")
     c.app.go("mission")
     c.app.see("unavailable")
-
-
-# Scenarios for session life-cycle, creation, sharing and administration live in
-# their own file so each area's proofs stay together.
-import scenarios_lifecycle  # noqa: E402,F401
