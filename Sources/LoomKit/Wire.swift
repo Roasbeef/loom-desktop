@@ -73,6 +73,19 @@ actor CreditLock {
         await withCheckedContinuation { waiters.append($0) }
     }
 
+    /// Holds the credit across `body`, releasing it however `body` ends.
+    func withCredit<T: Sendable>(_ body: @Sendable () async throws -> T) async throws -> T {
+        await acquire()
+        do {
+            let result = try await body()
+            release()
+            return result
+        } catch {
+            release()
+            throw error
+        }
+    }
+
     func release() {
         if waiters.isEmpty {
             held = false

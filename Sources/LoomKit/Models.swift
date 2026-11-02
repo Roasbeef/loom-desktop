@@ -72,6 +72,11 @@ public struct SessionRecord: Sendable, Identifiable, Equatable {
     public let createdAt: Date
     public let state: SessionState
     public let executor: String?
+    public let pool: String?
+    /// The orchestrator a move in flight is taking this session to.
+    public let movingTo: String?
+    /// The executor's node, which only a `sessions.elsewhere` row states.
+    public let executorNode: String?
     /// A moved session is this daemon's tombstone and is not listed as openable.
     public let hasMoved: Bool
 
@@ -84,6 +89,9 @@ public struct SessionRecord: Sendable, Identifiable, Equatable {
         createdAt = Date(timeIntervalSince1970: (body["created_at"]?.double ?? 0) / 1000)
         state = SessionState(body["status"])
         executor = body["executor"]?.string
+        pool = body["pool"]?.string
+        movingTo = body["moving"]?["to"]?.string
+        executorNode = body["executor_node"]?.string
         hasMoved = body["moved"] != nil
     }
 
@@ -145,5 +153,139 @@ public struct SessionActivity: Sendable, Equatable {
                 summary: glance["summary"]?.string ?? ""
             )
         }
+    }
+}
+
+/// Where a new session should run its tools.
+public enum PlacementChoice: Sendable, Equatable, Hashable {
+    case local
+    case executor(String)
+    case pool(String)
+}
+
+/// One machine, as `deployment.status` reports it from the answering daemon.
+public struct DeploymentNode: Sendable, Equatable, Identifiable {
+    public let id: String
+    public let name: String
+    public let roles: [String]
+    public let state: String
+    public let isSelf: Bool
+    public let reasons: [String]
+    public let buildVersion: String?
+    public let uptimeMs: Int?
+    public let platform: String?
+    public let enforcement: String?
+    public let openScopes: Int?
+    public let scopeLimit: Int?
+    public let capacity: Int?
+    public let resident: Int?
+    public let workspaces: [String]
+
+    init?(_ body: JSONValue) {
+        guard let node = body["node"]?.string else { return nil }
+        id = node
+        name = body["name"]?.string ?? node
+        roles = (body["roles"]?.array ?? []).compactMap(\.string)
+        state = body["state"]?.string ?? "unknown"
+        isSelf = body["self"]?.bool ?? false
+
+        // A down node carries one `reason`, and a degraded node carries many.
+        reasons = (body["reasons"]?.array ?? []).compactMap(\.string) + [body["reason"]?.string].compactMap { $0 }
+        buildVersion = body["build_version"]?.string
+        uptimeMs = body["uptime_ms"]?.int
+        platform = body["executor"]?["platform"]?.string
+        enforcement = body["executor"]?["enforcement"]?.string
+        openScopes = body["executor"]?["scopes"]?["open"]?.int
+        scopeLimit = body["executor"]?["scope_limit"]?.int
+        capacity = body["orchestrator"]?["capacity"]?.int
+        resident = body["orchestrator"]?["resident"]?.int
+        workspaces = (body["workspaces"]?.array ?? []).compactMap(\.string)
+    }
+}
+
+/// A place a session may be put, with whether it can take one now.
+public struct PlacementOption: Sendable, Equatable, Identifiable {
+    public let choice: PlacementChoice
+    public let name: String
+    public let node: String?
+    public let state: String
+    public let platform: String?
+    public let enforcement: String?
+    public let freeScopes: Int?
+    public var id: String { "\(choice)" }
+}
+
+/// The deployment as one daemon sees it right now. Nothing here is cached by
+/// the daemon, and any field a node did not report is unknown rather than zero.
+public struct Deployment: Sendable, Equatable {
+    public let selfNode: String
+    public let state: String
+    public let host: String?
+    public let hasDistribution: Bool
+    public let nodes: [DeploymentNode]
+    public let executors: [PlacementOption]
+    public let pools: [PlacementOption]
+    public let omitted: [String]
+
+    /// Whether this daemon has more than itself, which decides if a person sees
+    /// any placement vocabulary at all.
+    public var isDistributed: Bool { nodes.count > 1 || !executors.isEmpty || !pools.isEmpty }
+
+    /// The word for this daemon's own machine.
+    public var selfName: String { hasDistribution ? selfNode : (host ?? "This machine") }
+
+    init(_ body: JSONValue) {
+        selfNode = body["self"]?.string ?? ""
+        state = body["state"]?.string ?? "unknown"
+        host = body["host"]?.string
+        hasDistribution = body["distribution"]?.string == "configured"
+        nodes = (body["nodes"]?.array ?? []).compactMap(DeploymentNode.init)
+        omitted = (body["omitted"]?.array ?? []).compactMap(\.string)
+
+        let placements = body["placements"]
+        executors = (placements?["executors"]?.array ?? []).compactMap { row in
+            guard let name = row["name"]?.string else { return nil }
+            return PlacementOption(
+                choice: .executor(name),
+                name: name,
+                node: row["node"]?.string,
+                state: row["state"]?.string ?? "unknown",
+                platform: row["declared"]?["platform"]?.string,
+                enforcement: row["declared"]?["enforcement"]?.string,
+                freeScopes: row["free_scopes"]?.int
+            )
+        }
+        pools = (placements?["pools"]?.array ?? []).compactMap { row in
+            guard let name = row["name"]?.string else { return nil }
+            return PlacementOption(
+                choice: .pool(name),
+                name: name,
+                node: nil,
+                state: row["state"]?.string ?? "unknown",
+                platform: row["declared"]?["platform"]?.string ?? row["platform"]?.string,
+                enforcement: nil,
+                freeScopes: row["free_scopes"]?.int
+            )
+        }
+    }
+}
+
+/// One other orchestrator's sessions, from `sessions.elsewhere`.
+public struct ElsewhereGroup: Sendable, Equatable, Identifiable {
+    public let name: String
+    public let node: String
+    public let answered: Bool
+    public let address: String?
+    public let hasMore: Bool
+    public let sessions: [SessionRecord]
+    public var id: String { name }
+
+    init(_ body: JSONValue) {
+        name = body["name"]?.string ?? ""
+        node = body["node"]?.string ?? ""
+        answered = body["state"]?.string == "answered"
+        address = body["address"]?.string
+        hasMore = body["more"]?.bool ?? false
+        sessions = (body["sessions"]?.array ?? []).compactMap(SessionRecord.init)
     }
 }

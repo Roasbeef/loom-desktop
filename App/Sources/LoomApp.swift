@@ -29,6 +29,8 @@ struct LoomApp: App {
                     .keyboardShortcut("1")
                 Button("Mission Control") { model.destination = .mission }
                     .keyboardShortcut("2")
+                Button("Machines") { model.destination = .machines }
+                    .keyboardShortcut("3")
             }
         }
 

@@ -2,7 +2,6 @@ import Foundation
 import XCTest
 @testable import LoomKit
 @testable import MissionKit
-@testable import SubstrateKit
 
 private let session = "01a19a3a-0000-7000-8000-000000000001"
 
@@ -181,6 +180,103 @@ final class ConversationTests: XCTestCase {
     }
 }
 
+final class PlacementTests: XCTestCase {
+    private func record(_ extra: [String: JSONValue] = [:]) -> SessionRecord {
+        var fields: [String: JSONValue] = ["session_id": "a", "workspace": "proj", "name": "work", "created_at": 1, "status": ["state": "saved"]]
+        fields.merge(extra) { _, new in new }
+        return SessionRecord(.object(fields))!
+    }
+
+    func testBrainAndHands() {
+        XCTAssertEqual(Placement(record: record(), brain: "laptop").label, "laptop")
+        XCTAssertEqual(Placement(record: record(["executor": "box"]), brain: "laptop").label, "laptop → box")
+        XCTAssertEqual(Placement(record: record(["pool": "linux"]), brain: "laptop").label, "laptop → linux pool")
+    }
+
+    func testAPoolThatHasChosenNamesItsExecutor() {
+        XCTAssertEqual(Placement(record: record(["pool": "linux", "executor": "box"]), brain: "laptop").hands, "box")
+    }
+
+    func testDecodesARealDeploymentShape() {
+        let body: JSONValue = [
+            "self": "orch@127.0.0.1", "state": "degraded", "distribution": "configured",
+            "nodes": [
+                ["node": "orch@127.0.0.1", "name": "orch@127.0.0.1", "roles": ["orchestrator"], "state": "ok", "self": .bool(true), "orchestrator": ["capacity": 8, "resident": 1]],
+                ["node": "exec@127.0.0.1", "name": "box", "roles": ["executor"], "state": "degraded", "reasons": ["full"], "executor": ["platform": "macos/arm64", "scope_limit": 16, "scopes": ["open": 16]]],
+                ["node": "b@x", "name": "gone", "roles": ["executor"], "state": "down", "reason": "timeout"],
+            ],
+            "placements": ["executors": [["name": "box", "node": "exec@127.0.0.1", "state": "full", "free_scopes": 0]], "pools": [["name": "linux", "state": "ready"]]],
+        ]
+        let deployment = Deployment(body)
+        XCTAssertTrue(deployment.isDistributed)
+        XCTAssertEqual(deployment.nodes[1].openScopes, 16)
+        XCTAssertEqual(deployment.nodes[2].reasons, ["timeout"])
+        XCTAssertEqual(deployment.executors.first?.freeScopes, 0)
+        XCTAssertEqual(deployment.pools.first?.choice, .pool("linux"))
+    }
+
+    func testASingleMachineDeploymentHasNoPlacementVocabulary() {
+        let deployment = Deployment(["self": "nonode@nohost", "host": "mac", "nodes": [["node": "nonode@nohost", "roles": [], "state": "ok", "self": .bool(true)]]])
+        XCTAssertFalse(deployment.isDistributed)
+        XCTAssertEqual(deployment.selfName, "mac")
+    }
+
+    func testBlastRadiusNamesSessionsOnASickNode() {
+        let deployment = Deployment(["nodes": [
+            ["node": "e@h", "name": "box", "roles": ["executor"], "state": "down", "reason": "timeout"],
+            ["node": "o@h", "name": "orch", "roles": ["orchestrator"], "state": "ok"],
+        ]])
+        let hit = Mission.blastRadius(nodes: deployment.nodes, sessions: [record(["executor": "box"]), record()])
+        XCTAssertEqual(hit.count, 1)
+        XCTAssertEqual(hit.first?.sessions.count, 1)
+    }
+
+    func testAnUnknownActivityIsNotDrawnAsIdle() {
+        let row = SessionActivity(["session_id": "a", "state": "unknown"])!
+        let card = Mission.cards(sessions: [record(["status": ["state": "resident", "incarnation": "i"]])], activity: ["a": row])
+        XCTAssertEqual(card.first?.liveness, .unknown)
+    }
+
+    func testARemoteEscalationEchoesItsOwnSeqAndOnlyAdmittedGrants() {
+        var state = Conversation(sessionID: session)
+        let admitted: JSONValue = ["type": "writable_root", "path": "/a"]
+        let outside: JSONValue = ["type": "env", "name": "SECRET"]
+        let cell: JSONValue = [
+            "namespace": "fact.custom", "key": "remote-escalation/box/e1", "seq": 900,
+            "value": [
+                "escalation_id": "box/e1", "seq": 12, "status": "pending", "placement": "box",
+                "tool": "fs_write", "action": "d", "strand": "sub:x",
+                "denial": ["reason": "r", "source": "policy", "wanted": [admitted, outside]],
+                "admitted": [admitted],
+            ],
+        ]
+        state.apply(cut: cut(entries: [], leaf: nil, extraCells: [cell]))
+        let record = state.escalations.first
+        XCTAssertEqual(record?.seq, 12)
+        XCTAssertEqual(record?.placement, "box")
+        XCTAssertEqual(record?.grants, [admitted])
+        XCTAssertEqual(record?.outsideCeiling, ["Environment variable SECRET"])
+    }
+
+    func testRemoteChildrenAndAPeekFold() {
+        var state = Conversation(sessionID: session)
+        state.apply(push: EventEnvelope(replyTo: nil, event: "snapshot", seq: nil, body: [
+            "mode": "remote_children",
+            "remote_children": [["id": "sub:^main/b-1", "parent": "main", "orchestrator": "box", "standing": "running", "title": "build", "summary": "", "tokens": 5, "model": "fast", "age_ms": .null]],
+        ]))
+        XCTAssertEqual(state.remoteChildren.first?.orchestrator, "box")
+        XCTAssertEqual(state.remoteChildren.first?.isActive, true)
+
+        state.beginPeek(child: "sub:^main/b-1")
+        XCTAssertEqual(state.peek?.isPending, true)
+        let entry = message("e", parent: nil, ["role": "assistant", "content": [["type": "text", "text": "hi"]]])
+        state.apply(push: EventEnvelope(replyTo: nil, event: "snapshot", seq: nil, body: [
+            "mode": "child_history", "board": ["status": "ready", "entries": [entry], "next": .null],
+        ]))
+        XCTAssertEqual(state.peek?.rows.count, 1)
+    }
+}
+
 final class EscapeTests: XCTestCase {
     func testControlAndBidiCharactersAreEscapedNotDeleted() {
         let escaped = Escalation.escapeForDisplay("npm\u{08}\u{1B}[2J\u{202E}x\ny")
@@ -193,6 +289,14 @@ final class DiscoveryTests: XCTestCase {
         let endpoint = DaemonEndpoint(host: "10.0.0.1", port: 1, token: "secret")
         XCTAssertThrowsError(try endpoint.url(path: "/v2/control"))
         XCTAssertFalse(endpoint.description.contains("secret"))
+    }
+
+    func testRemoteAddresses() throws {
+        XCTAssertNoThrow(try DaemonEndpoint(address: "wss://box.ts.net/v2/control", token: "t").url(path: "/v2/control"))
+        XCTAssertNoThrow(try DaemonEndpoint(address: "ws://127.0.0.1:7441/v2/control", token: "t").url(path: "/v2/control"))
+        XCTAssertThrowsError(try DaemonEndpoint(address: "ws://box.ts.net/v2/control", token: "t").url(path: "/v2/control"))
+        XCTAssertThrowsError(try DaemonEndpoint(address: "wss://h", token: "loomclaim_abc"))
+        XCTAssertThrowsError(try DaemonEndpoint(address: "http://h", token: "t"))
     }
 
     func testOwnerTokenShape() {
@@ -214,7 +318,7 @@ final class MissionTests: XCTestCase {
         let items = Mission.attention(
             sessions: [record("a", state: ["state": "resident", "incarnation": "i"])],
             activity: ["a": activity("a", "needs_you", approvals: 1)],
-            escalations: [:], feed: nil
+            escalations: [:]
         )
         XCTAssertEqual(items.map(\.kind), [.approval])
     }
@@ -226,7 +330,7 @@ final class MissionTests: XCTestCase {
                 record("b", state: ["state": "resident", "incarnation": "i"]),
             ],
             activity: ["a": activity("a", "needs_you"), "b": activity("b", "idle")],
-            escalations: [:], feed: nil
+            escalations: [:]
         )
         XCTAssertEqual(items.map(\.kind), [.failed])
     }
@@ -235,25 +339,11 @@ final class MissionTests: XCTestCase {
         XCTAssertEqual(activity("a", "brand_new_state").state, .unknown)
     }
 
-    func testTheSubstrateFeedMergesAndHidesTheOperatorsOwnAgent() throws {
-        let json = #"""
-        {"generated_at":"t","lanes":[
-          {"agent":{"id":3,"name":"AmberForge","status":"active","project_key":"substrate.git","git_branch":"cc"},
-           "events":[{"message_id":9,"kind":"question","subject":"SSE?","needs_action":true,"has_diff":false}],
-           "unread_count":2,"needs_action_count":1,"waiting_for":"Decision"},
-          {"agent":{"id":1,"name":"User","status":"offline"},"events":null,"unread_count":0,"needs_action_count":0}
-        ],"attention":[{"kind":"plan","agent_id":4,"agent_name":"QuietRiver","title":"Fix RFQ","plan_review_id":"p1","created_at":"t"}]}
-        """#
-        let feed = try JSONDecoder().decode(CommandFeed.self, from: Data(json.utf8))
-        let cards = Mission.cards(sessions: [], activity: [:], feed: feed)
-        XCTAssertEqual(cards.map(\.name), ["AmberForge"])
-        XCTAssertEqual(cards.first?.liveness, .needsYou)
-        let items = Mission.attention(sessions: [], activity: [:], escalations: [:], feed: feed)
-        XCTAssertEqual(items.first?.kind, .plan)
-    }
-
-    func testAnEmptyGoFeedDecodes() throws {
-        let feed = try JSONDecoder().decode(CommandFeed.self, from: Data(#"{"lanes":null,"attention":null}"#.utf8))
-        XCTAssertTrue(feed.lanes.isEmpty)
+    func testASickMachineSurfacesOnlyWithDependents() {
+        let deployment = Deployment(["nodes": [["node": "e@h", "name": "box", "roles": ["executor"], "state": "down", "reason": "timeout"]]])
+        let session = record("a", state: ["state": "saved"])
+        let node = deployment.nodes[0]
+        XCTAssertEqual(Mission.attention(sessions: [], activity: [:], escalations: [:], unhealthy: [(node, [session])]).map(\.kind), [.machine])
+        XCTAssertTrue(Mission.attention(sessions: [], activity: [:], escalations: [:], unhealthy: [(node, [])]).isEmpty)
     }
 }

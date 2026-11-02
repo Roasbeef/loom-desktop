@@ -30,6 +30,7 @@ extension AgentCard.Liveness {
         case .needsYou: return Theme.attention
         case .working: return Theme.working
         case .idle: return .secondary
+        case .unknown: return Color.secondary.opacity(0.6)
         case .off: return Color.secondary.opacity(0.35)
         }
     }
@@ -39,6 +40,7 @@ extension AgentCard.Liveness {
         case .needsYou: return "Needs you"
         case .working: return "Working"
         case .idle: return "Idle"
+        case .unknown: return "Not answering"
         case .off: return "Saved"
         }
     }

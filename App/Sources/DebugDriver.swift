@@ -13,6 +13,8 @@ import SwiftUI
 ///     shot <name>            writes <dir>/<name>.png of the main window
 ///     prompt <id> <text>     sends through the session's controller
 ///     approve <id>           allows the session's first pending escalation
+///     connect <name> <address>   with the token in <dir>/token
+///     dispatch <executor> <workspace>
 ///     dark | light
 @MainActor
 enum DebugDriver {
@@ -38,16 +40,37 @@ enum DebugDriver {
             switch parts[1] {
             case "inbox": model.destination = .inbox
             case "mission": model.destination = .mission
+            case "machines": model.destination = .machines
             case "session" where parts.count > 2: model.destination = .session(parts[2])
             default: break
             }
         case "shot" where parts.count > 1:
             capture(to: URL(fileURLWithPath: directory).appendingPathComponent("\(parts[1]).png"))
         case "prompt" where parts.count > 2:
-            model.attach(parts[1])?.send(text: parts[2])
+            model.daemon(holding: parts[1])?.attach(parts[1])?.send(text: parts[2])
         case "approve" where parts.count > 1:
-            if let controller = model.attached[parts[1]], let record = controller.conversation.escalations.first {
+            if let controller = model.controller(for: parts[1]), let record = controller.conversation.escalations.first {
                 controller.approve(record)
+            }
+        case "connect" where parts.count > 2:
+            // connect <name> <address> reads the token from <dir>/token.
+            let token = (try? String(contentsOfFile: "\(directory)/token", encoding: .utf8)) ?? ""
+            try? model.addDaemon(name: parts[1], address: parts[2], token: token.trimmingCharacters(in: .whitespacesAndNewlines))
+        case "dispatch" where parts.count > 2:
+            // dispatch <executor> <workspace name> sends a fixed prompt there.
+            let executor = parts[1]
+            let workspace = parts[2]
+            Task {
+                guard let daemon = model.daemons.first else { return }
+                let id = try? await daemon.dispatch(
+                    workspace: workspace,
+                    name: "on \(executor)",
+                    prompt: "say hello from the executor",
+                    placement: .executor(executor),
+                    configuration: (daemon.localRoot?.appendingPathComponent("loom.toml").path) ?? "",
+                    requestKey: UUID().uuidString
+                )
+                if let id { model.destination = .session(id) }
             }
         case "dark":
             NSApp.appearance = NSAppearance(named: .darkAqua)

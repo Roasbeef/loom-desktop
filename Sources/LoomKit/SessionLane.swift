@@ -50,7 +50,15 @@ public actor SessionLane {
     /// Subscribes, completes the initial transfer, and starts reconciling.
     public func start() async throws {
         readerTask = Task { await self.readLoop() }
-        try await transfer(cmd: "subscribe", body: ["session": .string(sessionID)])
+        do {
+            try await transfer(cmd: "subscribe", body: ["session": .string(sessionID)])
+        } catch {
+            // A lane with no first cut has nothing to reconcile from, so even a
+            // plain refusal ends it. Otherwise it would look attached forever.
+            let reason = (error as? LoomError) ?? .closed(error.localizedDescription)
+            finish(reason)
+            throw reason
+        }
         refreshTask = Task { await self.refreshLoop() }
     }
 
@@ -97,19 +105,30 @@ public actor SessionLane {
         _ = try await mutate("worktree_diff", body: .object([:]))
     }
 
+    /// Asks for a page of a remote child's transcript. The page arrives as a
+    /// push, because the daemon reads it from the other orchestrator.
+    public func requestChildHistory(child: String, before: Int = 0) async throws {
+        _ = try await mutate("child_history", body: ["child": .string(child), "before": .int(Int64(before))])
+    }
+
     /// Loads the entries just below `beforeSeq`.
     ///
     /// A `history` page ascends from its lower bound, while a person scrolling
     /// wants what sits nearest the window. So this picks a lower bound close
     /// below the window and follows `more_after` until that span is exhausted.
-    public func loadOlder(beforeSeq: Int, span: Int = 400) async throws {
-        var after = max(0, beforeSeq - span)
+    /// It returns the lower bound it reached, the cursor for the next call. The
+    /// sequence space is shared with non-entry writes, so a span can hold no
+    /// entries, and a cursor taken from the entries alone would never move.
+    @discardableResult
+    public func loadOlder(beforeSeq: Int, span: Int = 400) async throws -> Int {
+        let floor = max(0, beforeSeq - span)
+        var after = floor
         while true {
             let cut = try await transfer(cmd: "history", body: [
                 "after_seq": .int(Int64(after)),
                 "before_seq": .int(Int64(beforeSeq)),
             ])
-            guard let more = cut.moreAfter else { return }
+            guard let more = cut.moreAfter else { return floor }
             after = more
         }
     }
@@ -141,7 +160,9 @@ public actor SessionLane {
         let text = try encodeCommand(id: id, cmd: cmd, body: body)
         let timeout = Task { [weak self] in
             try await Task.sleep(for: .seconds(Self.replyDeadline))
-            await self?.finish(.outcomeUnknown(command: cmd))
+
+            // A reply that landed just before the deadline must not end the lane.
+            await self?.expire(id: id, command: cmd)
         }
         defer { timeout.cancel() }
 
@@ -165,6 +186,10 @@ public actor SessionLane {
             )
         }
         return reply
+    }
+
+    private func expire(id: Int, command: String) {
+        if outstanding?.id == id { finish(.outcomeUnknown(command: command)) }
     }
 
     /// Runs one snapshot transfer under the credit and reports the whole cut.

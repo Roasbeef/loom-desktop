@@ -5,29 +5,55 @@ import Foundation
 /// `CustomStringConvertible` deliberately omits the token, so interpolating
 /// this value into a log line cannot leak the bearer.
 public struct DaemonEndpoint: Sendable, Equatable, CustomStringConvertible {
+    public let scheme: String
     public let host: String
-    public let port: Int
+    public let port: Int?
     public let token: String
 
     public init(host: String, port: Int, token: String) {
+        self.scheme = "ws"
         self.host = host
         self.port = port
         self.token = token
     }
 
-    public var description: String { "\(host):\(port)" }
+    /// Reads a control address such as `wss://box.example.ts.net/v2/control`,
+    /// the form a daemon's configuration holds for another orchestrator.
+    public init(address: String, token: String) throws {
+        guard
+            let url = URL(string: address),
+            let scheme = url.scheme,
+            ["ws", "wss"].contains(scheme),
+            let host = url.host()
+        else {
+            throw LoomError.discovery("\(address) is not a ws:// or wss:// address.")
+        }
+        guard !token.hasPrefix("loomclaim_") else {
+            throw LoomError.discovery("That is a claim token, which authenticates nothing. Redeem it for a credential.")
+        }
+        guard !token.isEmpty else { throw LoomError.discovery("A credential is required.") }
+        self.scheme = scheme
+        self.host = host
+        self.port = url.port
+        self.token = token
+    }
 
-    /// The daemon binds loopback only and terminates no TLS, so a bearer may
-    /// travel over `ws://` only to a loopback address (protocol section 2.4).
+    public var description: String {
+        "\(scheme)://\(host)" + (port.map { ":\($0)" } ?? "")
+    }
+
     public var isLoopback: Bool {
         ["127.0.0.1", "::1", "[::1]", "localhost"].contains(host)
     }
 
+    /// The daemon terminates no TLS, so a bearer may travel in cleartext only to
+    /// a loopback address, such as this machine's daemon or an SSH tunnel. Any
+    /// other host must be reached through TLS (protocol section 2.4).
     func url(path: String) throws -> URL {
-        guard isLoopback else {
-            throw LoomError.discovery("Refusing to send a bearer over cleartext to \(host).")
+        guard scheme == "wss" || isLoopback else {
+            throw LoomError.discovery("Refusing to send a bearer over cleartext to \(host). Use wss:// or an SSH tunnel.")
         }
-        guard let url = URL(string: "ws://\(host):\(port)\(path)") else {
+        guard let url = URL(string: "\(self)\(path)") else {
             throw LoomError.discovery("The endpoint \(self) does not form a URL.")
         }
         return url

@@ -80,14 +80,24 @@ public actor ControlClient {
         requestKey: String,
         workspace: String,
         name: String,
-        configuration: String
+        configuration: String,
+        placement: PlacementChoice = .local
     ) async throws -> SessionRecord {
-        let body = try await request("sessions.create", body: [
+        var fields: [String: JSONValue] = [
             "request_key": .string(requestKey),
             "workspace": .string(workspace),
             "name": .string(name),
             "configuration": .string(configuration),
-        ])
+        ]
+
+        // With either of these, `workspace` is a name registered on that machine
+        // rather than a path on this one.
+        switch placement {
+        case .local: break
+        case .executor(let name): fields["executor"] = .string(name)
+        case .pool(let name): fields["pool"] = .string(name)
+        }
+        let body = try await request("sessions.create", body: .object(fields))
         guard let record = SessionRecord(body) else {
             throw LoomError.protocolViolation("sessions.create returned no record")
         }
@@ -126,6 +136,20 @@ public actor ControlClient {
         ])
     }
 
+    /// Reads the deployment: every machine this daemon is configured with, and
+    /// where a session may be placed. `node` narrows it to one key and adds that
+    /// node's long lists. Every statement is as seen from this daemon.
+    public func deployment(node: String? = nil) async throws -> Deployment {
+        Deployment(try await request("deployment.status", body: node.map { ["node": .string($0)] } ?? .object([:])))
+    }
+
+    /// Lists the sessions this daemon's other orchestrators hold. A `silent`
+    /// group is never the same as a group with no sessions.
+    public func sessionsElsewhere() async throws -> [ElsewhereGroup] {
+        let body = try await request("sessions.elsewhere", body: .object([:]))
+        return (body["orchestrators"]?.array ?? []).map(ElsewhereGroup.init)
+    }
+
     private func currentEpoch() throws -> String {
         guard let epoch = hello?.epoch else {
             throw LoomError.protocolViolation("a command preceded hello")
@@ -136,31 +160,35 @@ public actor ControlClient {
     /// One command, one correlated reply. The control socket pushes nothing
     /// after `hello`, so a read here can only be this command's answer.
     private func request(_ cmd: String, body: JSONValue) async throws -> JSONValue {
-        await lock.acquire()
+        let frame = try await lock.withCredit { [self] in
+            try await exchange(cmd, body: body)
+        }
+        guard frame.event != "error" else {
+            throw LoomError.server(
+                code: frame.body["code"]?.string ?? "unknown",
+                message: frame.body["message"]?.string ?? "",
+                details: frame.body["details"]
+            )
+        }
+        return frame.body
+    }
+
+    private func exchange(_ cmd: String, body: JSONValue) async throws -> EventEnvelope {
+        let id = nextID
+        nextID += 1
+        let socket = self.socket
         do {
-            let id = nextID
-            nextID += 1
-            let socket = self.socket
             try await socket.send(try encodeCommand(id: id, cmd: cmd, body: body))
             let text = try await withDeadline(seconds: 6, command: cmd) { try await socket.receive() }
-            await lock.release()
-
             let frame = try EventEnvelope.decode(text)
             guard frame.replyTo == id else {
                 throw LoomError.protocolViolation("reply_to \(frame.replyTo ?? -1) answers no outstanding command")
             }
-            if frame.event == "error" {
-                throw LoomError.server(
-                    code: frame.body["code"]?.string ?? "unknown",
-                    message: frame.body["message"]?.string ?? "",
-                    details: frame.body["details"]
-                )
-            }
-            return frame.body
-        } catch let error as LoomError {
-            if case .server = error { throw error }
-            if case .protocolViolation = error { socket.close(); throw error }
-            await lock.release()
+            return frame
+        } catch {
+            // A late reply would otherwise be read as the answer to the next
+            // command, so a socket whose order is in doubt is not used again.
+            socket.close()
             throw error
         }
     }

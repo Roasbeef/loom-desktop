@@ -42,6 +42,48 @@ public struct LiveStream: Sendable, Equatable {
     }
 }
 
+/// A subagent running on another orchestrator.
+///
+/// It has no strand in this session. These fields are the stub the parent's
+/// daemon keeps, so while that orchestrator is unreachable the row keeps its last
+/// glance, and `ageMs` says how old that glance is. All of it is model text or
+/// configuration from another machine.
+public struct RemoteChild: Sendable, Equatable, Identifiable {
+    public let id: String
+    public let parent: String
+    public let orchestrator: String
+    public let standing: String
+    public let title: String
+    public let summary: String
+    public let tokens: Int
+    public let model: String
+    public let ageMs: Int?
+
+    init?(_ row: JSONValue) {
+        guard let id = row["id"]?.string, !id.isEmpty else { return nil }
+        self.id = id
+        parent = row["parent"]?.string ?? ""
+        orchestrator = row["orchestrator"]?.string ?? ""
+        standing = row["standing"]?.string ?? "unknown"
+        title = row["title"]?.string ?? id
+        summary = row["summary"]?.string ?? ""
+        tokens = row["tokens"]?.int ?? 0
+        model = row["model"]?.string ?? ""
+        ageMs = row["age_ms"]?.int
+    }
+
+    public var isActive: Bool { standing == "running" || standing == "starting" }
+}
+
+/// One page of a remote child's transcript, or why there is none.
+public struct ChildPeek: Sendable, Equatable {
+    public let child: String
+    public let isPending: Bool
+    public let failure: String?
+    public let rows: [TranscriptRow]
+    public let next: Int?
+}
+
 /// One row of the drawn transcript.
 public struct TranscriptRow: Sendable, Equatable, Identifiable {
     public enum Kind: Sendable, Equatable {
@@ -78,6 +120,8 @@ public struct Conversation: Sendable, Equatable {
     public private(set) var toolTails: [String: String] = [:]
     public private(set) var worktree: JSONValue?
     public private(set) var notices: [String] = []
+    public private(set) var remoteChildren: [RemoteChild] = []
+    public private(set) var peek: ChildPeek?
     public private(set) var hasAdoptedCut = false
 
     private var entries: [String: JSONValue] = [:]
@@ -135,8 +179,15 @@ public struct Conversation: Sendable, Equatable {
                 toolTails[call] = tail
             }
         case "snapshot":
-            if frame.body["mode"]?.string == "worktree_diff" {
+            switch frame.body["mode"]?.string {
+            case "worktree_diff":
                 worktree = frame.body["board"]
+            case "remote_children":
+                remoteChildren = (frame.body["remote_children"]?.array ?? []).compactMap(RemoteChild.init)
+            case "child_history":
+                applyPeek(frame.body["board"])
+            default:
+                break
             }
         case "error":
             notices.append(frame.body["message"]?.string ?? "The daemon reported an error.")
@@ -148,6 +199,39 @@ public struct Conversation: Sendable, Equatable {
     /// Clears the connection-level errors already shown.
     public mutating func clearNotices() {
         notices = []
+    }
+
+    /// Marks a peek as asked for, so the view can draw that it is on its way.
+    public mutating func beginPeek(child: String) {
+        peek = ChildPeek(child: child, isPending: true, failure: nil, rows: [], next: nil)
+    }
+
+    public mutating func endPeek() {
+        peek = nil
+    }
+
+    private mutating func applyPeek(_ board: JSONValue?) {
+        guard let current = peek, let board else { return }
+        switch board["status"]?.string {
+        case "ready":
+            peek = ChildPeek(
+                child: current.child,
+                isPending: false,
+                failure: nil,
+                rows: Self.rows(ordered: board["entries"]?.array ?? []),
+                next: board["next"]?.int
+            )
+        case "failed":
+            peek = ChildPeek(
+                child: current.child,
+                isPending: false,
+                failure: board["message"]?.string ?? "The other orchestrator refused the read.",
+                rows: [],
+                next: nil
+            )
+        default:
+            break
+        }
     }
 
     private mutating func applyDelta(_ body: JSONValue) {
@@ -203,7 +287,8 @@ public struct Conversation: Sendable, Equatable {
         escalations = cells
             .filter {
                 $0["namespace"]?.string == "fact.custom"
-                    && ($0["key"]?.string?.hasPrefix("escalation/") ?? false)
+                    && ($0["key"]?.string?.hasPrefix("escalation/") ?? false
+                        || $0["key"]?.string?.hasPrefix(Self.remoteEscalationPrefix) ?? false)
             }
             .compactMap(Self.escalation)
             .filter { $0.status == "pending" }
@@ -227,9 +312,44 @@ public struct Conversation: Sendable, Equatable {
         return Peer(id: id, name: row["origin"]?["name"]?.string ?? "Unknown", role: row["role"]?.string ?? "")
     }
 
+    private static let remoteEscalationPrefix = "remote-escalation/"
+
+    /// Reads a question a child raised on another orchestrator.
+    ///
+    /// This is the protocol's own record, so its grants are already in the wire
+    /// vocabulary. Its `seq` is the other orchestrator's, which is the one an
+    /// answer must name, and an answer may carry only what `admitted` lists.
+    private static func remoteEscalation(_ cell: JSONValue, value: JSONValue) -> Escalation? {
+        guard
+            let id = value["escalation_id"]?.string,
+            cell["key"]?.string == remoteEscalationPrefix + id,
+            let seq = value["seq"]?.int,
+            let placement = value["placement"]?.string
+        else { return nil }
+        let wanted = value["denial"]?["wanted"]?.array ?? []
+        let admitted = value["admitted"]?.array ?? []
+        return Escalation(
+            id: id,
+            seq: seq,
+            status: value["status"]?.string ?? "",
+            strand: value["strand"]?.string ?? "",
+            tool: value["tool"]?.string ?? "",
+            action: value["action"]?.string ?? "",
+            preview: value["preview"]?.string ?? "",
+            reason: value["denial"]?["reason"]?.string ?? "",
+            source: value["denial"]?["source"]?.string ?? "",
+            grants: wanted.filter(admitted.contains),
+            placement: placement,
+            outsideCeiling: wanted.filter { !admitted.contains($0) }.map(Escalation.describe)
+        )
+    }
+
     /// Reads one escalation cell. The sequence an approval echoes is the
     /// cell's own register sequence.
     static func escalation(_ cell: JSONValue) -> Escalation? {
+        if cell["key"]?.string?.hasPrefix(remoteEscalationPrefix) == true, let value = cell["value"] {
+            return remoteEscalation(cell, value: value)
+        }
         guard let value = cell["value"], let seq = cell["seq"]?.int else { return nil }
         let key = cell["key"]?.string ?? ""
 
@@ -277,12 +397,25 @@ public struct Conversation: Sendable, Equatable {
         return rows
     }
 
+    /// Draws entries already in order, as a remote child's page delivers them.
+    static func rows(ordered entries: [JSONValue]) -> [TranscriptRow] {
+        var rows: [TranscriptRow] = []
+        var toolIndex: [String: Int] = [:]
+        for entry in entries {
+            append(entry, to: &rows, toolIndex: &toolIndex)
+        }
+        return rows
+    }
+
     /// Whether this strand's chain continues below what is held. Asking the
     /// chain itself means the answer cannot go stale as pages arrive.
     public func hasOlder(strand: String) -> Bool {
         var cursor = strands.first { $0.id == strand }?.leaf
         while let id = cursor {
             guard let entry = entries[id] else { return true }
+
+            // An oversized record was not decoded, so its parent is unknown.
+            if entry["unknownParent"]?.bool == true { return true }
             cursor = entry["parentId"]?.string
         }
         return false

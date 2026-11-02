@@ -12,10 +12,20 @@ struct SessionScreen: View {
         model.sessions.first { $0.id == sessionID }
     }
 
+    private var daemon: DaemonConnection? {
+        model.daemon(holding: sessionID)
+    }
+
     var body: some View {
         Group {
-            if let record, record.state.isResident, let controller = model.attached[sessionID] {
-                LiveSession(record: record, controller: controller, showsReview: $showsReview)
+            if let record, record.state.isResident, let controller = model.controller(for: sessionID) {
+                LiveSession(
+                    record: record,
+                    controller: controller,
+                    placement: model.placement(of: record),
+                    showsReview: $showsReview,
+                    reconnect: { daemon?.attach(sessionID) }
+                )
             } else if let record {
                 NotRunning(record: record)
             } else {
@@ -24,7 +34,7 @@ struct SessionScreen: View {
         }
         .task(id: record?.state.isResident) {
             if record?.state.isResident == true {
-                model.attach(sessionID)
+                daemon?.attach(sessionID)
             }
         }
     }
@@ -56,7 +66,7 @@ private struct NotRunning: View {
                     Task {
                         defer { isOpening = false }
                         do {
-                            try await model.resume(record.id)
+                            try await model.daemon(holding: record.id)?.resume(record.id)
                         } catch {
                             self.error = error.localizedDescription
                         }
@@ -76,12 +86,29 @@ private struct LiveSession: View {
     @Environment(AppModel.self) private var model
     let record: SessionRecord
     let controller: SessionController
+    let placement: Placement?
     @Binding var showsReview: Bool
+    let reconnect: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             TranscriptView(controller: controller)
             VStack(spacing: 10) {
+                // A dead socket must never look connected, or a person acts on
+                // a screen that has stopped telling the truth.
+                if !controller.isLive {
+                    HStack {
+                        Text("Disconnected from this session. What you see may be out of date.")
+                            .font(.callout)
+                        Spacer()
+                        Button("Reconnect", action: reconnect)
+                    }
+                    .padding(10)
+                    .surface(fill: Theme.attention.opacity(0.07))
+                }
+                if !controller.conversation.remoteChildren.isEmpty {
+                    RemoteAgentsStrip(controller: controller)
+                }
                 ForEach(controller.conversation.escalations) { escalation in
                     ApprovalCard(record: escalation, controller: controller)
                 }
@@ -99,13 +126,19 @@ private struct LiveSession: View {
         }
         .frame(maxWidth: .infinity)
         .navigationTitle(record.title)
+        .sheet(isPresented: Binding(
+            get: { controller.conversation.peek != nil },
+            set: { if !$0 { controller.endPeek() } }
+        )) {
+            ChildPeekSheet(controller: controller)
+        }
         .inspector(isPresented: $showsReview) {
             ReviewPane(controller: controller)
                 .inspectorColumnWidth(min: 320, ideal: 460, max: 760)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                SessionHeader(record: record, controller: controller)
+                SessionHeader(record: record, controller: controller, placement: placement)
             }
             ToolbarItemGroup {
                 if controller.conversation.strands.count > 1 {
@@ -133,6 +166,7 @@ private struct LiveSession: View {
 private struct SessionHeader: View {
     let record: SessionRecord
     let controller: SessionController
+    let placement: Placement?
 
     var body: some View {
         let conversation = controller.conversation
@@ -140,6 +174,12 @@ private struct SessionHeader: View {
             Text(record.title).font(.headline).lineLimit(1)
             Group {
                 Text([record.workspaceName, conversation.branch].compactMap { $0 }.joined(separator: " · "))
+                if let placement {
+                    Label(placement.label, systemImage: placement.isSplit ? "arrow.left.arrow.right" : "desktopcomputer")
+                        .help(placement.isSplit
+                            ? "The conversation and keys are on \(placement.brain). Tools run on \(placement.hands)."
+                            : "The conversation and its tools run on \(placement.brain).")
+                }
                 if let model = controller.strand?.model { Text(model) }
                 if let cost = conversation.totalCost, cost > 0 {
                     Text(cost, format: .currency(code: "USD").precision(.fractionLength(2)))
@@ -349,6 +389,74 @@ private struct StreamView: View {
     }
 }
 
+/// Subagents on other orchestrators. Each row is the stub the parent's daemon
+/// holds, so it keeps its last glance when that machine cannot be reached.
+private struct RemoteAgentsStrip: View {
+    let controller: SessionController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(controller.conversation.remoteChildren) { child in
+                Button {
+                    controller.peek(child: child)
+                } label: {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(child.isActive ? Theme.working : Color.secondary.opacity(0.5))
+                            .frame(width: 7, height: 7)
+                        Text(child.title).lineLimit(1)
+                        Text("@ \(child.orchestrator)").font(Theme.meta).foregroundStyle(.secondary)
+                        Text(child.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer()
+                        Text(child.standing).font(Theme.meta).foregroundStyle(.secondary)
+                        if let age = child.ageMs, age > 30_000 {
+                            Text("\(age / 1000)s old").font(Theme.meta).foregroundStyle(Theme.attention)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .surface()
+    }
+}
+
+/// A read-only page of a remote child's transcript, drawn as plain text because
+/// it is model output from another machine.
+private struct ChildPeekSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let controller: SessionController
+
+    var body: some View {
+        let peek = controller.conversation.peek
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(peek?.child ?? "").font(.system(.headline, design: .monospaced)).lineLimit(1)
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
+            }
+            if peek?.isPending == true {
+                ProgressView().controlSize(.small)
+            }
+            if let failure = peek?.failure {
+                Text(failure).foregroundStyle(Theme.failure)
+            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(peek?.rows ?? []) { row in
+                        RowView(row: row, tails: [:])
+                    }
+                }
+            }
+        }
+        .padding(20)
+        .frame(width: 640, height: 520)
+    }
+}
+
 /// The consent surface.
 ///
 /// The layout carries the rules of protocol section 5.10: the tool is always
@@ -370,6 +478,9 @@ struct ApprovalCard: View {
                 if !record.strand.isEmpty {
                     Text(record.strand).font(Theme.meta).foregroundStyle(.secondary)
                 }
+                if let placement = record.placement {
+                    Text("@ \(placement)").font(Theme.meta).foregroundStyle(.secondary)
+                }
             }
             if !record.reason.isEmpty {
                 Text(record.reason).font(.callout).foregroundStyle(.secondary)
@@ -379,6 +490,14 @@ struct ApprovalCard: View {
                 Text("It asks for").font(.caption).foregroundStyle(.secondary)
                 ForEach(record.authorityLines, id: \.self) { line in
                     Text(line).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                }
+                if !record.outsideCeiling.isEmpty {
+                    Text("Also requested, beyond what this session may grant, so an approval will not include it:")
+                        .font(.caption)
+                        .foregroundStyle(Theme.attention)
+                    ForEach(record.outsideCeiling, id: \.self) { line in
+                        Text(line).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                    }
                 }
                 if record.untranslatableGrants > 0 {
                     Text("\(record.untranslatableGrants) more this version of the app cannot show.")

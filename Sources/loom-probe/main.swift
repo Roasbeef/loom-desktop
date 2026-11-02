@@ -1,12 +1,12 @@
 import Foundation
 import LoomKit
-import SubstrateKit
 
 // A headless driver over LoomKit. It proves the protocol core against a real
 // daemon without a window, and its raw dump is how decoders get checked against
 // what the daemon actually sends rather than what a document says it sends.
 //
 //   loom-probe list  <state-root>
+//   loom-probe deployment <state-root>
 //   loom-probe drive <state-root> <workspace> <config> <prompt>...
 
 func stderr(_ text: String) {
@@ -38,15 +38,6 @@ func pump(_ lane: SessionLane, verbose: Bool, stop: @escaping @Sendable (EventEn
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 
-// `loom-probe substrate <url>` prints what the hub pushes, with no daemon.
-if arguments.first == "substrate", arguments.count == 2, let url = URL(string: arguments[1]) {
-    let client = SubstrateClient(baseURL: url)
-    print("OPERATOR \(try await client.operatorID())")
-    for try await type in client.events() {
-        print("EVENT \(type)")
-    }
-    exit(0)
-}
 guard arguments.count >= 2 else {
     stderr("usage: loom-probe list|drive <state-root> ...")
     exit(2)
@@ -68,6 +59,26 @@ do {
         print("SESSIONS total=\(sessions.count) resident=\(resident.count) answered=\(activity.count)")
         for session in sessions.prefix(10) {
             print("  \(session.id) [\(session.state.label)] \(session.title.prefix(40)) \(activity[session.id]?.state.rawValue ?? "-")")
+        }
+
+    case "deployment":
+        // Read-only, and safe against a live daemon.
+        let deployment = try await control.deployment()
+        print("DEPLOYMENT \(deployment.selfName) state=\(deployment.state) distributed=\(deployment.isDistributed) omitted=\(deployment.omitted)")
+        for node in deployment.nodes {
+            print("  NODE \(node.name) \(node.roles) \(node.state) \(node.reasons) build=\(node.buildVersion ?? "-") platform=\(node.platform ?? "-") enforcement=\(node.enforcement ?? "-") scopes=\(node.openScopes.map(String.init) ?? "-")/\(node.scopeLimit.map(String.init) ?? "-") resident=\(node.resident.map(String.init) ?? "-")/\(node.capacity.map(String.init) ?? "-")")
+        }
+        for option in deployment.executors + deployment.pools {
+            print("  OPTION \(option.choice) \(option.state) free=\(option.freeScopes.map(String.init) ?? "-") platform=\(option.platform ?? "-")")
+        }
+        for group in try await control.sessionsElsewhere() {
+            print("  ELSEWHERE \(group.name) answered=\(group.answered) address=\(group.address != nil) sessions=\(group.sessions.count) more=\(group.hasMore)")
+        }
+        let sessions = try await control.listSessions()
+        let placed = sessions.filter { $0.executor != nil || $0.pool != nil }
+        print("  PLACED \(placed.count) of \(sessions.count)")
+        for session in placed.prefix(5) {
+            print("    \(session.id) \(session.state.label) executor=\(session.executor ?? "-") pool=\(session.pool ?? "-")")
         }
 
     case "drive":

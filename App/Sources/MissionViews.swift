@@ -1,6 +1,5 @@
 import LoomKit
 import MissionKit
-import SubstrateKit
 import SwiftUI
 
 /// The fleet at a glance: who is waiting, who is working, and how full the
@@ -75,14 +74,19 @@ private struct SummaryStrip: View {
             stat("Needs you", cards.filter { $0.liveness == .needsYou }.count, .needsYou)
             stat("Working", cards.filter { $0.liveness == .working }.count, .working)
             stat("Idle", cards.filter { $0.liveness == .idle }.count, .idle)
+            if cards.contains(where: { $0.liveness == .unknown }) {
+                stat("Not answering", cards.filter { $0.liveness == .unknown }.count, .unknown)
+            }
             stat("Saved", cards.filter { $0.liveness == .off }.count, .off)
             Spacer()
-            if let status = model.status {
-                HStack(spacing: 8) {
-                    CapacityMeter(used: status.resident, capacity: status.capacity)
-                    Text("\(status.resident) of \(status.capacity) slots")
-                        .font(Theme.meta)
-                        .foregroundStyle(.secondary)
+            ForEach(model.daemons) { daemon in
+                if let status = daemon.status {
+                    HStack(spacing: 8) {
+                        CapacityMeter(used: status.resident, capacity: status.capacity)
+                        Text(model.daemons.count > 1 ? "\(daemon.label) \(status.resident)/\(status.capacity)" : "\(status.resident) of \(status.capacity) slots")
+                            .font(Theme.meta)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -136,8 +140,7 @@ private struct NeedsYouStrip: View {
     }
 }
 
-/// One agent's dossier. A Loom session and a Substrate agent share this card,
-/// because a person dispatching work should not need to care which runs it.
+/// One agent's dossier, and the way into its session.
 private struct AgentCardView: View {
     @Environment(AppModel.self) private var model
     let card: AgentCard
@@ -200,16 +203,14 @@ private struct AgentCardView: View {
         .surface()
         .contentShape(RoundedRectangle(cornerRadius: Theme.radius))
         .onTapGesture {
-            if case .loom(let id) = card.origin {
-                model.destination = .session(id)
-            }
+            model.destination = .session(card.sessionID)
         }
     }
 
     private var cardContext: String {
         var parts = [card.context]
+        if let placement = card.placement { parts.append(placement.label) }
         if let model = card.model { parts.append(model) }
-        if case .substrate = card.origin { parts.append("substrate") }
         return parts.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
@@ -218,21 +219,11 @@ private struct AgentCardView: View {
         guard !text.isEmpty else { return }
         steer = ""
         error = nil
-        switch card.origin {
-        case .loom(let id):
-            Task {
-                guard let controller = model.attach(id) else { return }
-                await controller.waitUntilAdopted()
-                controller.send(text: text)
-            }
-        case .substrate:
-            Task {
-                do {
-                    try await model.steerSubstrateAgent(named: card.name, body: text)
-                } catch {
-                    self.error = error.localizedDescription
-                }
-            }
+        let id = card.sessionID
+        Task {
+            guard let controller = model.daemon(holding: id)?.attach(id) else { return }
+            await controller.waitUntilAdopted()
+            controller.send(text: text)
         }
     }
 }
@@ -281,10 +272,6 @@ struct InboxView: View {
 private struct AttentionDetail: View {
     @Environment(AppModel.self) private var model
     let item: AttentionItem
-    @State private var reply = ""
-    @State private var error: String?
-    @State private var isSent = false
-
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -292,11 +279,13 @@ private struct AttentionDetail: View {
                     Text(item.kind.title).font(Theme.meta).foregroundStyle(Theme.attention)
                     Text(item.title).font(.title3.weight(.medium)).textSelection(.enabled)
                     Text(item.agent).font(Theme.meta).foregroundStyle(.secondary)
+                    if case .session(let id, _) = item.source,
+                       let record = model.sessions.first(where: { $0.id == id }),
+                       let placement = model.placement(of: record) {
+                        Text(placement.label).font(Theme.meta).foregroundStyle(.secondary)
+                    }
                 }
                 actions
-                if let error {
-                    Text(error).font(.callout).foregroundStyle(Theme.failure)
-                }
             }
             .padding(20)
             .frame(maxWidth: 680, alignment: .leading)
@@ -306,8 +295,8 @@ private struct AttentionDetail: View {
     @ViewBuilder
     private var actions: some View {
         switch item.source {
-        case .loom(let sessionID, let escalation):
-            if let escalation, let controller = model.attached[sessionID] {
+        case .session(let sessionID, let escalation):
+            if let escalation, let controller = model.controller(for: sessionID) {
                 ApprovalCard(record: escalation, controller: controller)
             } else if !item.detail.isEmpty {
                 MarkdownText(source: item.detail)
@@ -315,53 +304,10 @@ private struct AttentionDetail: View {
             Button("Open session") { model.destination = .session(sessionID) }
                 .buttonStyle(.link)
 
-        case .substrate(_, let threadID, let planReviewID):
-            if !item.detail.isEmpty {
-                MarkdownText(source: item.detail)
-            }
-            if isSent {
-                Label("Sent", systemImage: "checkmark").foregroundStyle(.secondary)
-            } else {
-                TextEditor(text: $reply)
-                    .scrollContentBackground(.hidden)
-                    .padding(6)
-                    .frame(height: 90)
-                    .surface()
-                if let planReviewID {
-                    HStack {
-                        Spacer()
-                        Button("Reject") { decide(planReviewID, .rejected) }
-                        Button("Request changes") { decide(planReviewID, .changesRequested) }
-                        Button("Approve") { decide(planReviewID, .approved) }
-                            .buttonStyle(.borderedProminent)
-                    }
-                } else if let threadID {
-                    HStack {
-                        Spacer()
-                        Button("Send") {
-                            run { try await model.reply(threadID: threadID, body: reply) }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(reply.isEmpty)
-                    }
-                }
-            }
-        }
-    }
-
-    private func decide(_ id: String, _ decision: PlanDecision) {
-        run { try await model.decide(planReviewID: id, decision: decision, comment: reply) }
-    }
-
-    private func run(_ action: @escaping @MainActor () async throws -> Void) {
-        error = nil
-        Task {
-            do {
-                try await action()
-                isSent = true
-            } catch {
-                self.error = error.localizedDescription
-            }
+        case .machine:
+            Text(item.detail).font(.callout).textSelection(.enabled)
+            Button("Open Machines") { model.destination = .machines }
+                .buttonStyle(.link)
         }
     }
 }

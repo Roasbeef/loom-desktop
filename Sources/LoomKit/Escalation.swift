@@ -21,12 +21,22 @@ public struct Escalation: Sendable, Equatable, Identifiable {
     /// than what was asked without the person seeing that, so it is withheld.
     public let untranslatableGrants: Int
 
+    /// The orchestrator the question was raised on, when it is not this one.
+    public let placement: String?
+    /// Grants a remote child asked for that the spawner's ceiling does not admit.
+    /// They are shown, and an approval cannot carry them.
+    public let outsideCeiling: [String]
+
+    /// A local approval must cover the whole request. A remote one may be
+    /// narrower by rule, because the protocol limits it to the admitted grants.
     public var canApprove: Bool { untranslatableGrants == 0 && !grants.isEmpty }
 
     public init(
         id: String, seq: Int, status: String, strand: String, tool: String,
         action: String, preview: String, reason: String, source: String, grants: [JSONValue],
-        untranslatableGrants: Int = 0
+        untranslatableGrants: Int = 0,
+        placement: String? = nil,
+        outsideCeiling: [String] = []
     ) {
         self.id = id
         self.seq = seq
@@ -39,6 +49,8 @@ public struct Escalation: Sendable, Equatable, Identifiable {
         self.source = source
         self.grants = grants
         self.untranslatableGrants = untranslatableGrants
+        self.placement = placement
+        self.outsideCeiling = outsideCeiling
     }
 
     /// Translates one durable grant, discriminated by `grant`, to its wire
@@ -94,7 +106,8 @@ public struct Escalation: Sendable, Equatable, Identifiable {
         case "network":
             let network = grant["network"]
             let hosts = network?["allow"]?.array?.compactMap(\.string).joined(separator: ", ") ?? ""
-            return "Network \(network?["mode"]?.string ?? "?")" + (hosts.isEmpty ? "" : ": \(hosts)")
+            let proxy = network?["proxy"]?.string.map { " via \($0)" } ?? ""
+            return "Network \(network?["mode"]?.string ?? "?")" + (hosts.isEmpty ? "" : ": \(hosts)") + proxy
         case "env": return "Environment variable \(grant["name"]?.string ?? "?")"
         case "limit": return "Limit \(grant["field"]?.string ?? "?") = \(grant["value"]?.int ?? 0)"
         case "scratch": return "Scratch \(grant["scratch"]?["mode"]?.string ?? "?")"

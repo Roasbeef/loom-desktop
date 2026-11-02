@@ -1,33 +1,56 @@
 import Foundation
 import LoomKit
-import SubstrateKit
 
-/// One thing waiting on a person, from either system.
+/// Where a session runs: the brain keeps the conversation, the model keys and
+/// the approvals, and the hands run its tools beside the checkout.
+public struct Placement: Sendable, Equatable {
+    public let brain: String
+    public let hands: String
+    /// Whether the tools run on another machine than the conversation.
+    public let isSplit: Bool
+
+    public init(record: SessionRecord, brain: String) {
+        self.brain = brain
+        if let executor = record.executor {
+            hands = executor
+            isSplit = true
+        } else if let pool = record.pool {
+            // A pool session has no executor until its first open chooses one.
+            hands = "\(pool) pool"
+            isSplit = true
+        } else {
+            hands = brain
+            isSplit = false
+        }
+    }
+
+    public var label: String { isSplit ? "\(brain) → \(hands)" : brain }
+}
+
+/// One thing waiting on a person.
 ///
-/// The inbox groups by what an item needs rather than by who sent it, so a
-/// Loom approval and a Substrate question sit in one list.
+/// The inbox groups by what an item needs rather than by which session raised it.
 public struct AttentionItem: Sendable, Identifiable, Equatable {
     public enum Kind: Int, Sendable, Comparable, CaseIterable {
-        case approval, question, plan, failed, blocked
+        case approval, failed, machine
 
         public static func < (lhs: Kind, rhs: Kind) -> Bool { lhs.rawValue < rhs.rawValue }
 
         public var title: String {
             switch self {
             case .approval: return "Needs approval"
-            case .question: return "Questions"
-            case .plan: return "Plans to review"
             case .failed: return "Failed runs"
-            case .blocked: return "Blocked"
+            case .machine: return "Machines"
             }
         }
     }
 
     public enum Source: Sendable, Equatable {
-        /// A Loom session. `escalation` is nil until the record has been read
-        /// from the session's own lane, since activity reports only a count.
-        case loom(sessionID: String, escalation: Escalation?)
-        case substrate(agent: String, threadID: String?, planReviewID: String?)
+        /// A session. `escalation` is nil until the record has been read from
+        /// the session's own lane, since activity reports only a count.
+        case session(id: String, escalation: Escalation?)
+        /// A machine that is not healthy, and the sessions depending on it.
+        case machine(node: String, sessions: [String])
     }
 
     public let id: String
@@ -38,17 +61,12 @@ public struct AttentionItem: Sendable, Identifiable, Equatable {
     public let detail: String
 }
 
-/// One agent on the mission control board, from either system.
+/// One agent on the mission control board.
 public struct AgentCard: Sendable, Identifiable, Equatable {
     public enum Liveness: Int, Sendable, Comparable {
-        case needsYou, working, idle, off
+        case needsYou, working, idle, unknown, off
 
         public static func < (lhs: Liveness, rhs: Liveness) -> Bool { lhs.rawValue < rhs.rawValue }
-    }
-
-    public enum Origin: Sendable, Equatable {
-        case loom(sessionID: String)
-        case substrate(agentID: Int64)
     }
 
     public struct Line: Sendable, Equatable, Identifiable {
@@ -64,7 +82,7 @@ public struct AgentCard: Sendable, Identifiable, Equatable {
     }
 
     public let id: String
-    public let origin: Origin
+    public let sessionID: String
     public let name: String
     public let context: String
     public let liveness: Liveness
@@ -72,9 +90,13 @@ public struct AgentCard: Sendable, Identifiable, Equatable {
     public let model: String?
     public let lines: [Line]
     public let waitingCount: Int
+    /// Where it runs, or nil when there is only one machine to speak of.
+    public let placement: Placement?
+    /// The machine this card's tools depend on, for grouping and blast radius.
+    public let machine: String?
 }
 
-/// Combines both systems' observations into the two shared views.
+/// Combines each daemon's observations into the two shared views.
 ///
 /// These are pure functions so the merge rules are tested without a daemon.
 public enum Mission {
@@ -82,7 +104,7 @@ public enum Mission {
         sessions: [SessionRecord],
         activity: [String: SessionActivity],
         escalations: [String: [Escalation]],
-        feed: CommandFeed?
+        unhealthy: [(node: DeploymentNode, sessions: [SessionRecord])] = []
     ) -> [AttentionItem] {
         var items: [AttentionItem] = []
         for session in sessions {
@@ -94,7 +116,7 @@ public enum Mission {
                     items.append(.init(
                         id: "loom/\(session.id)/pending",
                         kind: .approval,
-                        source: .loom(sessionID: session.id, escalation: nil),
+                        source: .session(id: session.id, escalation: nil),
                         agent: session.title,
                         title: "\(row.approvals) pending approval\(row.approvals == 1 ? "" : "s")",
                         detail: "Reading the request from the session."
@@ -104,7 +126,7 @@ public enum Mission {
                     items.append(.init(
                         id: "loom/\(session.id)/\(escalation.id)",
                         kind: .approval,
-                        source: .loom(sessionID: session.id, escalation: escalation),
+                        source: .session(id: session.id, escalation: escalation),
                         agent: session.title,
                         title: escalation.reason.isEmpty ? "Allow \(escalation.tool)?" : escalation.reason,
                         detail: escalation.safePreview
@@ -114,7 +136,7 @@ public enum Mission {
                 items.append(.init(
                     id: "loom/\(session.id)/failed",
                     kind: .failed,
-                    source: .loom(sessionID: session.id, escalation: nil),
+                    source: .session(id: session.id, escalation: nil),
                     agent: session.title,
                     title: "The last run failed",
                     detail: row.lastMessage ?? "The session reported no final message."
@@ -122,87 +144,70 @@ public enum Mission {
             }
         }
 
-        for row in feed?.attention ?? [] {
+        // A sick machine is worth a person's attention before it fails a run,
+        // but only when something depends on it.
+        for (node, dependents) in unhealthy where !dependents.isEmpty {
             items.append(.init(
-                id: "substrate/\(row.kind)/\(row.agentID)/\(row.messageID ?? 0)/\(row.planReviewID ?? "")",
-                kind: kind(substrate: row.kind),
-                source: .substrate(agent: row.agentName, threadID: row.threadID, planReviewID: row.planReviewID),
-                agent: row.agentName,
-                title: row.title,
-                detail: row.detail ?? ""
+                id: "machine/\(node.id)",
+                kind: .machine,
+                source: .machine(node: node.id, sessions: dependents.map(\.id)),
+                agent: node.name,
+                title: "\(node.name) is \(node.state)",
+                detail: ([node.reasons.joined(separator: ", ")] + dependents.map(\.title))
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n")
             ))
         }
         return items.sorted { $0.kind < $1.kind }
     }
 
-    static func kind(substrate: String) -> AttentionItem.Kind {
-        switch substrate {
-        case "plan": return .plan
-        case "blocked": return .blocked
-        default: return .question
-        }
-    }
-
     public static func cards(
         sessions: [SessionRecord],
         activity: [String: SessionActivity],
-        feed: CommandFeed?
+        placement: (SessionRecord) -> Placement? = { _ in nil }
     ) -> [AgentCard] {
-        var cards = sessions.map { session -> AgentCard in
+        sessions.map { session -> AgentCard in
             let row = activity[session.id]
             let lines = (row?.glances ?? []).map {
                 AgentCard.Line(id: $0.strand, label: $0.title, text: $0.summary)
             }
             return AgentCard(
                 id: "loom/\(session.id)",
-                origin: .loom(sessionID: session.id),
+                sessionID: session.id,
                 name: session.title,
                 context: session.workspaceName,
                 liveness: liveness(session: session, activity: row),
                 digest: row?.lastMessage ?? session.subtitle ?? "",
                 model: row?.model,
                 lines: lines,
-                waitingCount: row?.approvals ?? 0
+                waitingCount: row?.approvals ?? 0,
+                placement: placement(session),
+                machine: placement(session)?.hands
             )
         }
 
-        for lane in feed?.lanes ?? [] where lane.agent.name != "User" {
-            let context = [lane.agent.projectKey, lane.agent.gitBranch]
-                .compactMap { $0 }
-                .filter { !$0.isEmpty }
-                .joined(separator: " · ")
-            let waiting = lane.needsActionCount > 0 || lane.waitingFor != nil
-            cards.append(AgentCard(
-                id: "substrate/\(lane.agent.id)",
-                origin: .substrate(agentID: lane.agent.id),
-                name: lane.agent.name,
-                context: context,
-                liveness: waiting ? .needsYou : liveness(substrate: lane.agent.status),
-                digest: lane.waitingFor.map { "Waiting on you: \($0)" } ?? lane.agent.purpose ?? "",
-                model: nil,
-                lines: (lane.events ?? []).prefix(3).map {
-                    AgentCard.Line(id: String($0.messageID), label: $0.kind, text: $0.subject)
-                },
-                waitingCount: lane.needsActionCount
-            ))
-        }
-        return cards.sorted { ($0.liveness, $0.name) < ($1.liveness, $1.name) }
+        .sorted { ($0.liveness, $0.name) < ($1.liveness, $1.name) }
     }
 
-    static func liveness(session: SessionRecord, activity: SessionActivity?) -> AgentCard.Liveness {
+    public static func liveness(session: SessionRecord, activity: SessionActivity?) -> AgentCard.Liveness {
         switch activity?.state {
         case .needsYou: return .needsYou
         case .working: return .working
-        case .idle, .unknown: return .idle
+        case .idle: return .idle
+        case .unknown: return .unknown
         case nil: return session.state.isResident ? .idle : .off
         }
     }
 
-    static func liveness(substrate status: String) -> AgentCard.Liveness {
-        switch status {
-        case "active", "busy": return .working
-        case "idle": return .idle
-        default: return .off
+    /// Names each machine that is not healthy and the sessions that depend on it,
+    /// so a person can see what a sick node affects before it fails a run.
+    public static func blastRadius(
+        nodes: [DeploymentNode],
+        sessions: [SessionRecord]
+    ) -> [(node: DeploymentNode, sessions: [SessionRecord])] {
+        nodes.filter { $0.state != "ok" }.map { node in
+            (node, sessions.filter { $0.executor == node.name || $0.executorNode == node.id })
         }
     }
+
 }

@@ -32,6 +32,9 @@ public struct TransferAssembler: Sendable {
     /// The largest record this client is prepared to buffer.
     public static let recordLimit = 33_554_432
 
+    /// The largest decoded fragment the protocol allows.
+    public static let fragmentLimit = 24576
+
     public let snapshotID: String
     public private(set) var index = 0
 
@@ -66,6 +69,9 @@ public struct TransferAssembler: Sendable {
         }
         guard body["complete_history"]?.bool == false else {
             throw LoomError.protocolViolation("complete_history must be false")
+        }
+        guard (body["fragment_bytes_limit"]?.int ?? .max) <= Self.fragmentLimit else {
+            throw LoomError.protocolViolation("the declared fragment limit exceeds what this client buffers")
         }
         guard (body["record_bytes_limit"]?.int ?? .max) <= Self.recordLimit else {
             throw LoomError.protocolViolation("the declared record limit exceeds what this client buffers")
@@ -164,6 +170,8 @@ public struct TransferAssembler: Sendable {
             entries.append(.object([
                 "id": .string(currentRecord ?? ""),
                 "seq": .int(Int64(currentSeq ?? 0)),
+                "parentId": .null,
+                "unknownParent": .bool(true),
                 "type": "oversized",
                 "size": .int(Int64(currentTotal)),
             ]))

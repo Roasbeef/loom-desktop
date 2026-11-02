@@ -2,90 +2,168 @@ import Foundation
 import LoomKit
 import MissionKit
 import Observation
-import SubstrateKit
+import Security
 
 /// What the main window is showing.
 enum Destination: Hashable {
     case inbox
     case mission
+    case machines
     case session(String)
 }
 
-/// The app's live view of one daemon and, when present, one Substrate.
+/// How a person last chose to group the sidebar.
+enum SidebarGrouping: String, CaseIterable, Identifiable {
+    case project = "Project"
+    case machine = "Machine"
+    var id: Self { self }
+}
+
+/// A saved way to reach a daemon on another machine.
+struct SavedDaemon: Codable, Hashable, Identifiable {
+    let id: UUID
+    var name: String
+    var address: String
+}
+
+/// Keeps remote credentials in the login keychain, and never in preferences.
+enum CredentialStore {
+    private static let service = "com.roasbeef.loom-desktop.daemon"
+
+    static func save(_ token: String, for id: UUID) throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: id.uuidString,
+        ]
+        SecItemDelete(query as CFDictionary)
+        var item = query
+        item[kSecValueData as String] = Data(token.utf8)
+        let status = SecItemAdd(item as CFDictionary, nil)
+        guard status == errSecSuccess else {
+            throw LoomError.discovery("The keychain refused the credential (\(status)).")
+        }
+    }
+
+    static func load(for id: UUID) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: id.uuidString,
+            kSecReturnData as String: true,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else {
+            return nil
+        }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func delete(for id: UUID) {
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: id.uuidString,
+        ] as CFDictionary)
+    }
+}
+
+/// One daemon this app is connected to, here or on another machine.
 ///
-/// This object is the host: it owns the sockets and timers and turns their
-/// results into observable state. Every decision about what those results mean
-/// lives in LoomKit and MissionKit, which is what keeps this type testable by
-/// proxy and small enough to read in one sitting.
+/// A session's brain is the daemon that holds it, so a session on another
+/// machine can only be driven through a connection to that machine's daemon. Each
+/// connection therefore owns its sockets, its catalogue and its attachments, and
+/// `AppModel` only merges their views.
 @MainActor
 @Observable
-final class AppModel {
-    enum Connection: Equatable {
+final class DaemonConnection: Identifiable {
+    enum State: Equatable {
         case connecting
         case connected
         case unavailable(String)
     }
 
-    /// The state root. `LOOM_STATE_DIR` selects a test daemon.
-    let root: URL = ProcessInfo.processInfo.environment["LOOM_STATE_DIR"]
-        .map { URL(fileURLWithPath: $0) } ?? DaemonDiscovery.defaultRoot
+    enum Source {
+        case local(root: URL)
+        case remote(SavedDaemon, token: String)
+    }
 
-    private(set) var connection: Connection = .connecting
+    let id: String
+    let source: Source
+
+    private(set) var state: State = .connecting
     private(set) var hello: DaemonHello?
     private(set) var status: DaemonStatus?
+    private(set) var deployment: Deployment?
+    private(set) var elsewhere: [ElsewhereGroup] = []
     private(set) var sessions: [SessionRecord] = []
     private(set) var activity: [String: SessionActivity] = [:]
-    private(set) var feed: CommandFeed?
     private(set) var attached: [String: SessionController] = [:]
-
-    var destination: Destination? = .mission
-    var isDispatching = false
 
     private var endpoint: DaemonEndpoint?
     private var control: ControlClient?
-    private let substrate = SubstrateClient(
-        baseURL: URL(string: ProcessInfo.processInfo.environment["SUBSTRATE_URL"] ?? "http://localhost:8080")!
-    )
-    private var loops: [Task<Void, Never>] = []
+    private var loop: Task<Void, Never>?
+    private var ticks = 0
 
-    var substrateOnline: Bool { feed != nil }
+    /// The deployment read connects to every node, so it runs far less often
+    /// than the catalogue poll.
+    private static let deploymentEvery = 8
 
-    var attention: [AttentionItem] {
-        Mission.attention(
-            sessions: sessions,
-            activity: activity,
-            escalations: attached.mapValues(\.conversation.escalations),
-            feed: feed
-        )
+    init(id: String, source: Source) {
+        self.id = id
+        self.source = source
     }
 
-    var cards: [AgentCard] {
-        Mission.cards(sessions: sessions, activity: activity, feed: feed)
+    /// The name people see: a saved name, or what the daemon calls its machine.
+    var label: String {
+        switch source {
+        case .remote(let saved, _): return saved.name
+        case .local: return deployment?.selfName ?? "This machine"
+        }
     }
 
-    /// Workspaces already used, for the dispatch sheet.
-    var knownWorkspaces: [String] {
-        Array(Set(sessions.filter { $0.executor == nil }.map(\.workspace))).sorted()
+    var isRemote: Bool {
+        if case .remote = source { return true }
+        return false
+    }
+
+    /// The state root, for the configuration a local dispatch uses.
+    var localRoot: URL? {
+        if case .local(let root) = source { return root }
+        return nil
     }
 
     func start() {
-        guard loops.isEmpty else { return }
-        loops.append(Task { await self.daemonLoop() })
-        loops.append(Task { await self.substrateLoop() })
+        guard loop == nil else { return }
+        loop = Task { await self.run() }
     }
 
-    // MARK: Polling
+    func shutDown() {
+        loop?.cancel()
+        attached.values.forEach { $0.detach() }
+        attached = [:]
+        let control = self.control
+        Task { await control?.close() }
+    }
+
+    private func resolveEndpoint() throws -> DaemonEndpoint {
+        switch source {
+        case .local(let root): return try DaemonDiscovery.discover(root: root)
+        case .remote(let saved, let token): return try DaemonEndpoint(address: saved.address, token: token)
+        }
+    }
 
     /// Holds a control connection and polls it. The daemon pushes no activity
     /// on this socket, so a poll is the only way to see it. A failure drops all
     /// state tied to that daemon lifetime and starts over from discovery.
-    private func daemonLoop() async {
+    private func run() async {
         while !Task.isCancelled {
             do {
-                let endpoint = try DaemonDiscovery.discover(root: root)
+                let endpoint = try resolveEndpoint()
                 let control = try ControlClient(endpoint: endpoint)
                 let hello = try await control.connect()
                 adopt(hello: hello, endpoint: endpoint, control: control)
+                ticks = 0
                 while !Task.isCancelled {
                     try await refresh(control)
                     try await Task.sleep(for: .seconds(2))
@@ -93,7 +171,7 @@ final class AppModel {
             } catch {
                 await control?.close()
                 control = nil
-                connection = .unavailable(error.localizedDescription)
+                state = .unavailable(error.localizedDescription)
                 try? await Task.sleep(for: .seconds(3))
             }
         }
@@ -108,7 +186,7 @@ final class AppModel {
         self.hello = hello
         self.endpoint = endpoint
         self.control = control
-        connection = .connected
+        state = .connected
     }
 
     private func refresh(_ control: ControlClient) async throws {
@@ -118,52 +196,27 @@ final class AppModel {
         let activity = try await control.activity(sessions: resident)
 
         self.status = status
-        if self.sessions != sessions {
-            self.sessions = sessions.sorted { $0.createdAt > $1.createdAt }
-        }
+        let sorted = sessions.sorted { $0.createdAt > $1.createdAt }
+        if self.sessions != sorted { self.sessions = sorted }
         if self.activity != activity { self.activity = activity }
 
         // An approval count says only that a record exists, so a session asking
         // for one gets a lane in order to read the record the inbox must show.
-        for row in activity.values where row.approvals > 0 && attached[row.sessionID] == nil {
+        for row in activity.values where row.approvals > 0 && attached[row.sessionID]?.isLive != true {
             attach(row.sessionID)
         }
-    }
 
-    /// Substrate is optional, so its absence is drawn as absence and retried.
-    ///
-    /// The listener makes mail appear as it arrives. The slower timer repairs
-    /// anything the hub does not announce, such as an agent's liveness expiring,
-    /// and keeps the board current if the socket is refused.
-    private func substrateLoop() async {
-        loops.append(Task { await self.substrateListener() })
-        while !Task.isCancelled {
-            await reloadFeed()
-            try? await Task.sleep(for: .seconds(15))
+        if ticks % Self.deploymentEvery == 0 {
+            await refreshDeployment(control)
         }
+        ticks += 1
     }
 
-    private func substrateListener() async {
-        while !Task.isCancelled {
-            do {
-                for try await type in substrate.events() where Self.feedEvents.contains(type) {
-                    await reloadFeed()
-                }
-            } catch {
-                // The socket dropped or Substrate is not running. Retry below.
-            }
-            try? await Task.sleep(for: .seconds(3))
-        }
-    }
-
-    /// Hub events that change what the feed returns.
-    private static let feedEvents: Set<String> = [
-        "new_message", "agent_update", "task_update", "summary_updated", "unread_count",
-    ]
-
-    private func reloadFeed() async {
-        let next = try? await substrate.feed()
-        if feed != next { feed = next }
+    /// Both reads are owner-only and absent from older daemons, so a refusal
+    /// hides those views rather than failing the connection.
+    private func refreshDeployment(_ control: ControlClient) async {
+        if let next = try? await control.deployment(), deployment != next { deployment = next }
+        if let next = try? await control.sessionsElsewhere(), elsewhere != next { elsewhere = next }
     }
 
     // MARK: Sessions
@@ -181,7 +234,7 @@ final class AppModel {
     }
 
     func resume(_ sessionID: String) async throws {
-        guard let control else { throw LoomError.closed("The daemon is not connected.") }
+        guard let control else { throw LoomError.closed("\(label) is not connected.") }
         _ = try await control.openUntilResident(sessionID: sessionID)
         try await refresh(control)
         attach(sessionID)
@@ -195,44 +248,169 @@ final class AppModel {
         try await refresh(control)
     }
 
-    /// Creates a session and sends its first prompt, the whole of a dispatch.
-    func dispatch(workspace: String, name: String, prompt: String, requestKey: String) async throws {
-        guard let control else { throw LoomError.closed("The daemon is not connected.") }
+    /// Reads the workspaces an executor has registered, by name.
+    func workspaces(onExecutor name: String) async -> [String] {
+        guard let control else { return [] }
+        let detail = try? await control.deployment(node: name)
+        return detail?.nodes.first?.workspaces ?? []
+    }
 
-        // The same configuration the terminal falls back to with no --config.
-        let configuration = root.appendingPathComponent("loom.toml").path
+    /// Creates a session and sends its first prompt, the whole of a dispatch.
+    func dispatch(
+        workspace: String,
+        name: String,
+        prompt: String,
+        placement: PlacementChoice,
+        configuration: String,
+        requestKey: String
+    ) async throws -> String {
+        guard let control else { throw LoomError.closed("\(label) is not connected.") }
         let record = try await control.createSession(
             requestKey: requestKey,
             workspace: workspace,
             name: name.isEmpty ? (workspace as NSString).lastPathComponent : name,
-            configuration: configuration
+            configuration: configuration,
+            placement: placement
         )
         _ = try await control.openUntilResident(sessionID: record.id)
         try await refresh(control)
-        guard let controller = attach(record.id) else { return }
+        guard let controller = attach(record.id) else { return record.id }
         await controller.waitUntilAdopted()
         controller.send(text: prompt)
-        destination = .session(record.id)
+        return record.id
+    }
+}
+
+/// The app's merged view of every daemon.
+///
+/// Every decision about what those results mean lives in LoomKit and MissionKit,
+/// which is what keeps this type small enough to read in one sitting.
+@MainActor
+@Observable
+final class AppModel {
+    private(set) var daemons: [DaemonConnection] = []
+
+    var destination: Destination? = .mission
+    var isDispatching = false
+    var isAddingDaemon = false
+
+    /// A name to prefill, when a person follows a session held elsewhere.
+    var daemonSuggestion: (name: String, address: String)?
+
+    private var hasStarted = false
+    private static let savedKey = "savedDaemons"
+
+    /// Every session on every connected daemon.
+    var sessions: [SessionRecord] {
+        daemons.flatMap(\.sessions)
     }
 
-    // MARK: Substrate actions
-
-    func reply(threadID: String, body: String) async throws {
-        let sender = try await substrate.operatorID()
-        try await substrate.reply(threadID: threadID, senderID: sender, body: body)
-        await reloadFeed()
+    var activity: [String: SessionActivity] {
+        daemons.reduce(into: [:]) { $0.merge($1.activity) { _, new in new } }
     }
 
-    func steerSubstrateAgent(named name: String, body: String) async throws {
-        let sender = try await substrate.operatorID()
-        try await substrate.sendMail(senderID: sender, to: name, subject: "Steer from Loom", body: body)
-        await reloadFeed()
+    private var attached: [String: SessionController] {
+        daemons.reduce(into: [:]) { $0.merge($1.attached) { _, new in new } }
     }
 
-    func decide(planReviewID: String, decision: PlanDecision, comment: String) async throws {
-        let reviewer = try await substrate.operatorID()
-        try await substrate.decide(planReviewID: planReviewID, decision: decision, comment: comment, reviewer: reviewer)
-        await reloadFeed()
+    /// Whether placement is worth any screen space. A person on one machine with
+    /// no executors never sees brain and hands vocabulary.
+    var isMultiMachine: Bool {
+        daemons.count > 1 || daemons.contains { $0.deployment?.isDistributed == true }
+    }
+
+    var attention: [AttentionItem] {
+        Mission.attention(
+            sessions: sessions,
+            activity: activity,
+            // A dead lane's records may be stale and cannot be answered, so the
+            // inbox shows the count until a fresh lane reads them.
+            escalations: attached.filter(\.value.isLive).mapValues(\.conversation.escalations),
+            unhealthy: daemons.flatMap { daemon in
+                Mission.blastRadius(nodes: daemon.deployment?.nodes ?? [], sessions: daemon.sessions)
+            }
+        )
+    }
+
+    var cards: [AgentCard] {
+        Mission.cards(sessions: sessions, activity: activity) { [self] in placement(of: $0) }
+    }
+
+    /// Sessions the connected daemons say other orchestrators hold, minus any
+    /// held by a daemon this app is already connected to.
+    var elsewhere: [ElsewhereGroup] {
+        let known = Set(daemons.flatMap(\.sessions).map(\.id))
+        return daemons.flatMap(\.elsewhere).filter { group in
+            !group.sessions.allSatisfy { known.contains($0.id) } || group.sessions.isEmpty
+        }
+    }
+
+    func daemon(holding sessionID: String) -> DaemonConnection? {
+        daemons.first { daemon in daemon.sessions.contains { $0.id == sessionID } }
+    }
+
+    func controller(for sessionID: String) -> SessionController? {
+        daemon(holding: sessionID)?.attached[sessionID]
+    }
+
+    func placement(of record: SessionRecord) -> Placement? {
+        guard isMultiMachine, let daemon = daemon(holding: record.id) else { return nil }
+        return Placement(record: record, brain: daemon.label)
+    }
+
+    /// Workspaces already used on this daemon, for the dispatch sheet.
+    func knownWorkspaces(on daemon: DaemonConnection) -> [String] {
+        Array(Set(daemon.sessions.filter { $0.executor == nil && $0.pool == nil }.map(\.workspace))).sorted()
+    }
+
+    func start() {
+        guard !hasStarted else { return }
+        hasStarted = true
+        let root = ProcessInfo.processInfo.environment["LOOM_STATE_DIR"]
+            .map { URL(fileURLWithPath: $0) } ?? DaemonDiscovery.defaultRoot
+        daemons = [DaemonConnection(id: "local", source: .local(root: root))]
+        for saved in Self.loadSaved() {
+            if let token = CredentialStore.load(for: saved.id) {
+                daemons.append(DaemonConnection(id: saved.id.uuidString, source: .remote(saved, token: token)))
+            }
+        }
+        daemons.forEach { $0.start() }
+    }
+
+    // MARK: Other machines
+
+    private static func loadSaved() -> [SavedDaemon] {
+        guard let data = UserDefaults.standard.data(forKey: savedKey) else { return [] }
+        return (try? JSONDecoder().decode([SavedDaemon].self, from: data)) ?? []
+    }
+
+    /// Saves and connects a daemon. The credential goes to the keychain, and the
+    /// address is checked now so a cleartext route is refused before it is kept.
+    func addDaemon(name: String, address: String, token: String) throws {
+        let endpoint = try DaemonEndpoint(address: address, token: token)
+        guard endpoint.scheme == "wss" || endpoint.isLoopback else {
+            throw LoomError.discovery("Use wss:// or an SSH tunnel to a loopback port. A bearer must not cross the network in cleartext.")
+        }
+        let saved = SavedDaemon(id: UUID(), name: name, address: address)
+        try CredentialStore.save(token, for: saved.id)
+        var all = Self.loadSaved()
+        all.append(saved)
+        UserDefaults.standard.set(try JSONEncoder().encode(all), forKey: Self.savedKey)
+
+        let connection = DaemonConnection(id: saved.id.uuidString, source: .remote(saved, token: token))
+        daemons.append(connection)
+        connection.start()
+    }
+
+    func removeDaemon(_ connection: DaemonConnection) {
+        guard case .remote(let saved, _) = connection.source else { return }
+        connection.shutDown()
+        daemons.removeAll { $0.id == connection.id }
+        CredentialStore.delete(for: saved.id)
+        let remaining = Self.loadSaved().filter { $0.id != saved.id }
+        if let data = try? JSONEncoder().encode(remaining) {
+            UserDefaults.standard.set(data, forKey: Self.savedKey)
+        }
     }
 }
 
@@ -246,6 +424,7 @@ final class SessionController {
     private(set) var isLive = true
     private(set) var lastError: String?
     private(set) var isLoadingOlder = false
+    private var olderCursor: Int?
     var focusedStrand = "main"
 
     private let endpoint: DaemonEndpoint
@@ -334,16 +513,33 @@ final class SessionController {
     }
 
     func loadOlder() {
-        guard let oldest = conversation.oldestSeq, !isLoadingOlder else { return }
+        guard let before = olderCursor ?? conversation.oldestSeq, !isLoadingOlder, let lane else { return }
         isLoadingOlder = true
-        perform { lane in try await lane.loadOlder(beforeSeq: oldest) }
+        Task {
+            defer { isLoadingOlder = false }
+            do {
+                olderCursor = try await lane.loadOlder(beforeSeq: before)
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    /// Reads a page of a subagent running on another orchestrator.
+    func peek(child: RemoteChild) {
+        conversation.beginPeek(child: child.id)
+        let id = child.id
+        perform { lane in try await lane.requestChildHistory(child: id) }
+    }
+
+    func endPeek() {
+        conversation.endPeek()
     }
 
     private func perform(_ action: @escaping @Sendable (SessionLane) async throws -> Void) {
         guard let lane else { return }
         lastError = nil
         Task {
-            defer { isLoadingOlder = false }
             do {
                 try await action(lane)
             } catch {

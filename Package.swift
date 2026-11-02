@@ -10,21 +10,19 @@ let package = Package(
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .library(name: "LoomKit", targets: ["LoomKit"]),
-        .library(name: "SubstrateKit", targets: ["SubstrateKit"]),
         .library(name: "MissionKit", targets: ["MissionKit"]),
         .executable(name: "loom-probe", targets: ["loom-probe"]),
         .executable(name: "Loom", targets: ["Loom"]),
     ],
     targets: [
         .target(name: "LoomKit"),
-        .target(name: "SubstrateKit"),
-        .target(name: "MissionKit", dependencies: ["LoomKit", "SubstrateKit"]),
-        .executableTarget(name: "loom-probe", dependencies: ["LoomKit", "SubstrateKit", "MissionKit"]),
+        .target(name: "MissionKit", dependencies: ["LoomKit"]),
+        .executableTarget(name: "loom-probe", dependencies: ["LoomKit", "MissionKit"]),
         .executableTarget(
             name: "Loom",
-            dependencies: ["LoomKit", "SubstrateKit", "MissionKit"],
+            dependencies: ["LoomKit", "MissionKit"],
             path: "App/Sources"
         ),
-        .testTarget(name: "LoomKitTests", dependencies: ["LoomKit", "SubstrateKit", "MissionKit"]),
+        .testTarget(name: "LoomKitTests", dependencies: ["LoomKit", "MissionKit"]),
     ]
 )
