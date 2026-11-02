@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The app runs outside the App Sandbox on purpose. It reads the owner token
+  under ~/.loom and can start the loomd the person installed, neither of which a
+  sandboxed process may do. Distribution is therefore Developer ID, not the Mac
+  App Store. See docs/design.md.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<false/>
+</dict>
+</plist>
