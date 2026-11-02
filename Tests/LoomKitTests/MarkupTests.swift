@@ -185,6 +185,11 @@ final class TranscriptBlockTests: XCTestCase {
         XCTAssertEqual(ToolSummary.describe([tool("a", "fs_write", result: nil)]), "Writing 1 file")
     }
 
+    func testAFailedCallIsNotDescribedAsDone() {
+        XCTAssertEqual(ToolSummary.describe([tool("a", "fs_write", failed: true)]), "1 call failed")
+        XCTAssertEqual(ToolSummary.describe([tool("a", "bash"), tool("b", "fs_write", failed: true)]), "Ran 1 command, 1 call failed")
+    }
+
     func testSummaryStatus() {
         XCTAssertEqual(ToolSummary.status([tool("a", "bash")]), .done)
         XCTAssertEqual(ToolSummary.status([tool("a", "bash", result: nil)]), .running)

@@ -277,6 +277,24 @@ final class PlacementTests: XCTestCase {
     }
 }
 
+final class SessionGrantTests: XCTestCase {
+    private func record(_ grants: [JSONValue]) -> Escalation {
+        Escalation(id: "e", seq: 1, status: "pending", strand: "main", tool: "t", action: "a", preview: "", reason: "", source: "policy", grants: grants)
+    }
+
+    func testOnlyPersistentGrantsCanBeRemembered() {
+        XCTAssertTrue(record([["type": "writable_root", "path": "/a"]]).canRemember)
+        XCTAssertTrue(record([["type": "network", "network": ["mode": "full"]]]).canRemember)
+        XCTAssertFalse(record([["type": "network", "network": ["mode": "proxy"]]]).canRemember)
+        XCTAssertFalse(record([["type": "env", "name": "X"]]).canRemember)
+    }
+
+    func testAMixedRequestStaysOnceOnly() {
+        XCTAssertFalse(record([["type": "writable_root", "path": "/a"], ["type": "env", "name": "X"]]).canRemember)
+        XCTAssertFalse(record([]).canRemember)
+    }
+}
+
 final class EscapeTests: XCTestCase {
     func testControlAndBidiCharactersAreEscapedNotDeleted() {
         let escaped = Escalation.escapeForDisplay("npm\u{08}\u{1B}[2J\u{202E}x\ny")

@@ -50,7 +50,7 @@ private struct DaemonSection: View {
             HStack(spacing: 8) {
                 Text(daemon.label).font(.headline)
                 Text(daemon.isRemote ? "connected daemon" : "this Mac's daemon")
-                    .font(Theme.meta)
+                    .font(Theme.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
                 if daemon.isRemote {
@@ -76,7 +76,7 @@ private struct DaemonSection: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 14, alignment: .top)], spacing: 14) {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 320, maximum: 460), spacing: 14, alignment: .top)], spacing: 14) {
                         ForEach(deployment.nodes) { node in
                             NodeCard(node: node, daemon: daemon)
                         }
@@ -120,7 +120,7 @@ private struct NodeCard: View {
                     .font(.system(size: 13, weight: .semibold))
                     .lineLimit(1)
                 Spacer()
-                Text(rolesLabel).font(Theme.meta).foregroundStyle(.secondary)
+                Text(rolesLabel).font(Theme.caption).foregroundStyle(.secondary)
             }
 
             // A healthy machine shows no words about its health.
@@ -157,7 +157,9 @@ private struct NodeCard: View {
                         .buttonStyle(.plain)
                     }
                     if dependents.count > 5 {
-                        Text("\(dependents.count - 5) more").font(.caption).foregroundStyle(.secondary)
+                        Button("\(dependents.count - 5) more") { model.destination = .mission }
+                            .buttonStyle(.link)
+                            .font(.caption)
                     }
                 }
             }
@@ -177,12 +179,12 @@ private struct NodeCard: View {
                 ZStack(alignment: .leading) {
                     Capsule().fill(Theme.hairline)
                     Capsule()
-                        .fill(used >= capacity ? Theme.attention : Color.secondary)
+                        .fill(Color.secondary)
                         .frame(width: capacity > 0 ? geometry.size.width * min(1, Double(used) / Double(capacity)) : 0)
                 }
             }
             .frame(height: 3)
-            Text(label).font(Theme.meta).foregroundStyle(.secondary)
+            Text(used >= capacity ? "\(label), full" : label).font(Theme.caption).foregroundStyle(.secondary)
         }
     }
 }

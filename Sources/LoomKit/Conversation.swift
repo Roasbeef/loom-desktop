@@ -159,8 +159,16 @@ public enum ToolSummary {
     public static func describe(_ rows: [TranscriptRow]) -> String {
         var order: [String] = []
         var counts: [String: Int] = [:]
+        var failures = 0
         for row in rows {
-            guard case .tool(let name, _, _, _) = row.kind else { continue }
+            guard case .tool(let name, _, _, let isError) = row.kind else { continue }
+
+            // A call that failed did not do what its verb says, so it is counted
+            // apart. "Wrote 1 file" must never describe a refused write.
+            if isError {
+                failures += 1
+                continue
+            }
             let key = verb(name)
             if counts[key] == nil { order.append(key) }
             counts[key, default: 0] += 1
@@ -184,8 +192,22 @@ public enum ToolSummary {
             default: return isRunning ? "using \(key)" : "used \(key)"
             }
         }
-        let joined = parts.joined(separator: ", ")
+        let failed = failures > 0 ? ["\(failures) call\(failures == 1 ? "" : "s") failed"] : []
+        let joined = (parts + failed).joined(separator: ", ")
         return joined.prefix(1).uppercased() + joined.dropFirst()
+    }
+
+    /// What the first call in a run acted on, so a folded run still says what ran.
+    public static func firstTarget(_ rows: [TranscriptRow]) -> String? {
+        for row in rows {
+            guard case .tool(_, let arguments, _, _) = row.kind else { continue }
+            for key in ["command", "path", "pattern", "query", "url"] {
+                if let value = arguments[key]?.string {
+                    return value.split(separator: "\n").first.map(String.init)
+                }
+            }
+        }
+        return nil
     }
 
     private static func verb(_ name: String) -> String {

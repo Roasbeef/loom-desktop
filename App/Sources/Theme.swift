@@ -18,7 +18,10 @@ enum Theme {
     static let hairline = Color(nsColor: .separatorColor)
     static let tint = Color.primary.opacity(0.04)
     static let tintStrong = Color.primary.opacity(0.07)
+    /// Three radii: inner blocks, content surfaces, and what floats over content.
+    static let radiusInner: CGFloat = 6
     static let radius: CGFloat = 10
+    static let radiusFloating: CGFloat = 16
     static let contentWidth: CGFloat = 740
 
     static let attention = adaptive(light: 0x985000, dark: 0xF5A742)
@@ -29,10 +32,12 @@ enum Theme {
     /// resolved colour, so this is fixed rather than adaptive.
     static let grant = Color(red: 0.76, green: 0.44, blue: 0.04)
 
+    /// Monospaced type marks identifiers only: paths, hosts, commands, model ids.
+    /// Words a person reads as prose stay in the system face.
     static let meta = Font.system(size: 11).monospaced()
     static let code = Font.system(size: 12).monospaced()
     static let caption = Font.system(size: 11)
-    static let body = Font.system(size: 13.5)
+    static let body = Font.system(size: 13)
     static let label = Font.system(size: 12, weight: .medium)
 
     /// A colour that follows the appearance of whatever draws it.
@@ -281,7 +286,7 @@ struct MarkdownView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .surface(radius: 8)
+                .surface(radius: Theme.radiusInner)
         case .code(let language, let text, let closed):
             CodeBlockView(code: text, language: language, isStreaming: isStreaming && !closed)
         case .table(let header, let rows):
@@ -313,7 +318,7 @@ struct MarkdownView: View {
 
         // Inline code gets a monospaced face and a soft fill, not a colour.
         for run in result.runs where run.inlinePresentationIntent?.contains(.code) == true {
-            result[run.range].font = .system(size: 12.5).monospaced()
+            result[run.range].font = .system(size: 12).monospaced()
             result[run.range].backgroundColor = Color.primary.opacity(0.08)
         }
         return result
@@ -341,7 +346,7 @@ private struct MarkdownTable: View {
                     GridRow {
                         ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
                             Text(MarkdownView.inline(cell))
-                                .font(.system(size: 12.5))
+                                .font(.system(size: 12))
                                 .textSelection(.enabled)
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
@@ -350,8 +355,8 @@ private struct MarkdownTable: View {
                     }
                 }
             }
-            .surface(fill: .clear, radius: 8)
-            .clipShape(.rect(cornerRadius: 8))
+            .surface(fill: .clear, radius: Theme.radiusInner)
+            .clipShape(.rect(cornerRadius: Theme.radiusInner))
         }
     }
 }
@@ -458,14 +463,19 @@ struct DiffView: View {
             .frame(minWidth: paneWidth, alignment: .leading)
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { paneWidth = $0 }
-        .surface(fill: .clear, radius: 8)
-        .clipShape(.rect(cornerRadius: 8))
+        .surface(fill: .clear, radius: Theme.radiusInner)
+        .clipShape(.rect(cornerRadius: Theme.radiusInner))
     }
+
+    /// A new file has no old side, so its gutter does not reserve a column for one.
+    private var hasOldSide: Bool { summary.removed > 0 || summary.hunks.contains { $0.lines.contains { $0.kind == .context } } }
 
     private func row(_ line: DiffHunk.Line) -> some View {
         HStack(spacing: 0) {
-            Text(line.oldNumber.map(String.init) ?? "")
-                .frame(width: 34, alignment: .trailing)
+            if hasOldSide {
+                Text(line.oldNumber.map(String.init) ?? "")
+                    .frame(width: 34, alignment: .trailing)
+            }
             Text(line.newNumber.map(String.init) ?? "")
                 .frame(width: 34, alignment: .trailing)
             Text(marker(line.kind))
@@ -475,7 +485,7 @@ struct DiffView: View {
                 .padding(.trailing, 12)
                 .textSelection(.enabled)
         }
-        .font(.system(size: 11.5).monospaced())
+        .font(Theme.code)
         .foregroundStyle(.secondary)
         .padding(.vertical, 0.5)
         .frame(maxWidth: .infinity, alignment: .leading)

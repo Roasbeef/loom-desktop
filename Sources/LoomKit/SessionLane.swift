@@ -88,13 +88,18 @@ public actor SessionLane {
 
     /// Approves exactly what the person was shown. The caller passes the record
     /// it displayed, so `grants` and `action` are never rebuilt from elsewhere.
-    public func approve(_ record: Escalation) async throws -> String {
-        try await mutate("approve", body: [
+    ///
+    /// `remember` keeps the grant for the rest of the session, so the next call
+    /// needing the same authority does not ask again.
+    public func approve(_ record: Escalation, remember: Bool = false) async throws -> String {
+        var body: [String: JSONValue] = [
             "escalation_id": .string(record.id),
             "grants": .array(record.grants),
             "action": .string(record.action),
             "expected_seq": .int(Int64(record.seq)),
-        ])
+        ]
+        if remember { body["scope"] = "session" }
+        return try await mutate("approve", body: .object(body))
     }
 
     public func deny(_ record: Escalation) async throws -> String {

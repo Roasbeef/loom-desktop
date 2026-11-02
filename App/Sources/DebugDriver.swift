@@ -18,6 +18,7 @@ import SwiftUI
 ///     key <name> [mods]    return, escape, up, down, tab, or a letter; cmd,shift,opt
 ///     resize <w> <h>       the main window's size
 ///     activate | deactivate   take and return focus, for a check of clicks
+///     menu <title>         invokes a menu item
 ///     menus                every key equivalent the menu bar claims
 ///     dark | light
 ///     hitch start | hitch stop <name>   frame gaps while running
@@ -83,13 +84,25 @@ enum DebugDriver {
             }
         case "state":
             let session = NSApp.keyWindow?.firstResponder.map { "\(type(of: $0))" } ?? "none"
-            let text = "destination=\(String(describing: model.destination)) responder=\(session) modal=\(NSApp.modalWindow != nil) sheets=\(NSApp.keyWindow?.sheets.count ?? -1) inspector=\(model.showsInspector) palette=\(model.isPaletteOpen) dispatching=\(model.isDispatching)\n"
+            let text = "destination=\(String(describing: model.destination)) responder=\(session) modal=\(NSApp.modalWindow != nil) sheets=\(NSApp.keyWindow?.sheets.count ?? -1) inspector=\(model.showsInspector) palette=\(model.isPaletteOpen) dispatching=\(model.isDispatching) adding=\(model.isAddingDaemon) current=\(model.currentSession != nil) escalations=\(model.currentSession?.escalations.count ?? -1) canApprove=\(model.currentSession?.escalations.first?.canApprove ?? false) grants=\(model.currentSession?.escalations.first?.grants.count ?? -1) live=\(model.currentSession?.isLive ?? false)\n"
             try? text.write(to: directory.appendingPathComponent("state.txt"), atomically: true, encoding: .utf8)
         case "activate":
             NSApp.activate()
             window?.makeKeyAndOrderFront(nil)
         case "deactivate":
             NSApp.deactivate()
+        case "menu":
+            // Invokes a menu item by title, the way a click on it does.
+            func find(_ menu: NSMenu) -> (NSMenu, Int)? {
+                for (index, item) in menu.items.enumerated() {
+                    if item.title == rest { return (menu, index) }
+                    if let sub = item.submenu, let hit = find(sub) { return hit }
+                }
+                return nil
+            }
+            if let main = NSApp.mainMenu, let (menu, index) = find(main) {
+                menu.performActionForItem(at: index)
+            }
         case "menus":
             // Lists every key equivalent the menu bar claims, to find collisions.
             var rows: [String] = []
@@ -156,7 +169,8 @@ enum DebugDriver {
     /// is looked up at run time because the SDK no longer exposes it, and a
     /// process may always read its own windows without screen-recording access.
     private static func capture(to url: URL) {
-        guard let window else { return }
+        // An open sheet is its own window, and it is what a person is looking at.
+        guard let window = window?.attachedSheet ?? window else { return }
         let handle = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW)
         guard let symbol = dlsym(handle, "CGWindowListCreateImage") else { return }
         let create = unsafeBitCast(symbol, to: WindowListCreateImage.self)

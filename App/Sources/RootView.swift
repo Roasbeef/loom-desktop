@@ -85,7 +85,7 @@ private struct DaemonMissingView: View {
                     }
                 }
             }
-            .buttonStyle(.glassProminent)
+            .buttonStyle(.borderedProminent)
             .keyboardShortcut(.defaultAction)
             .disabled(isStarting)
         }
@@ -158,7 +158,14 @@ private struct SidebarView: View {
             ForEach(sections, id: \.title) { section in
                 Section(section.title) {
                     ForEach(section.sessions) { record in
-                        SessionRow(record: record, activity: model.activity[record.id], placement: model.placement(of: record))
+                        SessionRow(
+                            record: record,
+                            activity: model.activity[record.id],
+                            placement: model.placement(of: record),
+                            ask: model.controller(for: record.id)?.escalations.first?.authorityLines.first,
+                            changed: model.daemon(holding: record.id)?.lastChanged[record.id],
+                            isUnseen: model.hasUnseenReply(record.id)
+                        )
                             .tag(Destination.session(record.id))
                             .sessionContextMenu(record: record)
                     }
@@ -242,14 +249,22 @@ private struct SessionRow: View {
     let record: SessionRecord
     let activity: SessionActivity?
     let placement: Placement?
+    var ask: String?
+    var changed: Date?
+    var isUnseen = false
 
     private var liveness: AgentCard.Liveness {
         Mission.liveness(session: record, activity: activity)
     }
 
-    private var preview: String? {
+    /// What the row should say first: the question if it has one, or else the
+    /// latest word from the agent.
+    private var preview: (text: String, isAsk: Bool)? {
+        if let ask {
+            return (ask, true)
+        }
         guard let line = activity?.lastMessage ?? record.subtitle, line != record.title else { return nil }
-        return Markdown.plainPreview(line)
+        return (Markdown.plainPreview(line), false)
     }
 
     var body: some View {
@@ -258,33 +273,42 @@ private struct SessionRow: View {
                 .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(record.title).lineLimit(1)
+                    Text(record.title)
+                        .lineLimit(1)
+                        .fontWeight(isUnseen ? .semibold : .regular)
                     Spacer(minLength: 2)
-                    Text(record.createdAt.compactAge)
-                        .font(.system(size: 10.5))
-                        .monospacedDigit()
-                        .foregroundStyle(.tertiary)
+                    if let changed {
+                        Text(changed.compactAge)
+                            .font(Theme.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(.tertiary)
+                    }
                 }
-                if let preview {
-                    Text(preview)
-                        .font(Theme.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                if let placement, placement.isSplit {
-                    Label(placement.hands, systemImage: "arrow.right")
-                        .labelStyle(.titleAndIcon)
-                        .font(.system(size: 10.5).monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    if let preview {
+                        Text(preview.text)
+                            .font(Theme.caption)
+                            .foregroundStyle(preview.isAsk ? AnyShapeStyle(Theme.attention) : AnyShapeStyle(.secondary))
+                            .lineLimit(1)
+                            .truncationMode(preview.isAsk ? .middle : .tail)
+                    }
+                    Spacer(minLength: 0)
+                    if let placement, placement.isSplit {
+                        Text("→ \(placement.hands)")
+                            .font(Theme.meta)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
                 }
                 if let movingTo = record.movingTo {
-                    Text("Moving to \(movingTo)").font(Theme.meta).foregroundStyle(Theme.attention)
+                    Text("Moving to \(movingTo)").font(Theme.caption).foregroundStyle(Theme.attention)
                 }
             }
         }
         .padding(.vertical, 2)
         .accessibilityElement(children: .combine)
+        .accessibilityValue(isUnseen ? "New reply" : "")
     }
 }
 
@@ -314,7 +338,7 @@ private struct DaemonFooter: View {
                         if let status = daemon.status {
                             CapacityMeter(used: status.resident, capacity: status.capacity)
                         }
-                        Text(model.daemons.count > 1 ? daemon.label : "\(daemon.status?.resident ?? 0) of \(daemon.status?.capacity ?? 0) running")
+                        Text(model.daemons.count > 1 ? daemon.label : "\(daemon.status?.resident ?? 0) of \(daemon.status?.capacity ?? 0) slots")
                             .lineLimit(1)
                         Spacer(minLength: 0)
                         if let deployment = daemon.deployment, deployment.isDistributed, deployment.state != "ok" {
@@ -328,7 +352,7 @@ private struct DaemonFooter: View {
                 }
             }
         }
-        .font(Theme.meta)
+        .font(Theme.caption)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -405,7 +429,7 @@ struct DispatchSheet: View {
                 }
                 if !options.isEmpty {
                     Picker("Tools run on", selection: $placement) {
-                        Text(daemon?.label ?? "This machine").tag(PlacementChoice.local)
+                        Text(daemon?.isRemote == true ? daemon?.label ?? "That machine" : "This Mac").tag(PlacementChoice.local)
                         ForEach(options) { option in
                             Text(describe(option))
                                 .tag(option.choice)
@@ -436,13 +460,13 @@ struct DispatchSheet: View {
             Divider()
 
             HStack {
-                Text("⌘↩ to dispatch").font(Theme.caption).foregroundStyle(.tertiary)
+                Text(dispatchHint).font(Theme.caption).foregroundStyle(.tertiary)
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(isSending ? "Dispatching…" : "Dispatch", action: send)
                     .keyboardShortcut(.return, modifiers: .command)
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.borderedProminent)
                     .disabled(isSending || workspace.isEmpty || prompt.isEmpty)
             }
             .padding(14)
@@ -506,6 +530,13 @@ struct DispatchSheet: View {
             TextField("Workspace", text: $workspace, prompt: Text("Name registered on that machine"))
                 .font(.system(size: 12).monospaced())
         }
+    }
+
+    /// Says why the button is disabled, rather than leaving a person to guess.
+    private var dispatchHint: String {
+        if prompt.isEmpty { return "Describe the work to dispatch." }
+        if workspace.isEmpty { return "Choose a workspace to dispatch." }
+        return "⌘↩ to dispatch"
     }
 
     private func describe(_ option: PlacementOption) -> String {

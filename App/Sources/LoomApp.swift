@@ -61,8 +61,6 @@ struct LoomApp: App {
 private struct LoomCommands: Commands {
     let model: AppModel
 
-    private var session: SessionController? { model.currentSession }
-
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
             Button("New Agent…") { model.isDispatching = true }
@@ -92,32 +90,41 @@ private struct LoomCommands: Commands {
             Divider()
             Button("Next Session Needing You") { model.goToNextNeedingYou() }
                 .keyboardShortcut("j")
-                .disabled(model.attention.isEmpty)
         }
         CommandMenu("Session") {
-            // These answer the first card on screen, which is the record the person
-            // is looking at, so the echo still states what was displayed.
-            Button("Allow Request") {
-                if let session, let record = session.escalations.first { session.approve(record) }
-            }
-            .keyboardShortcut("a", modifiers: [.command, .shift])
-            .disabled(session?.escalations.first?.canApprove != true)
-            Button("Deny Request") {
-                if let session, let record = session.escalations.first { session.deny(record) }
-            }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
-            .disabled(session?.escalations.isEmpty != false)
-            Divider()
-            Button("Stop Run") { session?.abort() }
-                .keyboardShortcut(".")
-                .disabled(session?.isBusy != true)
-            Button("Find in Transcript") { session?.isSearching = true }
-                .keyboardShortcut("f")
-                .disabled(session == nil)
-            Button("Refresh Changes") { session?.requestDiff() }
-                .keyboardShortcut("r", modifiers: [.command, .shift])
-                .disabled(session == nil)
+            SessionMenuItems(model: model)
         }
+    }
+}
+
+/// The Session menu's items. They stay enabled and check at the moment they run,
+/// because SwiftUI does not refresh a menu item's enabled state from observable
+/// model changes, and a stale disabled item would swallow the shortcut.
+private struct SessionMenuItems: View {
+    let model: AppModel
+
+    private var session: SessionController? { model.currentSession }
+
+    var body: some View {
+        // These answer the first card on screen, which is the record the person
+        // is looking at, so the echo still states what was displayed.
+        Button("Allow Request") {
+            if let session, let record = session.escalations.first, record.canApprove { session.approve(record) }
+        }
+        .keyboardShortcut("a", modifiers: [.command, .shift])
+        Button("Deny Request") {
+            if let session, let record = session.escalations.first { session.deny(record) }
+        }
+        .keyboardShortcut("d", modifiers: [.command, .shift])
+        Divider()
+        Button("Stop Run") {
+            if session?.isBusy == true { session?.abort() }
+        }
+            .keyboardShortcut(".")
+        Button("Find in Transcript") { session?.isSearching = true }
+            .keyboardShortcut("f")
+        Button("Refresh Changes") { session?.requestDiff() }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
     }
 }
 
@@ -170,6 +177,7 @@ final class Announcer {
             while true {
                 try? await Task.sleep(for: .seconds(1))
                 update(model.attention)
+                model.recordFirstReplies()
             }
         }
     }

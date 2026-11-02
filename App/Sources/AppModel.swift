@@ -101,6 +101,10 @@ final class DaemonConnection: Identifiable {
     private(set) var activity: [String: SessionActivity] = [:]
     private(set) var attached: [String: SessionController] = [:]
 
+    /// When this client last saw each session's activity change. The daemon reports
+    /// no such time, so this is an observation, absent until a change is seen.
+    private(set) var lastChanged: [String: Date] = [:]
+
     private var endpoint: DaemonEndpoint?
     private var control: ControlClient?
     private var loop: Task<Void, Never>?
@@ -199,7 +203,12 @@ final class DaemonConnection: Identifiable {
         self.status = status
         let sorted = sessions.sorted { $0.createdAt > $1.createdAt }
         if self.sessions != sorted { self.sessions = sorted }
-        if self.activity != activity { self.activity = activity }
+        if self.activity != activity {
+            for (id, row) in activity where self.activity[id] != nil && self.activity[id] != row {
+                lastChanged[id] = Date()
+            }
+            self.activity = activity
+        }
 
         // An approval count says only that a record exists, so a session asking
         // for one gets a lane in order to read the record the inbox must show.
@@ -373,6 +382,37 @@ final class AppModel {
         return daemons.flatMap(\.elsewhere).filter { group in
             !group.sessions.allSatisfy { known.contains($0.id) } || group.sessions.isEmpty
         }
+    }
+
+    /// The last reply a person saw in each session, kept across launches. A session
+    /// whose latest reply differs finished something while they were away.
+    private(set) var seenReplies: [String: String] = UserDefaults.standard.dictionary(forKey: "seenReplies") as? [String: String] ?? [:]
+
+    func hasUnseenReply(_ sessionID: String) -> Bool {
+        guard let reply = activity[sessionID]?.lastMessage else { return false }
+        if case .session(sessionID) = destination { return false }
+        guard let seen = seenReplies[sessionID] else { return false }
+        return seen != reply
+    }
+
+    /// Takes the first reply seen from each session as already read. A session that
+    /// has never been looked at is not news, or every row would shout on first launch.
+    func recordFirstReplies() {
+        var changed = false
+        for (id, row) in activity where seenReplies[id] == nil {
+            if let reply = row.lastMessage {
+                seenReplies[id] = reply
+                changed = true
+            }
+        }
+        if changed { UserDefaults.standard.set(seenReplies, forKey: "seenReplies") }
+    }
+
+    /// Records what the open session shows, called as its activity changes.
+    func markSeen(_ sessionID: String) {
+        guard let reply = activity[sessionID]?.lastMessage, seenReplies[sessionID] != reply else { return }
+        seenReplies[sessionID] = reply
+        UserDefaults.standard.set(seenReplies, forKey: "seenReplies")
     }
 
     /// The session the main window shows, which the Session menu acts on.
@@ -579,8 +619,12 @@ final class SessionController {
     /// second, and laying out text for each one would drop frames for no gain.
     private func scheduleStreamFlush() {
         guard streamFlush == nil else { return }
+        // Layout grows with the reply, so a very long reply updates less often
+        // rather than dropping frames. Nobody reads at thirty updates a second.
+        let length = conversation.streams[focusedStrand]?.text.utf8.count ?? 0
+        let pace = length > 16_000 ? 100 : length > 4_000 ? 60 : 33
         streamFlush = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(33))
+            try? await Task.sleep(for: .milliseconds(pace))
             guard let self else { return }
             self.streamFlush = nil
             self.setStream()
@@ -651,8 +695,8 @@ final class SessionController {
 
     /// Answers with the record the person is looking at, captured by the view.
     /// A stale answer is refused by sequence, and the next cut redraws it.
-    func approve(_ record: Escalation) {
-        perform { lane in _ = try await lane.approve(record) }
+    func approve(_ record: Escalation, remember: Bool = false) {
+        perform { lane in _ = try await lane.approve(record, remember: remember) }
     }
 
     func deny(_ record: Escalation) {

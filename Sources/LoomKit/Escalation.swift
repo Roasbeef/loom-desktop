@@ -53,6 +53,19 @@ public struct Escalation: Sendable, Equatable, Identifiable {
         self.outsideCeiling = outsideCeiling
     }
 
+    /// Whether a session-wide approval is on offer. It matches the reference client:
+    /// only filesystem grants and full network persist, and a mixed request stays
+    /// once-only so the app never promises to remember part of what it showed.
+    public var canRemember: Bool {
+        canApprove && grants.allSatisfy { grant in
+            switch grant["type"]?.string {
+            case "writable_root", "readable_root": return true
+            case "network": return grant["network"]?["mode"]?.string == "full"
+            default: return false
+            }
+        }
+    }
+
     /// Translates one durable grant, discriminated by `grant`, to its wire
     /// form, discriminated by `type`.
     ///

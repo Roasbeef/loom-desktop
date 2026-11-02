@@ -74,7 +74,7 @@ private struct NotRunning: View {
                         }
                     }
                 }
-                .buttonStyle(.glassProminent)
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .disabled(isOpening)
             }
@@ -113,6 +113,9 @@ private struct LiveSession: View {
             }
             .navigationTitle(record.title)
             .navigationSubtitle(subtitle)
+            .onChange(of: model.activity[record.id]?.lastMessage, initial: true) {
+                model.markSeen(record.id)
+            }
             .searchable(text: $query, isPresented: $controller.isSearching, placement: .toolbar, prompt: "Find in transcript")
             .inspector(isPresented: $model.showsInspector) {
                 SessionInspector(record: record, controller: controller, placement: placement)
@@ -170,6 +173,7 @@ private struct TranscriptView: View {
     let query: String
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isAtBottom = true
+    @State private var viewport: CGFloat = 0
 
     private var visibleBlocks: [TranscriptBlock] {
         guard !query.isEmpty else { return controller.blocks }
@@ -203,9 +207,14 @@ private struct TranscriptView: View {
             }
             .frame(maxWidth: Theme.contentWidth, alignment: .leading)
             .padding(.horizontal, 28)
-            .padding(.top, 20)
+            .padding(.top, 28)
             .padding(.bottom, 14)
             .frame(maxWidth: .infinity)
+
+            // A short conversation starts at the top and follows the bottom only once
+            // it overflows, so a new session does not float under empty space. This
+            // is a minimum, so a long transcript still has its full height to scroll.
+            .frame(minHeight: viewport, alignment: .top)
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
@@ -216,6 +225,9 @@ private struct TranscriptView: View {
         } action: { _, atBottom in
             isAtBottom = atBottom
         }
+        // Layout geometry excludes the toolbar and composer insets, and it reports at
+        // once, before anything has scrolled.
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { viewport = $0 }
         .overlay(alignment: .bottom) {
             if !isAtBottom {
                 Button {
@@ -285,7 +297,7 @@ struct RowView: View {
                         .textSelection(.enabled)
                         .padding(.horizontal, 13)
                         .padding(.vertical, 9)
-                        .background(Theme.tintStrong, in: .rect(cornerRadius: 14))
+                        .background(Theme.tintStrong, in: .rect(cornerRadius: Theme.radius))
                     if let author, author != "Owner" {
                         Text(author).font(Theme.meta).foregroundStyle(.secondary)
                     }
@@ -358,6 +370,14 @@ private struct ActivityGroup: View {
                     Text(ToolSummary.describe(rows))
                         .font(Theme.label)
                         .foregroundStyle(.secondary)
+                        .layoutPriority(1)
+                    if !isOpen, let target = ToolSummary.firstTarget(rows) {
+                        Text(target)
+                            .font(Theme.meta)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
@@ -497,7 +517,7 @@ private struct OutputBlock: View {
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
             Text(text)
-                .font(.system(size: 11.5).monospaced())
+                .font(Theme.code)
                 .foregroundStyle(tint)
                 .lineSpacing(2)
                 .textSelection(.enabled)
@@ -507,7 +527,7 @@ private struct OutputBlock: View {
         }
         .frame(maxHeight: 260)
         .fixedSize(horizontal: false, vertical: true)
-        .surface(radius: 8)
+        .surface(radius: Theme.radiusInner)
     }
 }
 
@@ -606,10 +626,13 @@ private struct ComposerStack: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .glassEffect(.regular.tint(Theme.attention.opacity(0.18)), in: .rect(cornerRadius: 12))
+                    .glassEffect(.regular.tint(Theme.attention.opacity(0.18)), in: .rect(cornerRadius: Theme.radius))
                 }
+                // The card is flat, as it is everywhere, on one plain piece of glass
+                // that keeps it legible over the transcript scrolling beneath it.
                 ForEach(controller.escalations) { escalation in
                     ApprovalCard(record: escalation, controller: controller)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Theme.radiusFloating))
                 }
                 if !controller.remoteChildren.isEmpty {
                     RemoteAgentsStrip(controller: controller)
@@ -626,7 +649,7 @@ private struct ComposerStack: View {
                     .font(Theme.caption)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
-                    .glassEffect(.regular, in: .rect(cornerRadius: 12))
+                    .glassEffect(.regular, in: .rect(cornerRadius: Theme.radius))
                 }
                 if let error = controller.lastError {
                     Text(error)
@@ -720,7 +743,7 @@ private struct Composer: View {
         .padding(.horizontal, 14)
         .padding(.top, 11)
         .padding(.bottom, 8)
-        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .glassEffect(.regular, in: .rect(cornerRadius: Theme.radiusFloating))
         .onAppear { isFocused = true }
     }
 
@@ -749,78 +772,105 @@ struct ApprovalCard: View {
     let controller: SessionController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "hand.raised.fill")
+                    .font(.system(size: 12))
                     .foregroundStyle(Theme.attention)
-                Text("Allow \(Text(record.tool.isEmpty ? "an unnamed tool" : record.tool).font(.body.monospaced().weight(.semibold)))?")
-                    .font(.system(size: 14, weight: .medium))
-                Spacer()
-                Group {
-                    if !record.strand.isEmpty { Text(StrandName.display(record.strand)) }
-                    if let placement = record.placement { Text("@ \(placement)") }
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(record.authorityLines, id: \.self) { line in
+                        Text(line)
+                            .font(.system(size: 13, weight: .semibold).monospaced())
+                            .textSelection(.enabled)
+                    }
+                    if record.authorityLines.isEmpty {
+                        Text("Allow this call?").font(.system(size: 13, weight: .semibold))
+                    }
+                    HStack(spacing: 6) {
+                        Text(record.tool.isEmpty ? "unnamed tool" : record.tool).font(Theme.meta)
+                        if !record.strand.isEmpty { Text("· \(StrandName.display(record.strand))") }
+                        if let placement = record.placement { Text("· @ \(placement)") }
+                    }
+                    .font(Theme.caption)
+                    .foregroundStyle(.secondary)
                 }
-                .font(Theme.meta)
-                .foregroundStyle(.secondary)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
-                ForEach(record.authorityLines, id: \.self) { line in
-                    Text(line).font(.system(size: 12.5, weight: .medium).monospaced()).textSelection(.enabled)
-                }
-                if !record.outsideCeiling.isEmpty {
+            if !record.reason.isEmpty {
+                Text(record.reason).font(Theme.caption).foregroundStyle(.secondary)
+            }
+            if !record.outsideCeiling.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
                     Text("Also requested, beyond what this session may grant, so an approval will not include it:")
                         .font(Theme.caption)
                         .foregroundStyle(Theme.attention)
-                        .padding(.top, 3)
                     ForEach(record.outsideCeiling, id: \.self) { line in
-                        Text(line).font(.system(size: 12).monospaced()).foregroundStyle(.secondary)
+                        Text(line).font(Theme.code).foregroundStyle(.secondary)
                     }
                 }
-                if record.untranslatableGrants > 0 {
-                    Text("\(record.untranslatableGrants) more this version of the app cannot show.")
-                        .font(Theme.caption)
-                        .foregroundStyle(Theme.failure)
-                }
+            }
+            if record.untranslatableGrants > 0 {
+                Text("\(record.untranslatableGrants) more this version of the app cannot show.")
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.failure)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
-                ScrollView {
-                    Text(record.safePreview.isEmpty ? "(no preview)" : record.safePreview)
-                        .font(.system(size: 11.5).monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(9)
-                }
-                .frame(maxHeight: 96)
-                .fixedSize(horizontal: false, vertical: true)
-                .background(Color(nsColor: .textBackgroundColor).opacity(0.72), in: .rect(cornerRadius: 8))
-                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.hairline, lineWidth: 0.5))
-                Text("A sample of the call, written by the model. The approval covers the whole action.")
-                    .font(Theme.caption)
-                    .foregroundStyle(.secondary)
+            // The preview stays on screen, as protocol section 5.10 asks of consent:
+            // it is the only view of what the call does beyond the authority it wants.
+            ScrollView {
+                Text(record.safePreview.isEmpty ? "(no preview)" : record.safePreview)
+                    .font(Theme.code)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
             }
+            .frame(maxHeight: 96)
+            .fixedSize(horizontal: false, vertical: true)
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.6), in: .rect(cornerRadius: Theme.radiusInner))
+            .overlay(RoundedRectangle(cornerRadius: Theme.radiusInner).strokeBorder(Theme.hairline, lineWidth: 0.5))
 
             HStack(spacing: 8) {
-                if !record.reason.isEmpty {
-                    Text(record.reason)
-                        .font(Theme.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                Spacer()
-                Button("Deny") { controller.deny(record) }
-                    .buttonStyle(.glass)
-                    .help("Deny (⇧⌘D)")
-                Button("Allow") { controller.approve(record) }
-                    .buttonStyle(.glassProminent)
-                    .tint(Theme.grant)
-                    .disabled(!record.canApprove)
-                    .help("Allow once (⇧⌘A)")
+                Text("A sample of the call, written by the model. Allowing covers the whole action.")
+                    .font(Theme.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                ApprovalButtons(record: record, controller: controller)
             }
         }
-        .padding(14)
-        .glassEffect(.regular.tint(Theme.attention.opacity(0.14)), in: .rect(cornerRadius: 18))
+        .padding(13)
+        .background(Theme.attention.opacity(0.09), in: .rect(cornerRadius: Theme.radiusFloating))
+        .overlay(RoundedRectangle(cornerRadius: Theme.radiusFloating).strokeBorder(Theme.attention.opacity(0.4), lineWidth: 1))
+    }
+}
+
+/// The answers to a request, the same wherever one is shown. Remembering a grant
+/// widens it past this one call, so that choice sits behind the menu rather than
+/// beside a single click.
+struct ApprovalButtons: View {
+    let record: Escalation
+    let controller: SessionController
+
+    var body: some View {
+        Button("Deny") { controller.deny(record) }
+            .buttonStyle(.bordered)
+            .help("Deny (⇧⌘D)")
+        Button("Allow") { controller.approve(record) }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.grant)
+            .disabled(!record.canApprove)
+            .help("Allow once (⇧⌘A)")
+        if record.canRemember {
+            Menu {
+                Button("Allow for This Session") { controller.approve(record, remember: true) }
+                    .help("Keeps this authority for the session, across restarts.")
+            } label: {
+                Image(systemName: "chevron.down")
+            }
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("More ways to allow")
+            .accessibilityLabel("More ways to allow")
+        }
     }
 }
 
@@ -845,7 +895,7 @@ private struct RemoteAgentsStrip: View {
                 .buttonStyle(.plain)
             }
         }
-        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        .glassEffect(.regular, in: .rect(cornerRadius: Theme.radiusFloating))
     }
 }
 
@@ -1069,7 +1119,7 @@ private struct AgentsPane: View {
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
-                    .background(strand.id == controller.focusedStrand ? Theme.tintStrong : .clear, in: .rect(cornerRadius: 7))
+                    .background(strand.id == controller.focusedStrand ? Theme.tintStrong : .clear, in: .rect(cornerRadius: Theme.radiusInner))
                     .contentShape(.rect)
                 }
                 .buttonStyle(.plain)

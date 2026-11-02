@@ -168,7 +168,11 @@ public enum Mission {
         activity: [String: SessionActivity],
         placement: (SessionRecord) -> Placement? = { _ in nil }
     ) -> [AgentCard] {
-        sessions.map { session -> AgentCard in
+        sessions.filter { session in
+            // A reservation with no failure never became a session a person can use.
+            if case .reserved(nil) = session.state { return false }
+            return true
+        }.map { session -> AgentCard in
             let row = activity[session.id]
             let lines = (row?.glances ?? []).map {
                 AgentCard.Line(id: $0.strand, label: $0.title, text: $0.summary)

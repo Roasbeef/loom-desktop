@@ -19,8 +19,6 @@ struct MissionControlView: View {
         let allCards = model.cards
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                SummaryStrip()
-
                 let waiting = model.attention
                 if !waiting.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
@@ -44,7 +42,7 @@ struct MissionControlView: View {
                         Text("Dispatch one to start working. It keeps running here if you close this window.")
                     } actions: {
                         Button("New Agent") { model.isDispatching = true }
-                            .buttonStyle(.glassProminent)
+                            .buttonStyle(.borderedProminent)
                             .keyboardShortcut(.defaultAction)
                     }
                     .frame(maxWidth: .infinity, minHeight: 320)
@@ -67,6 +65,23 @@ struct MissionControlView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Mission Control")
+        .toolbar {
+            ToolbarItem(placement: .status) {
+                HStack(spacing: 10) {
+                    ForEach(model.daemons) { daemon in
+                        if let status = daemon.status {
+                            HStack(spacing: 6) {
+                                CapacityMeter(used: status.resident, capacity: status.capacity)
+                                Text(model.daemons.count > 1 ? "\(daemon.label) \(status.resident)/\(status.capacity)" : "\(status.resident) of \(status.capacity) slots")
+                                    .font(Theme.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+            }
+        }
     }
 
     @ViewBuilder
@@ -108,42 +123,6 @@ private struct SectionTitle: View {
     }
 }
 
-/// Counts across the fleet, and how full each daemon is.
-private struct SummaryStrip: View {
-    @Environment(AppModel.self) private var model
-
-    var body: some View {
-        let cards = model.cards
-        HStack(alignment: .firstTextBaseline, spacing: 26) {
-            stat("Need you", cards.filter { $0.liveness == .needsYou }.count, .needsYou)
-            stat("Working", cards.filter { $0.liveness == .working }.count, .working)
-            stat("Idle", cards.filter { $0.liveness == .idle }.count, .idle)
-            Spacer()
-            ForEach(model.daemons) { daemon in
-                if let status = daemon.status {
-                    HStack(spacing: 8) {
-                        CapacityMeter(used: status.resident, capacity: status.capacity)
-                        Text(model.daemons.count > 1 ? "\(daemon.label) \(status.resident)/\(status.capacity)" : "\(status.resident) of \(status.capacity) slots")
-                            .font(Theme.meta)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-    }
-
-    private func stat(_ label: String, _ count: Int, _ liveness: AgentCard.Liveness) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 7) {
-            Text("\(count)")
-                .font(.system(size: 28, weight: .semibold, design: .rounded).monospacedDigit())
-                .foregroundStyle(count > 0 && liveness == .needsYou ? liveness.color : Color.primary)
-                .contentTransition(.numericText())
-            Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
 /// An item waiting on a person. An approval can be answered right here, because
 /// sending someone elsewhere to press one button is the interruption this avoids.
 private struct NeedsYouRow: View {
@@ -163,7 +142,7 @@ private struct NeedsYouRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text(item.agent).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    Text(item.kind.title).font(Theme.meta).foregroundStyle(Theme.attention)
+                    Text(item.kind.title).font(Theme.caption).foregroundStyle(Theme.attention)
                 }
                 Text(summary)
                     .font(.system(size: 12))
@@ -173,12 +152,7 @@ private struct NeedsYouRow: View {
             }
             Spacer(minLength: 12)
             if let escalation {
-                Button("Deny") { escalation.controller.deny(escalation.record) }
-                    .buttonStyle(.glass)
-                Button("Allow") { escalation.controller.approve(escalation.record) }
-                    .buttonStyle(.glassProminent)
-                    .tint(Theme.grant)
-                    .disabled(!escalation.record.canApprove)
+                ApprovalButtons(record: escalation.record, controller: escalation.controller)
             }
             Button {
                 open()
@@ -229,7 +203,9 @@ private struct AgentStrip: View {
         HStack(spacing: 12) {
             StatusDot(liveness: card.liveness)
             VStack(alignment: .leading, spacing: 2) {
-                Text(card.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Text(card.name)
+                    .font(.system(size: 13, weight: model.hasUnseenReply(card.sessionID) ? .semibold : .regular))
+                    .lineLimit(1)
                 if !digest.isEmpty {
                     Text(digest).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                 }
@@ -239,6 +215,12 @@ private struct AgentStrip: View {
             if card.liveness == .working {
                 HeartbeatTrace(liveness: card.liveness)
             }
+
+            Text(model.daemon(holding: card.sessionID)?.lastChanged[card.sessionID]?.compactAge ?? "")
+                .font(Theme.caption)
+                .monospacedDigit()
+                .foregroundStyle(.tertiary)
+                .frame(width: 40, alignment: .trailing)
 
             Text(card.placement?.label ?? card.context)
                 .font(Theme.meta)
@@ -368,7 +350,7 @@ private struct AttentionDetail: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(item.kind.title).font(Theme.meta).foregroundStyle(Theme.attention)
+                    Text(item.kind.title).font(Theme.caption).foregroundStyle(Theme.attention)
                     Text(item.title).font(.title3.weight(.semibold)).textSelection(.enabled)
                     HStack(spacing: 8) {
                         Text(item.agent)
@@ -388,12 +370,12 @@ private struct AttentionDetail: View {
                         MarkdownView(source: item.detail)
                     }
                     Button("Open Session") { model.destination = .session(sessionID) }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.bordered)
                         .keyboardShortcut(.return, modifiers: .command)
                 case .machine:
                     Text(item.detail).font(Theme.body).textSelection(.enabled)
                     Button("Open Machines") { model.destination = .machines }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.bordered)
                 }
             }
             .padding(24)
@@ -441,7 +423,10 @@ struct CommandPalette: View {
             all.append(.init(
                 id: "session/\(record.id)",
                 title: record.title,
-                subtitle: model.placement(of: record)?.label ?? record.workspaceName,
+                subtitle: {
+                    if let placement = model.placement(of: record), placement.isSplit { return placement.label }
+                    return record.workspaceName
+                }(),
                 icon: "text.bubble",
                 liveness: state,
                 hint: nil
