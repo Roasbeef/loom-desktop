@@ -524,15 +524,19 @@ def reasoning_is_live_then_settled(c):
 
 @scenario("TR-17")
 def a_program_draws_as_a_card(c):
-    """A code_mode call opens to its program and what it did."""
+    """A code_mode call opens to its outcome, the calls it made, its program and its result."""
     c.app.dispatch("Run a program card", WORKSPACE)
     c.app.open_session("Run a program card")
     c.app.transcript_has("The program has run", 40)
     settle(c)
     c.app.press(fold_titles(c)[0])
-    c.app.press("Ran a program import cap/fs")
-    c.app.see(r"Program: ")
-    c.app.see(r"Program · 5 lines")
+    c.app.press(name_starting(c, "Ran a program"))
+    c.app.see(r"Program: Ran 1 command")
+    c.app.see(r"^completed$")
+    c.app.see(r"^1 call$")
+    c.app.see(r"^proc\.run$")
+    c.app.see(r"Program · \d+ lines")
+    c.app.see(r"program-ran")
 
 
 @scenario("TR-29")
@@ -613,7 +617,7 @@ def menu_allows_the_first_request(c):
     wait_for(lambda: not c.app.session()["escalations"], what="the approval to clear")
 
 
-@scenario()
+@scenario("AP-06")
 def allow_for_session_stops_the_next_prompt(c):
     """Remembering a grant means the same write does not ask again."""
     sid = pending_approval(c, "Remember")
@@ -676,7 +680,8 @@ def bar_figures_and_tabs(c):
 @scenario("CX-01", "CX-02", "CX-03", "CX-04", "CX-05", "CX-07", needs_display=True)
 def context_figure_and_breakdown(c):
     """The bar says how full the window is, and its breakdown explains it and can compact."""
-    run_session(c, "Context", "demo please", "Retry budget is now per host")
+    # One reply leaves nothing to cut, since the newest reply always stays, so the refusal below holds.
+    run_session(c, "Context", "check", "scripted")
     wait_for(lambda: c.app.session().get("context", "").startswith("ctx ~"), 20, "the context figure")
     c.app.press("Context window")
     c.app.see(r"Context window ~", 10)
@@ -1009,6 +1014,7 @@ def machines_lists_each_node(c):
 # their own file, imported here so they run before the faults damage the cluster.
 import scenarios_lifecycle  # noqa: E402,F401
 import scenarios_admin  # noqa: E402,F401
+import scenarios_transcript  # noqa: E402,F401
 
 
 # Faults. These run last among the functional scenarios, since they damage the cluster.
@@ -1097,6 +1103,11 @@ def an_executor_loss_is_reported(c):
     c.app.see("box is down")
 
 
+# The drain returns held prompts and ends the orchestrator, then starts it again, so it runs
+# after the executor fault and before the faults that expect the orchestrator to be up.
+import scenarios_drain  # noqa: E402,F401
+
+
 @scenario("PA-11")
 def a_session_says_why_it_ended(c):
     """When the daemon is lost, the open session says it is disconnected and why."""
@@ -1116,5 +1127,6 @@ def a_daemon_loss_recovers(c):
     c.app.go("mission")
 
     # The monkey may have hidden the sidebar, which is where the footer says this.
-    c.app.menu("Show Sidebar")
+    if not c.app.snap()["showsSidebar"]:
+        c.app.menu("Toggle Sidebar")
     c.app.see("unavailable")

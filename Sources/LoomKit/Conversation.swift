@@ -92,6 +92,14 @@ public struct ChildPeek: Sendable, Equatable {
     public let next: Int?
 }
 
+/// A held prompt the daemon returned while it drained.
+public struct ReturnedDraft: Sendable, Equatable {
+    public let strand: String
+    public let text: String
+    /// Images the prompt carried, which do not come back with the text.
+    public let attachmentCount: Int
+}
+
 /// An approval that was answered.
 public struct Decision: Sendable, Equatable {
     public let id: String
@@ -118,6 +126,24 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
         case agentReport(child: String, outcome: String, report: String)
         /// A decided approval, from the session's ledger.
         case decision(tool: String, summary: String, outcome: String)
+        /// The memory context the daemon attached to a run: a notes index nobody typed.
+        case memory(lines: Int, text: String)
+        /// A message another session's strand sent. The daemon stored it and checked its
+        /// origin, and does not know that it was read.
+        case peer(session: String, strand: String, text: String)
+        /// A message another strand of this session sent through the Agency, with the
+        /// framing removed and a spawn brief's result contract apart from the sender's words.
+        case sibling(strand: String, text: String, trailer: String?)
+        /// Advisor traffic, which the harness wrote as a user turn.
+        case advisor(frame: AdvisorFrame, body: String)
+
+        /// Whether this row starts a turn of its own: something asked the strand to act.
+        public var opensTurn: Bool {
+            switch self {
+            case .user, .peer, .sibling, .advisor: return true
+            default: return false
+            }
+        }
     }
 
     public let id: String
@@ -133,10 +159,15 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
     public var tookMs: Int?
     /// Images the message carried, which the row names but does not draw.
     public var images = 0
+    /// The images of a message or a tool result, with the bytes the record held.
+    public var pictures: [ImageBlock] = []
     /// The structured result a tool returned beside its text.
     public var details: JSONValue?
     /// The record's place in the session's sequence, which orders decisions among rows.
     public var seq: Int?
+    /// What the request that wrote this message read and wrote of the prompt cache.
+    /// Only the first row of an assistant message carries it.
+    public var cache: CacheUse?
 
     public init(id: String, kind: Kind, callID: String? = nil, at: Int? = nil) {
         self.id = id
@@ -272,6 +303,16 @@ public struct Conversation: Sendable, Equatable {
     public private(set) var signals: [String: Int] = [:]
     /// Spend by children on other orchestrators, from the metadata document.
     public private(set) var remoteUsage: [RemoteUsage] = []
+    /// Prompts a draining daemon handed back, for the host to put in the editor.
+    /// Each is the prompt's last copy, so the host empties the list as it takes them.
+    public private(set) var returnedDrafts: [ReturnedDraft] = []
+    /// The summarizer's labels for long reasoning blocks, by `entry/block`, which is also the
+    /// id of the reasoning row. They are the summarizer's words and never the agent's.
+    public private(set) var summaries: [String: String] = [:]
+    /// Blocks already asked about on this attachment, so a block with no label is asked once.
+    private var askedSummaries: Set<String> = []
+    /// How fast each strand last generated, timed from this client's own observation.
+    public private(set) var generation = GenerationRate()
 
     /// Moves when what `rows` would return may have changed, so a host can keep
     /// its projection until then and a streamed token never rebuilds it.
@@ -330,6 +371,9 @@ public struct Conversation: Sendable, Equatable {
         }
         if landed || metadataChanged { revision += 1 }
 
+        // A request already running at attach is one this client saw only the end of.
+        if !wasAdopted { generation.attached(busy: strands.filter(\.isBusy).map(\.id)) }
+
         // An ended stream stays drawn until its durable entry lands, or the
         // reply would vanish for the moment between `end` and this cut.
         if landed {
@@ -361,9 +405,17 @@ public struct Conversation: Sendable, Equatable {
     }
 
     /// Folds one uncorrelated frame. An unknown event is ignored by rule.
-    public mutating func apply(push frame: EventEnvelope) {
+    public mutating func apply(push frame: EventEnvelope, now: Int = Int(Date().timeIntervalSince1970 * 1000)) {
         switch frame.event {
+        case "usage_observation", "usage":
+            if let strand = frame.body["strand"]?.string {
+                let usage = frame.body["last_usage"] ?? frame.body["usage"]
+                generation.settle(strand: strand, output: usage?["output"]?.int ?? 0, now: now)
+            }
         case "stream_delta":
+            if let strand = frame.body["strand"]?.string, let id = frame.body["generation"]?.string, frame.body["kind"]?.string != "end" {
+                generation.fragment(strand: strand, generation: id, now: now)
+            }
             applyDelta(frame.body)
         case "presence":
             peers = (frame.body["peers"]?.array ?? []).compactMap(Self.peer)
@@ -371,11 +423,31 @@ public struct Conversation: Sendable, Equatable {
             if let call = frame.body["call_id"]?.string, let tail = frame.body["tail"]?.string {
                 toolTails[call] = tail
             }
+        case "block_summary":
+            if frame.body["subject"]?.string == "block", let entry = frame.body["entry"]?.string,
+               let block = frame.body["block"]?.int, let text = frame.body["text"]?.string {
+                summaries["\(entry)/\(block)"] = text
+                revision += 1
+            }
+        case "held_input_returned":
+            // The daemon is draining and gives each held prompt back unsent
+            // (protocol-change/038), so the text is retained before the socket closes.
+            returnedDrafts.append(ReturnedDraft(
+                strand: frame.body["strand"]?.string ?? "main",
+                text: frame.body["text"]?.string ?? "",
+                attachmentCount: frame.body["attachment_count"]?.int ?? 0
+            ))
         case "goal_changed", "proposals_changed", "evolution_changed":
             signals[frame.event, default: 0] += 1
         case "snapshot":
             if let mode = frame.body["mode"]?.string { surfaces[mode] = frame.body }
             switch frame.body["mode"]?.string {
+            case "block_summaries":
+                for row in frame.body["board"]?["summaries"]?.array ?? [] {
+                    if let entry = row["entry"]?.string, let block = row["block"]?.int, let text = row["text"]?.string {
+                        summaries["\(entry)/\(block)"] = text
+                    }
+                }
             case "context":
                 switch ContextBoard.reading(frame.body["board"]) {
                 case .ready(let board):
@@ -401,6 +473,27 @@ public struct Conversation: Sendable, Equatable {
         default:
             break
         }
+    }
+
+    /// The reasoning blocks long enough to be labelled that have neither a label nor a read
+    /// in flight, at most the protocol's 32. Asking marks them, so a block the daemon has
+    /// no label for is not asked about again on this attachment.
+    public mutating func takeWantedSummaries(in rows: [TranscriptRow]) -> [(entry: String, block: Int)] {
+        var wanted: [(entry: String, block: Int)] = []
+        for row in rows {
+            guard case .thinking(let text) = row.kind, text.utf8.count >= 512, summaries[row.id] == nil,
+                  !askedSummaries.contains(row.id), wanted.count < 32,
+                  let slash = row.id.lastIndex(of: "/"), let block = Int(row.id[row.id.index(after: slash)...]) else { continue }
+            askedSummaries.insert(row.id)
+            wanted.append((String(row.id[..<slash]), block))
+        }
+        return wanted
+    }
+
+    /// Hands over the returned prompts and forgets them.
+    public mutating func takeReturnedDrafts() -> [ReturnedDraft] {
+        defer { returnedDrafts = [] }
+        return returnedDrafts
     }
 
     /// Clears the connection-level errors already shown.
@@ -598,7 +691,7 @@ public struct Conversation: Sendable, Equatable {
     /// not held, and `hasOlder` says more can be paged in. Walking the chain
     /// rather than sorting by sequence is what keeps another strand's entries
     /// and an abandoned branch out of this transcript.
-    public func rows(strand: String) -> [TranscriptRow] {
+    public func rows(strand: String, clearedThrough: Int? = nil) -> [TranscriptRow] {
         guard let leaf = strands.first(where: { $0.id == strand })?.leaf else { return [] }
 
         var chain: [JSONValue] = []
@@ -609,9 +702,15 @@ public struct Conversation: Sendable, Equatable {
         }
         var rows = Self.rows(ordered: Array(chain.reversed()))
 
+        // `/clear` hides what this client had already drawn. The records stay in
+        // the session, so another client and a reopened window still show them.
+        if let clearedThrough {
+            rows.removeAll { ($0.seq ?? Int.max) <= clearedThrough }
+        }
+
         // A decision stands among the rows by the sequence of its record, so it
         // reads where the person answered and not at the end.
-        for decision in decisions.values.filter({ $0.strand == strand || $0.strand.isEmpty }).sorted(by: { $0.seq < $1.seq }) {
+        for decision in decisions.values.filter({ ($0.strand == strand || $0.strand.isEmpty) && $0.seq > (clearedThrough ?? -1) }).sorted(by: { $0.seq < $1.seq }) {
             let row = TranscriptRow(
                 id: "decision/\(decision.id)",
                 kind: .decision(tool: decision.tool, summary: decision.summary, outcome: decision.outcome),
@@ -631,11 +730,32 @@ public struct Conversation: Sendable, Equatable {
         var rows: [TranscriptRow] = []
         var toolIndex: [String: Int] = [:]
         var previous: Int?
+        var lastCache: (use: CacheUse, at: Int)?
         for entry in entries {
+            let before = rows.count
             append(entry, previous: previous, to: &rows, toolIndex: &toolIndex)
             previous = entry["timestamp"]?.int ?? previous
+
+            // A miss is noticed after the request that paid for it, and its row
+            // stands just before that request's reply.
+            if rows.count > before, let use = CacheUse(entry["message"]?["usage"]),
+               entry["message"]?["role"]?.string == "assistant", use.readsContext, let at = entry["timestamp"]?.int {
+                rows[before].cache = use
+                if let held = lastCache,
+                   let miss = CacheWatch.detect(previous: held.use, previousAt: held.at, current: use, currentAt: at) {
+                    var notice = TranscriptRow(id: "\(rows[before].id)/cache-miss", kind: .notice(text: miss.words), at: at)
+                    notice.seq = rows[before].seq
+                    rows.insert(notice, at: before)
+                }
+                lastCache = (use, at)
+            }
         }
         return rows
+    }
+
+    /// The highest record sequence this strand's chain holds, which `/clear` hides through.
+    public func newestSeq(strand: String) -> Int? {
+        rows(strand: strand).compactMap(\.seq).max()
     }
 
     /// The strand's todo board: the newest successful `todo` result on its chain.
@@ -765,11 +885,23 @@ public struct Conversation: Sendable, Equatable {
             // The harness writes its own notes into the conversation as user
             // turns with no author. Drawing one as a person's message would put
             // words in their mouth.
-            if author == nil, body.hasPrefix("[loom] ") {
+            let kind = origin?["kind"]?.string
+            if let lines = MemoryContext.lines(in: body) {
+                rows.append(.init(id: id, kind: .memory(lines: lines, text: body)))
+            } else if kind == "peer", let session = origin?["session"]?.string, let strand = origin?["strand"]?.string {
+                rows.append(.init(id: id, kind: .peer(session: session, strand: strand, text: body)))
+            } else if kind == "strand" || (kind == nil && origin?["name"] == nil && origin?["strand"]?.string != nil),
+                      let sender = origin?["strand"]?.string {
+                let framed = StrandFraming.strip(body, sender: sender)
+                rows.append(.init(id: id, kind: .sibling(strand: sender, text: framed.body, trailer: framed.trailer)))
+            } else if origin == nil || origin == .null, let advisor = AdvisorFrame.read(body) {
+                rows.append(.init(id: id, kind: .advisor(frame: advisor.frame, body: advisor.body)))
+            } else if author == nil, body.hasPrefix("[loom] ") {
                 rows.append(.init(id: id, kind: .notice(text: String(body.dropFirst(7)))))
             } else {
                 var row = TranscriptRow(id: id, kind: .user(text: body, author: author))
                 row.images = images
+                row.pictures = ImageBlock.read(blocks: blocks, rowID: id)
                 rows.append(row)
             }
 
@@ -822,6 +954,8 @@ public struct Conversation: Sendable, Equatable {
                 )
                 row.settledAt = at
                 row.details = details
+                row.pictures = ImageBlock.read(blocks: blocks, rowID: row.id)
+                row.seq = rows[index].seq
                 rows[index] = row
 
                 if name == "agent_spawn", !failed, let child = details?["strand"]?.string {
@@ -832,6 +966,7 @@ public struct Conversation: Sendable, Equatable {
                         at: row.at
                     )
                     spawned.settledAt = at
+                    spawned.seq = row.seq
                     rows[index] = spawned
                 }
                 if name == "agent_wait", !failed {

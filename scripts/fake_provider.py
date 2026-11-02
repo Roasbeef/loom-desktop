@@ -17,14 +17,25 @@ keyword in the last user turn selects a script:
   heartbeat  creates a recurring schedule with `schedule_create`
   commitwork writes a file and commits it, for the committed-in-this-session patch
   backgroundjob starts a background shell job that outlives the run
+  longthink  streams six long lines of reasoning, over 512 bytes, then answers
   think      streams three lines of reasoning, a second apart, then answers
   tour       a write, a command and a read that fails, then a short answer
   program    a code_mode call with a small program
+  advisenudge the advisor answers the review of this turn with a nudge
+  peersend   sends a message to the session whose id is in the prompt, with `peer_send`
+  spawnagent starts a subagent with `agent_spawn`, waits for its report, then answers
+  stopmid    one finished step, then a reply that hangs, for a turn the person stops
+  readpicture reads pixel.png from the workspace, which returns an image
+  slowstep   a shell command that runs for several seconds, for a step still going
+  cachehit   an ordinary reply whose usage reports a large cached prefix
+  cachemiss  an ordinary reply whose usage reports that prefix billed again
+  markdown   a reply with an alert, a footnote, a link and a diagram
 
 Anything else streams a short markdown reply. A tool result continues whichever
 script produced the call.
 """
 import json
+import re
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -96,11 +107,66 @@ LONG = " ".join(
 )
 
 
+PROGRAM = """import cap/proc
+import cap/report
+
+pub fn main() -> report.Outcome {
+  case proc.run(proc.command(["/bin/sh", "-c", "echo program-ran"])) {
+    Ok(output) -> report.text(output.stdout)
+    Error(_) -> report.failure("the command did not run")
+  }
+}
+"""
+
+MARKDOWN = """> [!WARNING]
+> The budget resets on a timer, so check the clock first.
+
+The design is in the notes[^1], and the docs are at [the Loom site](https://example.com/loom) and [a script](javascript:alert(1)).
+
+[^1]: The notes live in the session store.
+
+```mermaid
+graph TD
+  A[Prompt] --> B[Reply]
+```"""
+
+
+def last_tool_text(messages):
+    for message in reversed(messages):
+        if message.get("role") == "tool":
+            content = message.get("content", "")
+            return content if isinstance(content, str) else json.dumps(content)
+    return ""
+
+
+INJECTED = ("Notes saved in this repository", "Images from tool call", "Human author (name and principal")
+
+
+def prompt_text(message):
+    """What a person wrote in a user message, or an empty string. The daemon puts its own
+    text in user messages too: the notes index at run start, the image message after a tool
+    returns one, and the author line. Those parts can share a message with the prompt or
+    stand alone, and neither carries the keyword the prompt does."""
+    if message.get("role") != "user":
+        return ""
+    content = message.get("content", "")
+    if isinstance(content, str):
+        parts = [content]
+    else:
+        parts = [part.get("text", "") for part in content if part.get("type") == "text"]
+    return json.dumps([part for part in parts if not part.startswith(INJECTED)]) if any(
+        part and not part.startswith(INJECTED) for part in parts) else ""
+
+
+def is_prompt(message):
+    return bool(prompt_text(message))
+
+
 def steps_taken(messages):
-    """Counts tool results since the last user turn."""
+    """Counts tool results since the last prompt."""
     count = 0
     for message in reversed(messages):
-        if message.get("role") == "user":
+        if is_prompt(message):
             break
         if message.get("role") == "tool":
             count += 1
@@ -109,8 +175,8 @@ def steps_taken(messages):
 
 def last_user_text(messages):
     for message in reversed(messages):
-        if message.get("role") == "user":
-            return json.dumps(message.get("content", ""))
+        if is_prompt(message):
+            return prompt_text(message)
     return ""
 
 
@@ -122,7 +188,74 @@ def script(messages):
     # The advisor is fed a digest of the primary's turn, which repeats the
     # primary's own words. It must not act them out a second time.
     if "[advisor feed" in prompt:
-        yield from text_stream("Nothing to add.")
+        # A nudge is wanted only when the primary's prompt, rendered into the feed, asks for one.
+        if "advisenudge" in prompt and steps == 0:
+            yield call(0, "advise", {"verdict": "nudge", "text": "Check the per-host budget once more before you finish."})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("Nothing to add.")
+        return
+
+    if "peersend" in prompt:
+        if steps == 0:
+            target = re.search(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", prompt)
+            yield call(0, "peer_send", {
+                "session": target.group(0) if target else "missing", "strand": "main",
+                "message_id": "peer-msg-1", "text": "Review found a missing cancellation check.",
+            })
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The message is sent.")
+        return
+
+    if "spawnagent" in prompt:
+        if steps == 0:
+            yield chunk({"content": "I will hand the survey to a subagent."})
+            yield call(0, "agent_spawn", {"purpose": "survey files", "brief": "Name one file in the workspace and reply with a single short sentence."})
+            yield chunk({}, "tool_calls")
+        elif steps == 1:
+            handle = re.search(r"sub:[^\s\"#]+#[A-Za-z0-9_-]+", last_tool_text(messages))
+            yield call(0, "agent_wait", {"handles": [handle.group(0) if handle else "missing"], "within_ms": 60000})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The subagent has reported.")
+        return
+
+    if "stopmid" in prompt:
+        if steps == 0:
+            yield call(0, "bash", {"command": "echo first-step"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield chunk({"content": "Working on it. "})
+            time.sleep(30)
+            yield chunk({}, "stop")
+        return
+
+    if "readpicture" in prompt:
+        if steps == 0:
+            yield call(0, "fs_read", {"path": "pixel.png"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("I looked at the picture.")
+        return
+
+    if "slowstep" in prompt:
+        if steps == 0:
+            yield call(0, "bash", {"command": "sleep 7; echo slow-step-done"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The slow step finished.")
+        return
+
+    if "markdown" in prompt:
+        yield from text_stream(MARKDOWN)
+        return
+
+    if "longthink" in prompt:
+        for number in range(6):
+            yield chunk({"reasoning_content": f"Step {number}: weigh the per-host retry budget against the shared worker pool, and check what a dead host costs. " * 2 + "\n"})
+            time.sleep(0.3)
+        yield from text_stream("After a long think, the answer is **forty-two**.")
         return
 
     if "think" in prompt:
@@ -149,7 +282,7 @@ def script(messages):
 
     if "program" in prompt:
         if steps == 0:
-            yield call(0, "code_mode", {"program": "import cap/fs\n\npub fn main() {\n  fs.read(\"README.md\")\n}\n", "within_ms": 5000})
+            yield call(0, "code_mode", {"program": PROGRAM, "within_ms": 20000})
             yield chunk({}, "tool_calls")
         else:
             yield from text_stream("The program has run.")
@@ -270,6 +403,17 @@ def script(messages):
     )
 
 
+def usage_for(prompt):
+    """Token counts for a reply. A cached prefix is what the app's cache outlook reads."""
+    if "cachehit" in prompt:
+        return {"prompt_tokens": 12500, "completion_tokens": 300, "total_tokens": 12800,
+                "prompt_tokens_details": {"cached_tokens": 12000}}
+    if "cachemiss" in prompt:
+        return {"prompt_tokens": 12500, "completion_tokens": 300, "total_tokens": 12800,
+                "prompt_tokens_details": {"cached_tokens": 0}}
+    return {"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500}
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -299,7 +443,7 @@ class Handler(BaseHTTPRequestHandler):
         # has token counts and the configured price turns them into an estimate.
         usage = {"id": "chatcmpl-fake", "object": "chat.completion.chunk", "created": int(time.time()),
                  "model": "fake", "choices": [],
-                 "usage": {"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500}}
+                 "usage": usage_for(last_user_text(request.get("messages", [])))}
         self.wfile.write(f"data: {json.dumps(usage)}\n\n".encode())
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()

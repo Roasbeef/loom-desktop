@@ -111,10 +111,16 @@ enum DebugDriver {
             let json = rest.dropFirst(parts[1].count).trimmingCharacters(in: .whitespaces)
             let body = (try? JSONValue.parse(Data((json.isEmpty ? "{}" : json).utf8))) ?? .object([:])
             model.currentSession?.run(String(parts[1]), body: body)
+        case "shutdown":
+            // Asks the first daemon to drain, which hands every held prompt back.
+            do { try await model.daemons.first?.control?.shutdown() } catch { reply = "error: \(error.localizedDescription)" }
         case "stopall":
             // Frees every daemon slot, so one scenario cannot starve the next, and
             // closes the inspector, so the next one starts from the default layout.
             model.showsInspector = false
+
+            // A scenario that failed with a sheet open must not swallow the next one's typing.
+            if let sheet = window?.attachedSheet { window?.endSheet(sheet) }
             for daemon in model.daemons {
                 for record in daemon.sessions where record.state.isResident {
                     try? await daemon.stop(record.id)
@@ -216,6 +222,32 @@ enum DebugDriver {
             ComposerModel.debugSendDelay = Int(parts[1]).flatMap { $0 > 0 ? Duration.milliseconds($0) : nil }
         case "pasteimage" where parts.count > 1:
             pasteImage(at: rest)
+        case "staleapprove":
+            // Answers the pending request with a copy whose sequence is one behind, as a
+            // card does when the record moved after it was drawn.
+            if let controller = model.currentSession, let record = controller.escalations.first {
+                controller.approve(Escalation(
+                    id: record.id, seq: record.seq - 1, status: record.status, strand: record.strand, tool: record.tool,
+                    action: record.action, preview: record.preview, reason: record.reason, source: record.source, grants: record.grants
+                ))
+            }
+        case "attachfile" where parts.count > 1:
+            // Attaches a file through the same vetting a drop uses, whatever its name says.
+            if let data = FileManager.default.contents(atPath: rest) {
+                model.currentSession?.composer.attach(data, name: URL(fileURLWithPath: rest).lastPathComponent)
+            } else {
+                reply = "error: cannot read \(rest)"
+            }
+        case "peerlink" where parts.count > 2:
+            // Lets the first session message the second one's main strand and wake it.
+            do {
+                try await model.daemons.first?.control?.linkPeers(sessionID: parts[1], strand: "main", targetSession: parts[2], targetStrand: "main", wakes: true)
+            } catch {
+                reply = "error: \(error.localizedDescription)"
+            }
+        case "asrole" where parts.count > 1:
+            // Draws the open session as an attachment of this role would see it.
+            model.currentSession?.debugRole = parts[1] == "none" ? nil : parts[1]
         case "approve" where parts.count > 1:
             if let controller = model.controller(for: parts[1]), let record = controller.escalations.first {
                 controller.approve(record)
@@ -418,6 +450,7 @@ enum Snapshot {
             "showsInspector": model.showsInspector,
             "appearance": model.appearance.rawValue,
             "effectiveAppearance": NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light",
+            "showsSidebar": model.sidebarVisibility != .detailOnly,
             "isMultiMachine": model.isMultiMachine,
             "isDaemonMissing": model.isDaemonMissing,
             "attention": model.attention.map { ["id": $0.id, "kind": $0.kind.title, "agent": $0.agent, "title": $0.title] },
@@ -474,13 +507,18 @@ enum Snapshot {
                         case .spawned(let child, let purpose): return "spawned \(child) \(purpose)"
                         case .agentReport(let child, let outcome, let report): return "report \(child) \(outcome) \(report)"
                         case .decision(let tool, let summary, let outcome): return "decision \(outcome) \(tool) \(summary)"
+                        case .memory(let lines, _): return MemoryContext.summary(lines: lines)
+                        case .peer(let session, let strand, let text): return "peer \(session.prefix(8)) \(strand) \(text)"
+                        case .sibling(let strand, let text, _): return "sibling \(strand) \(text)"
+                        case .advisor(let frame, let body): return "\(frame.label) \(body)"
                         }
                     }
                 },
                 "folds": session.blocks.compactMap { block -> [String: Any]? in
                     guard case .fold(let fold) = block else { return nil }
                     return ["title": fold.title, "steps": fold.steps, "files": fold.files, "failed": fold.failed, "live": fold.isLive,
-                            "added": fold.added, "removed": fold.removed, "rows": fold.rows.count]
+                            "added": fold.added, "removed": fold.removed, "rows": fold.rows.count, "interrupted": fold.isInterrupted,
+                            "details": fold.rows.compactMap { $0.details?.compactText }]
                 },
                 "focusedStrand": session.focusedStrand,
                 "hasOlder": session.hasOlder,
@@ -491,6 +529,12 @@ enum Snapshot {
                 "pendingDrafts": session.composer.ledger.lines.map(\.text),
                 "draft": session.composer.draft,
                 "images": session.composer.images.map(\.name),
+                "pictures": session.blocks.flatMap { block -> [String] in
+                    switch block {
+                    case .row(let row): return row.pictures.map(\.caption)
+                    case .fold(let fold): return fold.rows.flatMap { $0.pictures.map(\.caption) }
+                    }
+                },
                 "userImages": session.blocks.reduce(0) { total, block in
                     if case .row(let row) = block { return total + row.images }
                     return total
@@ -502,6 +546,22 @@ enum Snapshot {
                 "btwStatus": session.showsSideQuestion ? session.surfaces["btw"]?["board"]?["status"]?.string ?? "" : "",
                 "editing": session.composer.editing?.text ?? "",
                 "models": session.catalogue.models,
+                "outputRate": session.outputRate ?? 0,
+                "pushedEvents": session.pushedEvents,
+                "isObserver": session.isObserver,
+                "senders": session.blocks.compactMap { block -> String? in
+                    if case .row(let row) = block, case .user(_, let author) = row.kind { return author }
+                    return nil
+                },
+                "summaries": session.surfaces["block_summaries"]?.compactText ?? "",
+                "thinkingIDs": session.blocks.flatMap { block -> [String] in
+                    guard case .fold(let fold) = block else { return [] }
+                    return fold.rows.compactMap { if case .thinking = $0.kind { return $0.id }; return nil }
+                },
+                "to": StrandName.display(session.focusedStrand),
+                "who": session.who ?? "",
+                "cacheOutlook": session.cacheOutlook(at: Date()) ?? "",
+                "peers": session.peers.map { "\($0.name) · \($0.role)" },
             ]
         }
         body["sidebar"] = SidebarSnapshot.encode(model)

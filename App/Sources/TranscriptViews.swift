@@ -1,3 +1,4 @@
+import AppKit
 import LoomKit
 import Markup
 import SwiftUI
@@ -9,6 +10,7 @@ import SwiftUI
 struct FoldView: View {
     let fold: Fold
     let tails: [String: String]
+    var summaries: [String: String] = [:]
     @State private var userOpened: Bool?
 
     private var isOpen: Bool { userOpened ?? fold.isLive }
@@ -52,7 +54,7 @@ struct FoldView: View {
             if isOpen {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(fold.rows) { row in
-                        FoldRow(row: row, tail: row.callID.flatMap { tails[$0] })
+                        FoldRow(row: row, tail: row.callID.flatMap { tails[$0] }, summary: summaries[row.id])
                     }
                 }
                 .padding(.leading, 22)
@@ -92,13 +94,14 @@ struct ChangeCounts: View {
 struct FoldRow: View {
     let row: TranscriptRow
     let tail: String?
+    var summary: String?
 
     var body: some View {
         switch row.kind {
         case .tool:
             StepRow(row: row, tail: tail)
         case .thinking(let text):
-            ReasoningRow(text: text, tookMs: row.tookMs)
+            ReasoningRow(text: text, tookMs: row.tookMs, summary: summary)
         case .assistant(let text):
             // Prose the strand wrote between steps is narration, so it is drawn
             // quieter than the answer.
@@ -109,6 +112,148 @@ struct FoldRow: View {
         default:
             RowView(row: row)
         }
+    }
+}
+
+/// The notes index the daemon attached to a run, closed to one line. Opening it shows
+/// the text the model was given, which the person did not write.
+struct MemoryRow: View {
+    let lines: Int
+    let text: String
+    @State private var isOpen = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "brain").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(MemoryContext.summary(lines: lines)).font(Theme.label).foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(MemoryContext.summary(lines: lines))
+            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+            if isOpen {
+                OutputBlock(text: text, tint: .secondary)
+            }
+        }
+    }
+}
+
+/// A message another session's strand sent here. The head names the sender, and the
+/// word under it is the daemon's, not the sender's: the origin was checked and the
+/// message stored, which is all the daemon knows. Reply drafts an answer in the
+/// composer, and Open goes to the sender's session when this app holds it.
+struct PeerCard: View {
+    @Environment(AppModel.self) private var model
+    let session: String
+    let strand: String
+    let text: String
+
+    private var sender: SessionRecord? { model.sessions.first { $0.id == session } }
+    private var name: String { sender?.title ?? String(session.prefix(8)) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.left.arrow.right").font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text("Peer · \(name) · \(strand)").font(Theme.label).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text("Origin checked by the daemon").font(Theme.meta).foregroundStyle(.tertiary)
+            }
+            Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                Button("Reply to Peer") {
+                    model.currentSession?.composer.draft = "Reply to \(name) (session \(session), strand \(strand)): "
+                }
+                .accessibilityLabel("Reply to Peer")
+                if sender != nil {
+                    Button("Open \(name)") { model.destination = .session(session) }
+                        .accessibilityLabel("Open \(name)")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(radius: Theme.radiusInner)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// A message another strand of this session sent through the Agency. There is no peer
+/// link behind it, so it has no receipt and no Reply. A spawn brief's result contract is
+/// the harness's instruction, so it follows the sender's words as a second block.
+struct SiblingCard: View {
+    let strand: String
+    let text: String
+    let trailer: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("From strand \(StrandName.display(strand))").font(Theme.label).foregroundStyle(.secondary)
+            Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            if let trailer {
+                Text(trailer).font(Theme.caption).foregroundStyle(.tertiary).textSelection(.enabled).lineLimit(6)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(radius: Theme.radiusInner)
+    }
+}
+
+/// Advisor traffic: advice and nudges the primary received, a goal continuation, and the
+/// feed the advisor reads. The label is a fixed word. The body is the advisor's, drawn as
+/// plain text, and a feed stays closed because it is context and not a message to anyone.
+struct AdvisorLine: View {
+    let frame: AdvisorFrame
+    let text: String
+    @State private var isOpen = false
+
+    private var isClosed: Bool { frame == .feed || frame == .continuation }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if isClosed {
+                Button {
+                    withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "eye").font(.system(size: 11)).foregroundStyle(.tertiary)
+                        Text(frame.label).font(Theme.label).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isOpen ? 90 : 0))
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(frame.label)
+                .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+                if isOpen { OutputBlock(text: text, tint: .secondary) }
+            } else {
+                HStack(spacing: 6) {
+                    Image(systemName: "eye").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(frame.label).font(Theme.label).foregroundStyle(.secondary)
+                }
+                Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface(radius: Theme.radiusInner)
     }
 }
 
@@ -217,6 +362,9 @@ struct StepRow: View {
         if parts.name != "code_mode", let result = parts.result, !result.isEmpty {
             OutputBlock(text: result, tint: parts.isError ? Theme.failure : .primary)
         }
+        if !row.pictures.isEmpty {
+            PictureStrip(pictures: row.pictures)
+        }
     }
 
     /// The change counts, spoken ahead of the open state.
@@ -246,6 +394,36 @@ struct StepRow: View {
         case "code_mode": return "curlybraces"
         case _ where name.hasPrefix("agent_"): return "person.2"
         default: return "wrench.and.screwdriver"
+        }
+    }
+}
+
+/// The images a message or a tool result carried, each with a line giving its type,
+/// its size in pixels and its weight. A picture whose bytes are not the type the
+/// record declared is not drawn, and the line says so.
+struct PictureStrip: View {
+    let pictures: [ImageBlock]
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            ForEach(pictures) { picture in
+                VStack(alignment: .leading, spacing: 4) {
+                    if picture.isDrawable, let image = NSImage(data: picture.data) {
+                        Image(nsImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxWidth: 220, maxHeight: 160, alignment: .leading)
+                            .clipShape(.rect(cornerRadius: Theme.radiusInner))
+                            .overlay(RoundedRectangle(cornerRadius: Theme.radiusInner).strokeBorder(Theme.hairline, lineWidth: 0.5))
+                            .accessibilityHidden(true)
+                    }
+                    Text(picture.caption)
+                        .font(Theme.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Image, \(picture.caption)")
+            }
         }
     }
 }
@@ -343,6 +521,8 @@ struct OutputBlock: View {
 struct ReasoningRow: View {
     let text: String
     let tookMs: Int?
+    /// The summarizer's label for a long block. It is drawn as the summarizer's, never as the agent's.
+    let summary: String?
     @State private var isOpen = false
 
     private var preview: String {
@@ -367,7 +547,11 @@ struct ReasoningRow: View {
                     Image(systemName: "brain").foregroundStyle(.tertiary).frame(width: 14)
                     Text("Thought").font(Theme.label).foregroundStyle(.secondary)
                     if !isOpen {
-                        Text(preview).font(Theme.caption).foregroundStyle(.tertiary).lineLimit(1)
+                        if let summary {
+                            Text("Summarized: \(summary)").font(Theme.caption).foregroundStyle(.tertiary).lineLimit(2)
+                        } else {
+                            Text(preview).font(Theme.caption).foregroundStyle(.tertiary).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 4)
                     Text(figures).font(Theme.meta).foregroundStyle(.tertiary)
@@ -380,7 +564,7 @@ struct ReasoningRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Thought, \(figures)")
-            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+            .accessibilityValue((summary.map { "Summarized: \($0). " } ?? "") + (isOpen ? "Expanded" : "Collapsed"))
 
             if isOpen {
                 Text(text)

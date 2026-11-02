@@ -37,6 +37,15 @@ struct Composer: View {
                 .scrollIndicators(.hidden)
             }
 
+            // Which strand a message goes to, above the editor and not only in its hint.
+            HStack(spacing: 5) {
+                Text("To").foregroundStyle(.tertiary)
+                Text(StrandName.display(controller.focusedStrand)).foregroundStyle(.secondary)
+            }
+            .font(Theme.meta)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("To \(StrandName.display(controller.focusedStrand))")
+
             TextField(placeholder(busy), text: $composer.draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(Theme.body)
@@ -96,6 +105,9 @@ struct Composer: View {
                         Text(cost, format: .currency(code: "USD").precision(.fractionLength(2)))
                     }
                     ComposerFigures(controller: controller)
+                    if let who = controller.who {
+                        Text(who).accessibilityLabel("Acting as").accessibilityValue(who)
+                    }
                     if controller.peers.count > 1 {
                         Label("\(controller.peers.count)", systemImage: "person.2")
                             .help(controller.peers.map { "\($0.name) (\($0.role))" }.joined(separator: ", "))
@@ -184,6 +196,10 @@ struct Composer: View {
         .onAppear {
             isFocused = true
             PasteBridge.install()
+        }
+        // Closing the side question panel leaves nothing focused, so the editor takes it back.
+        .onChange(of: controller.showsSideQuestion) {
+            if !controller.showsSideQuestion { isFocused = true }
         }
         .onChange(of: isFocused, initial: true) {
             if isFocused { PasteBridge.target = composer }

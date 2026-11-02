@@ -272,6 +272,14 @@ extension TranscriptBlock {
                 return search(child) || search(report)
             case .decision(let tool, let summary, _):
                 return search(tool) || search(summary)
+            case .memory(_, let text):
+                return search(text)
+            case .peer(let session, let strand, let text):
+                return search(session) || search(strand) || search(text)
+            case .sibling(let strand, let text, let trailer):
+                return search(strand) || search(text) || search(trailer ?? "")
+            case .advisor(let frame, let body):
+                return search(frame.label) || search(body)
             }
         }
         switch self {
@@ -290,7 +298,7 @@ private struct BlockView: View {
         case .row(let row):
             RowView(row: row)
         case .fold(let fold):
-            FoldView(fold: fold, tails: controller.toolTails)
+            FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries)
         }
     }
 }
@@ -318,9 +326,13 @@ struct RowView: View {
                         Label("\(row.images) image\(row.images == 1 ? "" : "s")", systemImage: "photo")
                             .font(Theme.caption)
                             .foregroundStyle(.secondary)
+                        PictureStrip(pictures: row.pictures)
                     }
-                    if let author, author != "Owner" {
-                        Text(author).font(Theme.meta).foregroundStyle(.secondary)
+                    if let author {
+                        // The role is the same fixed word for every message, because only a
+                        // person who may operate can send one, and the record does not say
+                        // in which capacity the sender was attached.
+                        Text("\(author) · operator").font(Theme.meta).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -334,7 +346,7 @@ struct RowView: View {
                 }
                 .onHover { isHovering = $0 }
         case .thinking(let text):
-            ReasoningRow(text: text, tookMs: row.tookMs)
+            ReasoningRow(text: text, tookMs: row.tookMs, summary: nil)
         case .tool:
             StepRow(row: row, tail: nil)
         case .spawned(let child, let purpose):
@@ -343,6 +355,14 @@ struct RowView: View {
             AgentReportLine(child: child, outcome: outcome, report: report)
         case .decision(let tool, let summary, let outcome):
             DecisionLine(tool: tool, summary: summary, outcome: outcome)
+        case .memory(let lines, let text):
+            MemoryRow(lines: lines, text: text)
+        case .peer(let session, let strand, let text):
+            PeerCard(session: session, strand: strand, text: text)
+        case .sibling(let strand, let text, let trailer):
+            SiblingCard(strand: strand, text: text, trailer: trailer)
+        case .advisor(let frame, let body):
+            AdvisorLine(frame: frame, text: body)
         case .notice(let text):
             HStack(spacing: 10) {
                 VStack { Divider() }
@@ -413,7 +433,16 @@ private struct ComposerStack: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                 }
-                Composer(controller: controller)
+                if controller.isObserver {
+                    Text("You are watching this session. An observer cannot send messages or answer requests.")
+                        .font(Theme.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .glassEffect(.regular, in: .rect(cornerRadius: Theme.radiusFloating))
+                } else {
+                    Composer(controller: controller)
+                }
             }
         }
         .frame(maxWidth: Theme.contentWidth)
@@ -533,6 +562,15 @@ struct ApprovalButtons: View {
     var isArmed = true
 
     var body: some View {
+        if controller.isObserver {
+            Text("Only an operator can answer.").font(Theme.caption).foregroundStyle(.secondary)
+        } else {
+            buttons
+        }
+    }
+
+    @ViewBuilder
+    private var buttons: some View {
         Button("Deny") { controller.deny(record) }
             .buttonStyle(.bordered)
             .disabled(!isArmed)
@@ -545,7 +583,7 @@ struct ApprovalButtons: View {
         if record.canRemember, controller.role == "owner" {
             Menu {
                 Button("Allow for This Session") { controller.approve(record, remember: true) }
-                    .help("Keeps this authority for the session, across restarts.")
+                    .help(record.rememberedAuthority)
             } label: {
                 Image(systemName: "chevron.down")
             }

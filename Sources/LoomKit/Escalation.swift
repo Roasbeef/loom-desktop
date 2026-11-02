@@ -57,13 +57,29 @@ public struct Escalation: Sendable, Equatable, Identifiable {
     /// only filesystem grants and full network persist, and a mixed request stays
     /// once-only so the app never promises to remember part of what it showed.
     public var canRemember: Bool {
-        canApprove && grants.allSatisfy { grant in
+        // One unlimited-wall-clock grant is remembered for this exact action and not
+        // merged into the session's general sandbox authority (`approval.session_wall`).
+        if canApprove, hasSessionWallGrant { return true }
+        return canApprove && grants.allSatisfy { grant in
             switch grant["type"]?.string {
             case "writable_root", "readable_root": return true
             case "network": return grant["network"]?["mode"]?.string == "full"
             default: return false
             }
         }
+    }
+
+    /// Whether the whole request is one grant of unlimited wall-clock time.
+    public var hasSessionWallGrant: Bool {
+        guard grants.count == 1, let grant = grants.first else { return false }
+        return grant["type"]?.string == "limit" && grant["field"]?.string == "wall_seconds" && grant["value"]?.int == 0
+    }
+
+    /// What choosing "Allow for This Session" keeps, in the words the card shows.
+    public var rememberedAuthority: String {
+        hasSessionWallGrant
+            ? "Session approval permits only this exact action on this strand."
+            : "Session approval persists across restart."
     }
 
     /// Translates one durable grant, discriminated by `grant`, to its wire

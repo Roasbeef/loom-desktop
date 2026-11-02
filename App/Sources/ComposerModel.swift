@@ -86,7 +86,7 @@ final class ComposerModel {
     // MARK: Images
 
     func attach(_ data: Data, name: String) {
-        switch ImageAttachment.vet(data, name: name, already: images.count) {
+        switch ImageAttachment.vet(data, name: name, already: images.count, alreadyBytes: images.reduce(0) { $0 + $1.data.count }) {
         case .success(let image): images.append(image)
         case .failure(let refusal): notice = Notice(text: refusal.message, tone: .warning)
         }
@@ -304,8 +304,12 @@ final class ComposerModel {
                     controller.peek(child: found)
                 case .peekClose:
                     controller.endPeek()
-                case .clear, .approvals:
-                    say("That command is not available here yet.", .warning)
+                case .clear:
+                    controller.clearTranscript()
+                    say("Cleared this window. The session still holds the conversation.")
+                case .approvals(let id):
+                    let decided = await controller.decidedApprovals()
+                    say(Decision.ledgerWords(decided, matching: id))
                 case .empty, .prompt, .invalid:
                     break
                 }
@@ -313,6 +317,16 @@ final class ComposerModel {
                 say(Self.words(error), .warning)
             }
         }
+    }
+
+    /// Puts a prompt the daemon handed back into the editor, and says why it is there.
+    func restoreReturned(_ text: String, strand: String, attachments: Int) {
+        draft = DraftLedger.restoring(text, into: draft)
+        var words = "Your queued message for \(StrandName.display(strand)) came back because the daemon is stopping. It is in the editor."
+        if attachments > 0 {
+            words += " \(attachments) image\(attachments == 1 ? "" : "s") stayed behind, so attach \(attachments == 1 ? "it" : "them") again."
+        }
+        notice = Notice(text: words, tone: .warning)
     }
 
     // MARK: Words for replies

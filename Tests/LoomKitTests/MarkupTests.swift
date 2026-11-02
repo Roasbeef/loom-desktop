@@ -316,3 +316,37 @@ final class ProjectionPerformanceTests: XCTestCase {
         print("PROJECTION_5000_MS \(elapsed)")
     }
 }
+
+
+final class MarkdownParityTests: XCTestCase {
+    func testAnAlertNamesItsKindAndKeepsTheRestOfTheQuote() {
+        let blocks = Markdown.parse("> [!WARNING]\n> check the clock\n> twice\n\n> [!bogus]\n> plain")
+        XCTAssertEqual(blocks[0], .alert(kind: .warning, text: "check the clock\ntwice"))
+        XCTAssertEqual(blocks[1], .quote("[!bogus]\nplain"))
+        XCTAssertEqual(MarkdownBlock.AlertKind.caution.title, "Caution")
+    }
+
+    func testAFootnoteDefinitionIsABlockAndItsReferenceReadsInBrackets() {
+        XCTAssertEqual(Markdown.parse("[^1]: The notes live here."), [.footnote(label: "1", text: "The notes live here.")])
+        XCTAssertEqual(Markdown.footnoteReferences(in: "See notes[^1] and [^note]."), "See notes[1] and [note].")
+        XCTAssertEqual(Markdown.footnoteReferences(in: "[^1]: stays"), "[^1]: stays")
+        XCTAssertEqual(Markdown.footnoteReferences(in: "a [^ b] c"), "a [^ b] c")
+    }
+
+    func testAPlainAbsoluteWebAddressMayBeOpened() {
+        XCTAssertEqual(LinkRule.destination("https://example.com/a?b=1#c"), "https://example.com/a?b=1#c")
+        XCTAssertEqual(LinkRule.destination("HTTP://example.com"), "HTTP://example.com")
+    }
+
+    func testEveryOtherShapeOfDestinationIsRefused() {
+        let refused = [
+            "javascript:alert(1)", "file:///etc/passwd", "mailto:a@b.c", "//example.com", "example.com",
+            "https://user:pw@example.com/", "https://", "https://:8080/", "https://exa mple.com",
+            "https://example.com/\u{202E}evil", "https://example.com\\evil", "https://example.com/\u{0}",
+            "https://example.com/" + String(repeating: "a", count: 2100),
+        ]
+        for text in refused {
+            XCTAssertNil(LinkRule.destination(text), text)
+        }
+    }
+}

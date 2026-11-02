@@ -135,6 +135,32 @@ public struct Fold: Sendable, Equatable, Identifiable {
     public let endedAt: Int?
     /// The turn is still running, so the fold stays open for the reader.
     public let isLive: Bool
+    /// A response of the turn was aborted, or a command it ran was stopped on request.
+    /// The records say it was stopped and not what stopped it, so a steer, a Stop and
+    /// an abort all read the same.
+    public let isInterrupted: Bool
+
+    public init(id: String, rows: [TranscriptRow], startedAt: Int?, endedAt: Int?, isLive: Bool, isInterrupted: Bool = false) {
+        self.id = id
+        self.rows = rows
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.isLive = isLive
+        self.isInterrupted = isInterrupted
+    }
+
+    /// Whether a turn's rows say it was stopped: an aborted response leaves a notice,
+    /// and a command the broker cancelled records `cancelled` without `timed_out`,
+    /// because a deadline is a different ending.
+    public static func wasInterrupted(_ rows: [TranscriptRow]) -> Bool {
+        rows.contains { row in
+            switch row.kind {
+            case .notice: return row.id.hasSuffix("/stopped")
+            case .tool: return row.details?["cancelled"]?.bool == true && row.details?["timed_out"]?.bool != true
+            default: return false
+            }
+        }
+    }
 
     public var steps: Int { rows.filter { if case .tool = $0.kind { return true }; if case .spawned = $0.kind { return true }; return false }.count }
 
@@ -168,6 +194,7 @@ public struct Fold: Sendable, Equatable, Identifiable {
         if files > 0 { parts.append("\(files) file\(files == 1 ? "" : "s")") }
         let failed = failed
         if failed > 0 { parts.append("\(failed) failed") }
+        if isInterrupted { parts.append("interrupted") }
         let head = isLive ? "Working" : "Worked"
         return parts.isEmpty ? head : "\(head) \(parts.joined(separator: " · "))"
     }
@@ -210,7 +237,9 @@ public enum TranscriptBlock: Sendable, Equatable, Identifiable {
             turn = []
         }
         for row in rows {
-            if case .user = row.kind {
+            // The memory context follows the prompt it was attached to, so it joins
+            // that turn and opens none of its own, since nobody asked for it.
+            if row.kind.opensTurn {
                 flush(isLast: false)
                 inputAt = row.at
                 blocks.append(.row(row))
@@ -242,8 +271,7 @@ public enum TranscriptBlock: Sendable, Equatable, Identifiable {
         func folded(_ index: Int) -> Bool {
             if index == answer { return false }
             switch rows[index].kind {
-            case .thinking, .tool: return true
-            case .assistant: return true
+            case .thinking, .tool, .assistant, .memory: return true
             default: return false
             }
         }
@@ -254,12 +282,13 @@ public enum TranscriptBlock: Sendable, Equatable, Identifiable {
         var placed = false
         let members = inside.map { rows[$0] }
         let ended = members.compactMap { $0.settledAt ?? $0.at }.max()
-                let fold = Fold(
+        let fold = Fold(
             id: "fold/\(members.first?.id ?? "")",
             rows: members,
             startedAt: inputAt,
             endedAt: ended,
-            isLive: isLive || members.contains { if case .tool(_, _, nil, _) = $0.kind { return true }; return false }
+            isLive: isLive || members.contains { if case .tool(_, _, nil, _) = $0.kind { return true }; return false },
+            isInterrupted: Fold.wasInterrupted(rows)
         )
         for index in rows.indices {
             if folded(index) {

@@ -66,10 +66,12 @@ public struct ImageAttachment: Sendable, Equatable, Identifiable {
     public let mimeType: String
     public let data: Data
 
-    /// The most one image may weigh, as the daemon's own reader accepts.
+    /// The most all the images of one message may weigh together, which is the limit
+    /// the terminal client applies to a session lane. The web page's own 8 MiB bound
+    /// comes from its frame size, so it does not apply here.
     public static let byteLimit = 20_971_520
-    /// The most images one message carries.
-    public static let countLimit = 8
+    /// The most images one message carries, the same on every client.
+    public static let countLimit = 4
 
     /// Identifies the format from its magic bytes. A declared type is a claim
     /// and not evidence, so an extension or a pasteboard type is never trusted.
@@ -85,13 +87,15 @@ public struct ImageAttachment: Sendable, Equatable, Identifiable {
     }
 
     /// Vets one candidate, returning the attachment or the sentence that refuses it.
-    public static func vet(_ data: Data, name: String, already: Int) -> Result<ImageAttachment, ImageRefusal> {
-        guard already < countLimit else { return .failure(.init(message: "At most \(countLimit) images go in one message.")) }
+    public static func vet(_ data: Data, name: String, already: Int, alreadyBytes: Int = 0) -> Result<ImageAttachment, ImageRefusal> {
+        guard already < countLimit else {
+            return .failure(.init(message: "\(name) was not attached: \(countLimit) of \(countLimit) images are attached, which is the most one message carries."))
+        }
         guard let type = mimeType(of: data) else {
             return .failure(.init(message: "\(name) is not a PNG, JPEG, GIF or WebP image."))
         }
-        guard data.count <= byteLimit else {
-            return .failure(.init(message: "\(name) is larger than \(byteLimit / 1_048_576) MB."))
+        guard alreadyBytes + data.count <= byteLimit else {
+            return .failure(.init(message: "A message may attach at most \(byteLimit / 1_048_576) MiB of images, so \(name) was not attached."))
         }
         return .success(ImageAttachment(id: UUID(), name: name, mimeType: type, data: data))
     }
