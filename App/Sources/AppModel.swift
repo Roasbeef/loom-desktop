@@ -142,6 +142,12 @@ final class DaemonConnection: Identifiable {
         return nil
     }
 
+    /// Where an invitee redeems a claim: this daemon's address and the claim path.
+    /// It names no token, so it can be shown beside one.
+    var claimAddress: String? {
+        (try? endpoint?.url(path: "/v2/claim"))?.absoluteString
+    }
+
     func start() {
         guard loop == nil else { return }
         loop = Task { await self.run() }

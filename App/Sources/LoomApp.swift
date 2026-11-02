@@ -90,6 +90,7 @@ private struct LoomCommands: Commands {
             Divider()
             Button("Next Session Needing You") { model.goToNextNeedingYou() }
                 .keyboardShortcut("j")
+            Button("People…") { model.actions.showsPeople = true }
         }
         CommandMenu("Session") {
             SessionMenuItems(model: model)

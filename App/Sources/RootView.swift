@@ -268,6 +268,7 @@ private struct SessionContextMenu: ViewModifier {
             if !record.state.isResident {
                 Button("Delete…", role: .destructive) { model.askToDelete(record) }
             }
+            Button("Share…") { model.actions.sharing = record }
             Button("Move…") { model.askToMove(record) }
         }
     }

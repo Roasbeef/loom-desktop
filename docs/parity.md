@@ -309,10 +309,10 @@ The web page has no schedule surface beyond these two commands.
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
 | SH-01 | Viewers of the session, with roles | view/session_tab.gleam:171; sv:session_summary.gleam:132 | `presence` | code (SessionScreen.swift:1174 and :710) | 2 |
-| SH-02 | Invite as observer or operator | view/share.gleam:289 | `sessions.invite` | no | 2 |
-| SH-03 | Invitation handover: address, token, command, with copy | view/share.gleam:326; view/share.gleam:384 | `sessions.invite` | no | 2 |
-| SH-04 | Hide the token | view/share.gleam:360 | local | no | 3 |
-| SH-05 | Make a private session shareable, with a question | view/share.gleam:164; view/share.gleam:179 | `sessions.isolate` | no | 3 |
+| SH-02 | Invite as observer or operator | view/share.gleam:289 | `sessions.invite` | yes (SharingSheet.swift; the owner invites by name and role) | 2 |
+| SH-03 | Invitation handover: address, token, command, with copy | view/share.gleam:326; view/share.gleam:384 | `sessions.invite` | yes (SharingSheet.swift HandoverView: address, command, token, copy buttons; the command never carries the token) | 2 |
+| SH-04 | Hide the token | view/share.gleam:360 | local | yes (SharingSheet.swift HandoverView) | 3 |
+| SH-05 | Make a private session shareable, with a question | view/share.gleam:164; view/share.gleam:179 | `sessions.isolate` | yes (SharingSheet.swift; stops, isolates and reopens a running session, because the daemon refuses to isolate a live runtime) | 3 |
 | SH-06 | Rename the session from its page | view/rename.gleam:147 | `sessions.rename`† | yes (SessionActions.swift RenameSheet, Session menu) | 2 |
 | SH-07 | Accept an invitation with a claim form | page.gleam:761 | `credentials.claim` | no (Discovery.swift:31 refuses a claim token) | 3 |
 
@@ -320,16 +320,16 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| CR-01 | Your name, and change it | view/your_name.gleam:72; view/your_name.gleam:107 | `principals.rename` | no | 3 |
-| CR-02 | People list on the admin page | view/admin_people.gleam:135 | `principals.list` | no | 3 |
-| CR-03 | Rotate a person's credential | view/admin_people.gleam:277 | `credentials.rotate` | no | 3 |
-| CR-04 | Revoke a person's access, two steps | view/admin_people.gleam:289 | `credentials.revoke` | no | 3 |
-| CR-05 | Rename a person | view/admin_people.gleam:214 | `principals.rename` | no | 3 |
-| CR-06 | A person's sign-ins, and revoke one | view/admin_people.gleam:330 | `credentials.signins`, `credentials.revoke_login` | no | 3 |
-| CR-07 | Claim shown once beside the action | view/admin_claim.gleam:108 | `sessions.invite`, `credentials.rotate` | no | 3 |
-| CR-08 | Session members, set role and revoke membership | view/admin_sessions.gleam:222; grants.gleam:219 | `sessions.members`, `sessions.set_role`, `sessions.revoke` | no | 3 |
-| CR-09 | Invitation form with name and role | view/admin_sessions.gleam:491 | `sessions.invite` | no | 3 |
-| CR-10 | Make shareable from the admin page | view/admin_sessions.gleam:301 | `sessions.isolate` | no | 3 |
+| CR-01 | Your name, and change it | view/your_name.gleam:72; view/your_name.gleam:107 | `principals.rename` | yes (PeopleSheet.swift, Go menu People…) | 3 |
+| CR-02 | People list on the admin page | view/admin_people.gleam:135 | `principals.list` | yes (PeopleSheet.swift) | 3 |
+| CR-03 | Rotate a person's credential | view/admin_people.gleam:277 | `credentials.rotate` | yes (PeopleSheet.swift, after a question) | 3 |
+| CR-04 | Revoke a person's access, two steps | view/admin_people.gleam:289 | `credentials.revoke` | yes (PeopleSheet.swift, after a question) | 3 |
+| CR-05 | Rename a person | view/admin_people.gleam:214 | `principals.rename` | yes (PeopleSheet.swift) | 3 |
+| CR-06 | A person's sign-ins, and revoke one | view/admin_people.gleam:330 | `credentials.signins`, `credentials.revoke_login` | code (PeopleSheet.swift lists a person's browser sign-ins and revokes one; the fixture has no browser logins) | 3 |
+| CR-07 | Claim shown once beside the action | view/admin_claim.gleam:108 | `sessions.invite`, `credentials.rotate` | yes (SharingSheet.swift HandoverView, shared by invite and rotate) | 3 |
+| CR-08 | Session members, set role and revoke membership | view/admin_sessions.gleam:222; grants.gleam:219 | `sessions.members`, `sessions.set_role`, `sessions.revoke` | yes (SharingSheet.swift sets a role and removes a member, after a question) | 3 |
+| CR-09 | Invitation form with name and role | view/admin_sessions.gleam:491 | `sessions.invite` | yes (SharingSheet.swift) | 3 |
+| CR-10 | Make shareable from the admin page | view/admin_sessions.gleam:301 | `sessions.isolate` | yes (SharingSheet.swift) | 3 |
 | CR-11 | Grant allowance spent, with the time a place frees | admin.gleam:888; wc:time_rule.gleam:49 | `error` details | no | 3 |
 
 ## Machines and deployment

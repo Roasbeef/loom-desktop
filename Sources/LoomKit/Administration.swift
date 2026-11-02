@@ -280,10 +280,10 @@ public struct Invitation: Sendable, Equatable, CustomStringConvertible, CustomDe
     public var description: String { "Invitation(\(principalID), claim: <hidden>)" }
     public var debugDescription: String { description }
 
-    /// The command a collaborator runs, with the claim in it. It exists only for
-    /// the handover sheet the owner asked for.
+    /// The command a collaborator with `loom` runs. It names the address and never
+    /// the claim, which they type when asked, so the command can be shown or logged.
     public func command(address: String) -> String {
-        "loom connect --address \(address) --claim \(claim)"
+        "loom claim --addr \(address)"
     }
 }
 
@@ -397,7 +397,10 @@ extension ControlClient {
         var scope = ""
         var after = ""
         while true {
-            let page = try await request("sessions.members", body: ["session_id": .string(sessionID), "after": .string(after)])
+            // An empty cursor is refused, so the first page names none.
+            var fields: [String: JSONValue] = ["session_id": .string(sessionID)]
+            if !after.isEmpty { fields["after"] = .string(after) }
+            let page = try await request("sessions.members", body: .object(fields))
             scope = page["scope"]?.string ?? scope
             members += (page["members"]?.array ?? []).compactMap(SessionMember.init)
             guard let next = page["after"]?.string, !next.isEmpty else { break }
@@ -437,7 +440,7 @@ extension ControlClient {
         var rows: [Principal] = []
         var after = ""
         while true {
-            let page = try await request("principals.list", body: ["after": .string(after)])
+            let page = try await request("principals.list", body: after.isEmpty ? .object([:]) : ["after": .string(after)])
             rows += (page["principals"]?.array ?? []).compactMap(Principal.init)
             guard let next = page["after"]?.string, !next.isEmpty else { return rows }
             after = next

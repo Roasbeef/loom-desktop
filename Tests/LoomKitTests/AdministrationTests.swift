@@ -49,7 +49,7 @@ final class AdministrationTests: XCTestCase {
         ]))
         XCTAssertFalse("\(invitation)".contains("loomclaim_secret"))
         XCTAssertFalse(String(reflecting: invitation).contains("loomclaim_secret"))
-        XCTAssertTrue(invitation.command(address: "ws://h:1/v2/claim").contains("loomclaim_secret"))
+        XCTAssertEqual(invitation.command(address: "ws://h:1/v2/claim"), "loom claim --addr ws://h:1/v2/claim")
         XCTAssertNil(Invitation(["principal_id": "guest-1"]))
     }
 

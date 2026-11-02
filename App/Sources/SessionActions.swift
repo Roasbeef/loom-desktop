@@ -68,6 +68,8 @@ final class SessionActions {
     var pending: Pending?
     var renaming: SessionRecord?
     var moving: SessionRecord?
+    var sharing: SessionRecord?
+    var showsPeople = false
 
     /// A folder the next new-session form starts with, set by a project heading.
     var newSessionFolder: String?
@@ -184,6 +186,20 @@ extension DaemonConnection {
         try await refresh(control)
     }
 
+    /// The daemon refuses to isolate a session that holds a runtime, so a running
+    /// one is stopped and waited for first, then opened again afterwards.
+    func makeShareable(_ sessionID: String) async throws {
+        guard let control else { throw LoomError.closed("\(label) is not connected.") }
+        let wasRunning = sessions.first(where: { $0.id == sessionID })?.state.isResident == true
+        if wasRunning {
+            try await stop(sessionID)
+            try await waitUntilSaved(sessionID, control: control)
+        }
+        try await control.makeShareable(sessionID: sessionID)
+        if wasRunning { try await resume(sessionID) }
+        try await refresh(control)
+    }
+
     func delete(_ sessionID: String) async throws {
         guard let control else { throw LoomError.closed("\(label) is not connected.") }
         try await control.deleteSession(sessionID: sessionID)
@@ -192,7 +208,7 @@ extension DaemonConnection {
 
     /// A stop is asked for and finishes later, so a follow-up that needs the
     /// session saved polls the catalogue until it is.
-    private func waitUntilSaved(_ sessionID: String, control: ControlClient) async throws {
+    func waitUntilSaved(_ sessionID: String, control: ControlClient) async throws {
         for _ in 0..<50 {
             let records = try await control.listSessions()
             if let record = records.first(where: { $0.id == sessionID }), case .saved = record.state { return }
@@ -228,6 +244,12 @@ struct SessionActionPresenter: ViewModifier {
             }
             .sheet(item: $actions.moving) { record in
                 MoveSheet(record: record)
+            }
+            .sheet(item: $actions.sharing) { record in
+                SharingSheet(record: record)
+            }
+            .sheet(isPresented: $actions.showsPeople) {
+                PeopleSheet()
             }
             .alert(
                 "That didn’t work",
@@ -304,6 +326,9 @@ struct SessionLifecycleMenuItems: View {
         }
         Button("Delete Session…") {
             if let record = model.currentRecord { model.askToDelete(record) }
+        }
+        Button("Share Session…") {
+            if let record = model.currentRecord { model.actions.sharing = record }
         }
         Button("Move Session…") {
             if let record = model.currentRecord { model.askToMove(record) }

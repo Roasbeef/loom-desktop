@@ -235,3 +235,78 @@ def a_local_session_cannot_move_and_says_why(c):
     check(not any(n["name"] == "Move" for n in c.app.tree()), "a local session must offer no Move button")
     c.app.press("Close")
     wait_for(lambda: not any("Only a session on an executor" in t for t in c.app.texts()), what="the sheet to close")
+
+
+# Sharing and people.
+
+
+def share_dialog(c, sid):
+    go(c, sid)
+    c.app.menu("Share Session…")
+    c.app.see("Share “")
+
+
+def make_shareable(c, sid):
+    share_dialog(c, sid)
+    c.app.see("This session is private")
+    c.app.press("Make Shareable…")
+    c.app.press("Make Shareable")
+    c.app.see("Invite someone", 60)
+
+
+def invite(c, name, role="Operator"):
+    c.app.fill("Invitee name", name)
+    c.app.press(role)
+    c.app.press("Invite")
+    c.app.see(f"Hand this to {name}")
+
+
+@scenario("SH-02", "SH-03", "SH-04", "SH-05", "CR-08", "CR-09", "CR-10")
+def a_session_is_made_shareable_and_someone_is_invited(c):
+    """A private session becomes shareable, an invitation hands over its claim, and the person's role and access can change."""
+    sid = c.app.dispatch("Private to share demo", WORKSPACE)
+    wait_for(lambda: record(c, sid)["activity"] == "idle", 40, "the run to finish")
+    make_shareable(c, sid)
+    invite(c, "Ada", "Observer")
+    c.app.see("Claim token loomclaim_[0-9a-f]{64}")
+    c.app.see(r"loom claim --addr ws://127\.0\.0\.1:\d+/v2/claim")
+    c.app.press("Hide Token")
+    c.app.see("Claim token hidden")
+    c.app.not_see("loomclaim_")
+    c.app.press("I've Sent It")
+    c.app.see("Make Ada an operator")
+    c.app.press("Make Ada an operator")
+    c.app.see("Make Ada an observer")
+    c.app.press("Remove Ada")
+    c.app.press("Remove Access")
+    wait_for(lambda: not any("Remove Ada" in t for t in c.app.texts()), what="Ada to be removed")
+    c.app.press("Done")
+
+
+@scenario("CR-01", "CR-02", "CR-03", "CR-04", "CR-05", "CR-07")
+def people_are_renamed_rotated_and_revoked(c):
+    """The People sheet lists everyone, renames them, rotates a credential into a handover and revokes access."""
+    sid = c.app.dispatch("People subject demo", WORKSPACE)
+    wait_for(lambda: record(c, sid)["activity"] == "idle", 40, "the run to finish")
+    make_shareable(c, sid)
+    invite(c, "Grace")
+    c.app.press("I've Sent It")
+    c.app.press("Done")
+    c.app.menu("People…")
+    c.app.press("Person Grace")
+    c.app.fill("Person name", "Grace H")
+    c.app.press("Save Name")
+    c.app.see("Person Grace H")
+    c.app.fill("Your name", "Owner Olu")
+    c.app.press("Rename Me")
+    c.app.see("Person Owner Olu")
+    c.app.press("Person Grace H")
+    c.app.press("Rotate Credential…")
+    c.app.press("Rotate Credential")
+    c.app.see("Hand this to Grace H")
+    c.app.see("Claim token loomclaim_")
+    c.app.press("I've Sent It")
+    c.app.press("Revoke Access…")
+    c.app.press("Revoke Access")
+    c.app.see("Credential: No credential")
+    c.app.press("Done")

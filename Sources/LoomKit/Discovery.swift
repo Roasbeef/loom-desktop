@@ -49,7 +49,7 @@ public struct DaemonEndpoint: Sendable, Equatable, CustomStringConvertible {
     /// The daemon terminates no TLS, so a bearer may travel in cleartext only to
     /// a loopback address, such as this machine's daemon or an SSH tunnel. Any
     /// other host must be reached through TLS (protocol section 2.4).
-    func url(path: String) throws -> URL {
+    public func url(path: String) throws -> URL {
         guard scheme == "wss" || isLoopback else {
             throw LoomError.discovery("Refusing to send a bearer over cleartext to \(host). Use wss:// or an SSH tunnel.")
         }
