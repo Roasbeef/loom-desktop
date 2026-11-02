@@ -119,7 +119,13 @@ enum DebugDriver {
             // closes the inspector, so the next one starts from the default layout.
             model.showsInspector = false
 
-            // A scenario that failed with a sheet open must not swallow the next one's typing.
+            // A scenario that failed with a sheet open must not swallow the next one's
+            // typing. The flags go first, because a sheet ended underneath SwiftUI
+            // leaves its binding set and the next sheet never appears.
+            model.isDispatching = false
+            model.isAddingDaemon = false
+            model.actions.showsPeople = false
+            try? await Task.sleep(for: .milliseconds(400))
             if let sheet = window?.attachedSheet { window?.endSheet(sheet) }
             for daemon in model.daemons {
                 for record in daemon.sessions where record.state.isResident {
@@ -200,15 +206,19 @@ enum DebugDriver {
             let text = parts.dropFirst(2).joined(separator: " ")
             model.daemon(holding: parts[1])?.attach(parts[1])?.send(text: text)
         case "scrollup":
-            // A wheel turn over the middle of the transcript, as a reader's would be,
-            // so it reaches the scroll view a person reaches, whichever view that is.
-            if let window, let content = window.contentView,
-               let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 30000, wheel2: 0, wheel3: 0) {
-                let middle = NSPoint(x: content.bounds.width * 0.6, y: content.bounds.height * 0.5)
-                let onScreen = window.convertPoint(toScreen: middle)
-                let primary = NSScreen.screens.first?.frame.height ?? 0
-                wheel.location = CGPoint(x: onScreen.x, y: primary - onScreen.y)
-                if let event = NSEvent(cgEvent: wheel) { window.sendEvent(event) }
+            // Scrolls the transcript to its top. It is the tallest view that has more
+            // to scroll vertically, where the widest could be a code block.
+            func scrollViews(_ view: NSView) -> [NSScrollView] {
+                ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews)
+            }
+            let tall = window?.contentView.map(scrollViews)?.filter {
+                ($0.documentView?.frame.height ?? 0) > $0.contentView.bounds.height
+            }
+            if let scroll = tall?.max(by: { $0.frame.height < $1.frame.height }), let document = scroll.documentView {
+                // The top is the far end of the document when its view is not flipped.
+                let top = document.isFlipped ? 0 : document.frame.height - scroll.contentView.bounds.height
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: top))
+                scroll.reflectScrolledClipView(scroll.contentView)
             }
         case "detach" where parts.count > 1:
             // Ends the session's socket so the daemon connection attaches a fresh

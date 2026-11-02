@@ -212,7 +212,14 @@ class App:
     def see(self, pattern, timeout=DEFAULT_TIMEOUT):
         """Waits until some on-screen element's name or value matches `pattern`."""
         rx = re.compile(pattern)
-        return wait_for(lambda: any(rx.search(t) for t in self.texts()), timeout, f"to see /{pattern}/")
+        try:
+            return wait_for(lambda: any(rx.search(t) for t in self.texts()), timeout, f"to see /{pattern}/")
+        except Failure:
+            # A scenario's cleanup changes the screen, so keep it as the failure found it.
+            path = ROOT / "build/uitest/failures/last-see.txt"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"looking for /{pattern}/\n\n" + "\n".join(self.texts()) + "\n")
+            raise
 
     def not_see(self, pattern):
         rx = re.compile(pattern)
