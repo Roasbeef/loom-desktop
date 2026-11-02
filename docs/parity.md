@@ -366,9 +366,9 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| PL-01 | Peer links of the strand | view/peer_links.gleam:74 | `peers.inspect` | no | 3 |
-| PL-02 | Link: pick session, strand, wake and both directions | view/peer_links.gleam:318; view/peer_links.gleam:354 | `peers.link` | no | 3 |
-| PL-03 | Unlink, naming which directions | view/peer_links.gleam:167; view/peer_links.gleam:406 | `peers.unlink` | no | 3 |
+| PL-01 | Peer links of the strand | view/peer_links.gleam:74 | `peers.inspect` | yes (PeerLinksSheet.swift, Session menu Peer Links…) | 3 |
+| PL-02 | Link: pick session, strand, wake and both directions | view/peer_links.gleam:318; view/peer_links.gleam:354 | `peers.link` | yes (PeerLinksSheet.swift; picks a running session on the same daemon, a strand and a wake setting) | 3 |
+| PL-03 | Unlink, naming which directions | view/peer_links.gleam:167; view/peer_links.gleam:406 | `peers.unlink` | yes (PeerLinksSheet.swift, after a question; unlinks outgoing links) | 3 |
 
 ## Other orchestrators
 

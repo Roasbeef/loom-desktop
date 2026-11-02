@@ -71,6 +71,7 @@ final class SessionActions {
     var sharing: SessionRecord?
     var settings: SessionRecord?
     var machine: MachineRef?
+    var peers: SessionRecord?
     var showsPeople = false
 
     /// A folder the next new-session form starts with, set by a project heading.
@@ -250,6 +251,9 @@ struct SessionActionPresenter: ViewModifier {
             .sheet(item: $actions.machine) { machine in
                 MachineDetailSheet(machine: machine)
             }
+            .sheet(item: $actions.peers) { record in
+                PeerLinksSheet(record: record)
+            }
             .sheet(item: $actions.settings) { record in
                 SessionSettingsSheet(record: record)
             }
@@ -337,6 +341,9 @@ struct SessionLifecycleMenuItems: View {
         }
         Button("Session Settings…") {
             if let record = model.currentRecord, record.state.isResident { model.actions.settings = record }
+        }
+        Button("Peer Links…") {
+            if let record = model.currentRecord, record.state.isResident { model.actions.peers = record }
         }
         Button("Share Session…") {
             if let record = model.currentRecord { model.actions.sharing = record }

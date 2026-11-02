@@ -371,3 +371,34 @@ def a_machine_is_read_in_detail(c):
     c.app.see("loom distribution renew box")
     c.app.see(r"loom distribution revoke box --reason 'REASON'")
     c.app.press("Done")
+
+
+# Peers.
+
+
+@scenario("PL-01", "PL-02", "PL-03")
+def two_sessions_are_linked_and_unlinked(c):
+    """A link lets one session's strand message another, shows in both, and can be removed."""
+    first = c.app.dispatch("Peer first run demo", WORKSPACE)
+    second = c.app.dispatch("Peer second run demo", WORKSPACE)
+    for sid in (first, second):
+        wait_for(lambda: record(c, sid)["activity"] == "idle", 40, "the run to finish")
+    c.app.open_session("Peer first")
+    c.app.menu("Peer Links…")
+    c.app.see("No links")
+    c.app.press("Link target Peer second run demo")
+    c.app.press("May wake")
+    c.app.press("Link")
+    c.app.see("Unlink Peer second run demo")
+    c.app.see("may wake it")
+    c.app.press("Done")
+    c.app.open_session("Peer second")
+    c.app.menu("Peer Links…")
+    c.app.see("it may message this strand")
+    c.app.press("Done")
+    c.app.open_session("Peer first")
+    c.app.menu("Peer Links…")
+    c.app.press("Unlink Peer second run demo")
+    c.app.press("Remove Link")
+    c.app.see("No links")
+    c.app.press("Done")
