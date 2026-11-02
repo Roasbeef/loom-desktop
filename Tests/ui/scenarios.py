@@ -580,6 +580,8 @@ def inspector_toggles_and_shows_changes(c):
     c.app.transcript_has("Retry budget is now per host", 40)
     c.app.menu("Show Inspector")
     wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
+    # The inspector reopens on the tab it was left on, which an earlier scenario chose.
+    c.app.press("Changes")
     c.app.see(r"changed file|No uncommitted", 20)
     c.app.see("fetch.py", 10)
     c.app.menu("Hide Inspector")
