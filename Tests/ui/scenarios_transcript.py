@@ -5,10 +5,11 @@ person would see, and wait on a condition and never on a bare sleep. Scenarios t
 need the inspector's tabs carry `needs_display`, since a locked screen never lays those
 tabs out.
 """
+import re
 import time
 
 from loomui import wait_for
-from scenarios import WORKSPACE, check, pending_approval, run_command, scenario, settle
+from scenarios import WORKSPACE, check, fold_titles, name_starting, pending_approval, run_command, scenario, settle
 
 
 def say(c, text):
@@ -196,3 +197,130 @@ def cache_outlook_and_a_miss_row(c):
     row = wait_for(lambda: next((t for t in c.app.session()["transcript"] if t.startswith("Cache missed")), None), 20, "the miss row")
     check("idle" in row and "12,000 tokens" in row, row)
     check(not c.app.session()["cacheOutlook"], "a fresh request clears the outlook")
+
+
+# The transcript.
+
+
+@scenario("TR-05")
+def generation_speed_is_timed_from_the_stream(c):
+    """After a reply that took a few seconds, the footer shows its output speed in tokens a second."""
+    c.app.dispatch("Speed check slow", WORKSPACE)
+    c.app.open_session("Speed check")
+    c.app.see(r"Output speed.*— tok/s", 10)
+    c.app.transcript_has("scripted", 60)
+    settle(c)
+    rate = wait_for(lambda: c.app.session()["outputRate"], 10, "a measured rate")
+    check(0 < rate < 1000, f"the scripted reply is 300 tokens over several seconds: {rate}")
+    c.app.see(rf"Output speed.*{rate} tok/s")
+
+
+@scenario("TR-06", "TR-10")
+def markdown_alerts_footnotes_and_links(c):
+    """An alert is titled, a footnote reads in brackets, and only a plain web address is followed."""
+    c.app.dispatch("Markdown tour markdown", WORKSPACE)
+    c.app.open_session("Markdown tour")
+    c.app.transcript_has("The budget resets", 40)
+    settle(c)
+    c.app.see(r"^Warning: The budget resets on a timer", 5)
+    c.app.see(r"notes\[1\]", 5)
+    c.app.see(r"^\[1\]$", 5)
+    c.app.see(r"link not followed", 5)
+    links = [n for n in c.app.tree() if n["role"] == "AXLink"]
+    names = [n["name"] for n in links]
+    check("the Loom site" in names, f"a plain https address is a link: {names}")
+    check("a script" not in names, f"a javascript: address must not be a link: {names}")
+    c.app.see(r"mermaid", 5)
+    c.app.see(r"Copy code", 5)
+
+
+@scenario("TR-15")
+def a_running_step_ticks(c):
+    """A step still going shows the seconds it has run, counted from its record."""
+    c.app.dispatch("Ticking step slowstep", WORKSPACE)
+    c.app.open_session("Ticking step")
+    wait_for(lambda: c.app.session()["isBusy"], 20, "a busy session")
+    c.app.see(r"^Running sleep 7; echo slow-step-done", 10)
+    first = wait_for(lambda: next((t for t in c.app.texts() if re.fullmatch(r"[1-9]\d?s", t)), None), 10, "an elapsed time")
+    wait_for(lambda: next((t for t in c.app.texts() if re.fullmatch(r"[1-9]\d?s", t) and t != first), None), 10, "the clock to move")
+    c.app.menu("Stop Run")
+    settle(c)
+
+
+@scenario("TR-12")
+def a_stopped_turn_says_interrupted_on_its_divider(c):
+    """The divider counts the failed steps, and says interrupted once a person stops the turn."""
+    c.app.dispatch("Stopped mid stopmid", WORKSPACE)
+    c.app.open_session("Stopped mid")
+    wait_for(lambda: c.app.session()["isBusy"] and c.app.session()["hasStream"], 30, "the hung reply")
+    c.app.menu("Stop Run")
+    settle(c)
+    title = wait_for(lambda: next((f["title"] for f in c.app.session()["folds"] if "interrupted" in f["title"]), None), 15, "an interrupted divider")
+    check(re.fullmatch(r"Worked .*1 step · interrupted", title), title)
+    c.app.dispatch("Failed and finished tour", WORKSPACE)
+    c.app.open_session("Failed and finished")
+    c.app.transcript_has("The tour is done", 40)
+    settle(c)
+    check(re.search(r"3 steps · 1 file · 1 failed$", fold_titles(c)[0]), "a finished turn does not say interrupted")
+
+
+@scenario("TR-22")
+def memory_context_is_a_closed_row(c):
+    """The notes index attached to a run draws as one closed row, which opens to its text."""
+    sid = c.app.dispatch("Remember writenote", WORKSPACE)
+    c.app.open_session("Remember writenote")
+    c.app.transcript_has("wrote that down", 40)
+    settle(c)
+    c.app.prompt(sid, "do the work again demo")
+    c.app.transcript_has("Retry budget", 40)
+    settle(c)
+    check(not any("Notes saved in this repository" in t for t in c.app.session()["transcript"]), "the injected text is not a prompt")
+    c.app.not_see(r"Retry budget lives in fetch")
+    c.app.press(fold_titles(c)[-1])
+    row = name_starting(c, "Memory context")
+    check(re.fullmatch(r"Memory context, \d+ lines?", row), row)
+    c.app.press(row)
+    c.app.see(r"Retry budget lives in fetch", 5)
+
+
+@scenario("TR-23", "TR-24")
+def a_subagent_is_started_and_reports(c):
+    """The transcript shows the agent a turn started, and its report opens to what the agent said."""
+    c.app.dispatch("Delegate spawnagent", WORKSPACE)
+    c.app.open_session("Delegate")
+    c.app.transcript_has("The subagent has reported", 60)
+    settle(c)
+    c.app.see(r"^Started agent survey-files-\w+: survey files", 5)
+    report = name_starting(c, "Report from survey-files")
+    check("completed" in report, report)
+    c.app.press(report)
+    c.app.see(r"scripted", 5)
+
+
+# Approvals and keys.
+
+
+@scenario("AP-12")
+def an_answer_to_a_record_that_moved_is_refused_with_words(c):
+    """An answer built from a record the session no longer holds is refused locally, and the request stays."""
+    pending_approval(c, "Stale answer")
+    c.app.cmd("staleapprove")
+    wait_for(lambda: "changed before your answer" in c.app.session()["lastError"], 10, "the refusal in words")
+    c.app.see(r"That request changed before your answer was sent")
+    check(c.app.session()["escalations"], "a refused answer leaves the request pending")
+    c.app.press("Deny")
+    wait_for(lambda: not c.app.session()["escalations"], 15, "the real answer to clear it")
+
+
+@scenario("KB-03")
+def command_b_toggles_the_sidebar(c):
+    """⌘B hides the sidebar, and a second ⌘B shows it again."""
+    c.app.go("mission")
+    c.app.menu("Show Sidebar") if not c.app.snap()["showsSidebar"] else None
+    wait_for(lambda: c.app.snap()["showsSidebar"], 5, "the sidebar")
+    c.app.key("b", "cmd")
+    wait_for(lambda: not c.app.snap()["showsSidebar"], 5, "⌘B to hide the sidebar")
+    wait_for(lambda: not any(t.startswith("Group by") for t in c.app.texts()), 5, "the sidebar to leave the screen")
+    c.app.key("b", "cmd")
+    wait_for(lambda: c.app.snap()["showsSidebar"], 5, "⌘B to show the sidebar again")
+    c.app.see(r"Group by", 5)

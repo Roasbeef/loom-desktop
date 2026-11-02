@@ -75,26 +75,26 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-02 | Streaming answer in a live region | view/live.gleam:187 | `stream_delta` | yes (SessionScreen.swift:563) | 1 |
 | TR-03 | Thinking row before anything streams, with elapsed time | view/live.gleam:174 | `op_transition`, `stream_delta` | yes (WorkingLine reads Thinking from the recorded input time; reasoning_is_live_then_settled) | 1 |
 | TR-04 | Live reasoning row with a preview and expandable text | view/fold_row.gleam:189 | `stream_delta` | yes (LiveReasoning shows the newest line and opens to the text) | 1 |
-| TR-05 | Generation rate, `tok/s` | view/heading.gleam:227 | `usage`, `op_transition` | no | 2 |
-| TR-06 | Markdown answers | markdown_view.gleam:248 | `entry` | partial (Markdown.swift:5 and Theme.swift:225; no alert or footnote block) | 1 |
+| TR-05 | Generation rate, `tok/s` | view/heading.gleam:227 | `usage`, `op_transition` | yes (GenerationRate.swift, ComposerFigures.swift; timed from the first streamed fragment to the usage reading, because the daemon pushes no phase transitions to a session lane) | 2 |
+| TR-06 | Markdown answers | markdown_view.gleam:248 | `entry` | yes (Markdown.swift alert and footnote blocks, Theme.swift; the mermaid fence draws as a code block, see TR-08) | 1 |
 | TR-07 | Code fences with syntax highlighting | code_view.gleam:67 | `entry` | yes (Theme.swift:395; Syntax.swift:58) | 1 |
-| TR-08 | Mermaid diagrams, source disclosure, Copy source, Expand | markdown_view.gleam:248; wc:mermaid.gleam:36 | `entry` | no | 2 |
+| TR-08 | Mermaid diagrams, source disclosure, Copy source, Expand | markdown_view.gleam:248; wc:mermaid.gleam:36 | `entry` | no (a diagram needs a JavaScript renderer the app does not ship; the source draws as a code block named mermaid, with Copy code) | 2 |
 | TR-09 | Tables that scroll in their own box | markdown_view.gleam:295 | `entry` | yes (Theme.swift:328) | 2 |
-| TR-10 | Clickable links, validated before an anchor is drawn | wc:link.gleam:14 | `entry` | partial (Theme.swift:313 renders links; no `link_rule` equivalent) | 2 |
+| TR-10 | Clickable links, validated before an anchor is drawn | wc:link.gleam:14 | `entry` | yes (LinkRule.swift applies the web page's rule; a refused address stays as its label and says it was not followed) | 2 |
 | TR-11 | A turn's work folded behind one divider with figures | view/lane.gleam:1031 | `history_lineage` for fold steps | yes (Fold in Turns.swift; a_turn_folds_to_one_line_with_figures) | 1 |
-| TR-12 | Failed count and "interrupted" on a divider | sv:turns.gleam:173 | `entry` | partial (the divider counts failed steps and a stopped turn gets a Stopped row; the word interrupted is not on the divider) | 2 |
+| TR-12 | Failed count and "interrupted" on a divider | sv:turns.gleam:173 | `entry` | yes (Fold.isInterrupted, from an aborted response or a cancelled command; the failed count was already proven by a_turn_folds_to_one_line_with_figures) | 2 |
 | TR-13 | Step rows with verb, subject and `+n −m` | view/fold_row.gleam:57; sv:step_words.gleam:121 | `entry` | yes (StepWords.of; a write shows +4, hunk counts for edits are unit tested) | 1 |
 | TR-14 | Open a step for its full program and result | view/fold_row.gleam:57 | `entry` | yes (a step opens to its whole command or program and its result) | 1 |
-| TR-15 | Running step with elapsed time from its record | view/fold_row.gleam:57 | `entry`, `tool_output` | code (StepClock reads the call record's time; no scenario catches a step long enough to tick) | 2 |
+| TR-15 | Running step with elapsed time from its record | view/fold_row.gleam:57 | `entry`, `tool_output` | yes (StepClock counts from the call record's time; the scenario watches the seconds move on a seven second command) | 2 |
 | TR-16 | Failed step's plain sentence, then its remaining rows | view/lane.gleam:1638; sv:step_words.gleam:398 | `entry` | yes (StepWords.failure, then the raw result when the step opens) | 2 |
-| TR-17 | Program card for `code_mode`: outcome, chips, calls, result | view/program_card.gleam:89 | `entry` | code (ProgramCardView draws a program, its calls and result from the call record, which is unit tested; the cluster's code mode returned no call record to show) | 2 |
+| TR-17 | Program card for `code_mode`: outcome, chips, calls, result | view/program_card.gleam:89 | `entry` | yes (ProgramCardView; the scripted model now runs a valid program, so the card shows its outcome, status, one proc.run call, the program and the result) | 2 |
 | TR-18 | Settled reasoning: preview, line count, time, body | view/lane.gleam:1400 | `entry` | yes (ReasoningRow: preview, line count, time, body) | 1 |
 | TR-19 | Summarizer's label on long reasoning | view/lane.gleam:1467 | `block_summaries`, `block_summary` | no | 2 |
 | TR-20 | A person's message with sender name and role | view/lane.gleam:713 | `entry`, `presence` | partial (SessionScreen.swift:301 names a non-Owner author; no role) | 2 |
 | TR-21 | Long message shortened with a toggle | view/lane.gleam:1341 | local | yes (the whole message is drawn, so no toggle is needed; a_long_message_is_drawn_whole) | 3 |
-| TR-22 | Memory context as a closed row in the fold | sv:turns.gleam:213 | `entry` | no | 2 |
-| TR-23 | Spawned line for a sub-agent | view/lane.gleam:780 | `entry` | code (SpawnedLine; the scripted model cannot spawn a child here) | 2 |
-| TR-24 | Sub-agent result line, opening to the report | view/lane.gleam:1550 | `entry` | code (AgentReportLine; same limit) | 2 |
+| TR-22 | Memory context as a closed row in the fold | sv:turns.gleam:213 | `entry` | yes (MemoryContext.swift, MemoryRow; the notes index the daemon attaches draws closed inside the turn's fold and opens to its text) | 2 |
+| TR-23 | Spawned line for a sub-agent | view/lane.gleam:780 | `entry` | yes (SpawnedLine; the scripted model starts a subagent with agent_spawn) | 2 |
+| TR-24 | Sub-agent result line, opening to the report | view/lane.gleam:1550 | `entry` | yes (AgentReportLine; agent_wait returns the child's report and the line opens to it) | 2 |
 | TR-25 | Peer message card with session, strand and receipt | view/lane.gleam:834 | `entry` | partial (SessionScreen.swift:301 draws a bubble with an author; framing is not removed) | 2 |
 | TR-26 | Reply to a peer, which drafts the reply | view/lane.gleam:935 | local, then `prompt` | no | 2 |
 | TR-27 | Open the peer's session | view/lane.gleam:956 | local; `ui.link` equivalent | no | 2 |
@@ -169,13 +169,13 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | AP-03 | Literal action and authority lists | operator_page.gleam:803 | metadata | yes (SessionScreen.swift:781 and :821) | 1 |
 | AP-04 | Deny, naming the tool | operator_page.gleam:775 | `deny` | yes (SessionScreen.swift:854; no tool in the label) | 1 |
 | AP-05 | Allow once, naming the tool | operator_page.gleam:819 | `approve` | yes (SessionScreen.swift:857; no tool in the label) | 1 |
-| AP-06 | Allow for this session, on the owner's page where eligible | operator_page.gleam:874 | `approve` `scope` | partial (SessionScreen.swift ApprovalButtons offers it only to the owner role; Escalation.swift:59 still omits the wall-seconds-zero form) | 2 |
+| AP-06 | Allow for this session, on the owner's page where eligible | operator_page.gleam:874 | `approve` `scope` | yes (SessionScreen.swift ApprovalButtons; Escalation.canRemember now includes the exact-action wall grant, proven by unit test since the cluster cannot raise one) | 2 |
 | AP-07 | Grants outside the ceiling, listed with their reason | operator_page.gleam:844 | `remote-escalation` cells | code (SessionScreen.swift:802) | 3 |
 | AP-08 | "Cannot be approved from the page" with its reason | operator_page.gleam:830 | metadata | partial (SessionScreen.swift:812 counts untranslatable grants and disables Allow) | 3 |
 | AP-09 | 600 ms arming delay on a new card | operator_page.gleam:793 | local | yes (SessionScreen.swift ApprovalCard arms after 600 ms; the driver will not press a disabled control) | 2 |
 | AP-10 | Remote child's request | sv:approval.gleam:97 | `remote-escalation` cells | code (Conversation.swift:464) | 3 |
 | AP-11 | No key acts inside the approval region | wc:shell_rule.gleam:922 | local | no (LoomApp.swift:111 deliberately has Allow and Deny keys) | 3 |
-| AP-12 | Answer a stale record is refused locally, with words | component.gleam:4422 | local | code (SessionController.isCurrent refuses an answer for a record the session no longer holds, with Escalation.staleWords) | 2 |
+| AP-12 | Answer a stale record is refused locally, with words | component.gleam:4422 | local | yes (SessionController.isCurrent refuses an answer for a record that moved; the scenario sends a copy one sequence behind and the request stays pending) | 2 |
 
 ## Strands and agents
 
@@ -429,7 +429,7 @@ The web page has no schedule surface beyond these two commands.
 |---|---|---|---|---|---|
 | KB-01 | Command or Control K opens the switcher | wc:switcher_rule.gleam:106 | local | yes (LoomApp.swift:82; MissionViews.swift:392) | 1 |
 | KB-02 | Switcher: Up, Down, Enter, Escape, typed filter | wc:switcher_rule.gleam:126 | local | yes (MissionViews.swift:516, :480, :524) | 1 |
-| KB-03 | Command or Control B toggles the sidebar | wc:shell_rule.gleam:946 | local | partial (system control, no ⌘B binding in LoomApp.swift) | 2 |
+| KB-03 | Command or Control B toggles the sidebar | wc:shell_rule.gleam:946 | local | yes (LoomApp.swift Toggle Sidebar, ⌘B; AppModel.sidebarVisibility is shared with the toolbar control) | 2 |
 | KB-04 | Command or Control Alt B toggles the panel | wc:shell_rule.gleam:949 | local | yes (⌥⌘I, LoomApp.swift:78) | 2 |
 | KB-05 | Escape returns to main | wc:shell_rule.gleam:940 | local | yes (Escape in the composer returns to the main strand) | 2 |
 | KB-06 | Composer list: Up, Down, Tab, Enter, Escape | wc:composer_rule.gleam:361 | local | yes (Up, Down, Tab, Return and Escape drive the command list) | 2 |

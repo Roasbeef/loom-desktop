@@ -524,15 +524,19 @@ def reasoning_is_live_then_settled(c):
 
 @scenario("TR-17")
 def a_program_draws_as_a_card(c):
-    """A code_mode call opens to its program and what it did."""
+    """A code_mode call opens to its outcome, the calls it made, its program and its result."""
     c.app.dispatch("Run a program card", WORKSPACE)
     c.app.open_session("Run a program card")
     c.app.transcript_has("The program has run", 40)
     settle(c)
     c.app.press(fold_titles(c)[0])
-    c.app.press("Ran a program import cap/fs")
-    c.app.see(r"Program: ")
-    c.app.see(r"Program · 5 lines")
+    c.app.press(name_starting(c, "Ran a program"))
+    c.app.see(r"Program: Ran 1 command")
+    c.app.see(r"^completed$")
+    c.app.see(r"^1 call$")
+    c.app.see(r"^proc\.run$")
+    c.app.see(r"Program · \d+ lines")
+    c.app.see(r"program-ran")
 
 
 @scenario("TR-29")
@@ -613,7 +617,7 @@ def menu_allows_the_first_request(c):
     wait_for(lambda: not c.app.session()["escalations"], what="the approval to clear")
 
 
-@scenario()
+@scenario("AP-06")
 def allow_for_session_stops_the_next_prompt(c):
     """Remembering a grant means the same write does not ask again."""
     sid = pending_approval(c, "Remember")

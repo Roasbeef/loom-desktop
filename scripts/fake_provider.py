@@ -21,6 +21,7 @@ keyword in the last user turn selects a script:
   tour       a write, a command and a read that fails, then a short answer
   program    a code_mode call with a small program
   spawnagent starts a subagent with `agent_spawn`, waits for its report, then answers
+  stopmid    one finished step, then a reply that hangs, for a turn the person stops
   slowstep   a shell command that runs for several seconds, for a step still going
   cachehit   an ordinary reply whose usage reports a large cached prefix
   cachemiss  an ordinary reply whose usage reports that prefix billed again
@@ -102,6 +103,17 @@ LONG = " ".join(
 )
 
 
+PROGRAM = """import cap/proc
+import cap/report
+
+pub fn main() -> report.Outcome {
+  case proc.run(proc.command(["/bin/sh", "-c", "echo program-ran"])) {
+    Ok(output) -> report.text(output.stdout)
+    Error(_) -> report.failure("the command did not run")
+  }
+}
+"""
+
 MARKDOWN = """> [!WARNING]
 > The budget resets on a timer, so check the clock first.
 
@@ -135,9 +147,14 @@ def steps_taken(messages):
 
 
 def last_user_text(messages):
+    """The latest message a person wrote. The daemon's injected notes index is a user
+    message too, and it must not hide the keyword in the prompt it follows."""
     for message in reversed(messages):
         if message.get("role") == "user":
-            return json.dumps(message.get("content", ""))
+            text = json.dumps(message.get("content", ""))
+            if "Notes saved in this repository" in text:
+                continue
+            return text
     return ""
 
 
@@ -158,11 +175,21 @@ def script(messages):
             yield call(0, "agent_spawn", {"purpose": "survey files", "brief": "Name one file in the workspace and reply with a single short sentence."})
             yield chunk({}, "tool_calls")
         elif steps == 1:
-            handle = re.search(r"sub:[^\s\"#]+#[A-Za-z0-9_]+", last_tool_text(messages))
+            handle = re.search(r"sub:[^\s\"#]+#[A-Za-z0-9_-]+", last_tool_text(messages))
             yield call(0, "agent_wait", {"handles": [handle.group(0) if handle else "missing"], "within_ms": 60000})
             yield chunk({}, "tool_calls")
         else:
             yield from text_stream("The subagent has reported.")
+        return
+
+    if "stopmid" in prompt:
+        if steps == 0:
+            yield call(0, "bash", {"command": "echo first-step"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield chunk({"content": "Working on it. "})
+            time.sleep(30)
+            yield chunk({}, "stop")
         return
 
     if "slowstep" in prompt:
@@ -201,7 +228,7 @@ def script(messages):
 
     if "program" in prompt:
         if steps == 0:
-            yield call(0, "code_mode", {"program": "import cap/fs\n\npub fn main() {\n  fs.read(\"README.md\")\n}\n", "within_ms": 5000})
+            yield call(0, "code_mode", {"program": PROGRAM, "within_ms": 20000})
             yield chunk({}, "tool_calls")
         else:
             yield from text_stream("The program has run.")
