@@ -97,6 +97,109 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
 
     public let id: String
     public let kind: Kind
+    /// The tool call this row draws, which keys its live output.
+    public let callID: String?
+
+    public init(id: String, kind: Kind, callID: String? = nil) {
+        self.id = id
+        self.kind = kind
+        self.callID = callID
+    }
+}
+
+/// A unit of the drawn transcript: one row, or a run of tool calls read as one.
+public enum TranscriptBlock: Sendable, Equatable, Identifiable {
+    case row(TranscriptRow)
+    case activity([TranscriptRow])
+
+    public var id: String {
+        switch self {
+        case .row(let row): return row.id
+        case .activity(let rows): return "activity/\(rows.first?.id ?? "")"
+        }
+    }
+
+    /// Folds consecutive tool rows, since a run of ten shell commands is one
+    /// thing to a reader until they choose to look inside.
+    public static func group(_ rows: [TranscriptRow]) -> [TranscriptBlock] {
+        var blocks: [TranscriptBlock] = []
+        var run: [TranscriptRow] = []
+        for row in rows {
+            if case .tool = row.kind {
+                run.append(row)
+            } else {
+                if !run.isEmpty {
+                    blocks.append(.activity(run))
+                    run = []
+                }
+                blocks.append(.row(row))
+            }
+        }
+        if !run.isEmpty { blocks.append(.activity(run)) }
+        return blocks
+    }
+}
+
+/// Describes a run of tool calls in the words a person would use.
+public enum ToolSummary {
+    public enum Status: Sendable, Equatable {
+        case running, done, failed
+    }
+
+    public static func status(_ rows: [TranscriptRow]) -> Status {
+        var failed = false
+        for row in rows {
+            guard case .tool(_, _, let result, let isError) = row.kind else { continue }
+            if result == nil { return .running }
+            if isError { failed = true }
+        }
+        return failed ? .failed : .done
+    }
+
+    public static func describe(_ rows: [TranscriptRow]) -> String {
+        var order: [String] = []
+        var counts: [String: Int] = [:]
+        for row in rows {
+            guard case .tool(let name, _, _, _) = row.kind else { continue }
+            let key = verb(name)
+            if counts[key] == nil { order.append(key) }
+            counts[key, default: 0] += 1
+        }
+        // A run still going speaks in the present, so it never claims work is done.
+        let isRunning = status(rows) == .running
+        func phrase(_ past: String, _ present: String, _ noun: String, _ count: Int) -> String {
+            "\(isRunning ? present : past) \(count) \(noun)\(count == 1 ? "" : "s")"
+        }
+        let parts = order.map { key -> String in
+            let count = counts[key] ?? 0
+            switch key {
+            case "bash": return phrase("ran", "running", "command", count)
+            case "write": return phrase("wrote", "writing", "file", count)
+            case "edit": return phrase("edited", "editing", "file", count)
+            case "read": return phrase("read", "reading", "file", count)
+            case "search":
+                return isRunning ? "searching" : "searched \(count) time\(count == 1 ? "" : "s")"
+            case "code": return phrase("ran", "running", "program", count)
+            case "agent": return isRunning ? "coordinating agents" : "coordinated agents"
+            default: return isRunning ? "using \(key)" : "used \(key)"
+            }
+        }
+        let joined = parts.joined(separator: ", ")
+        return joined.prefix(1).uppercased() + joined.dropFirst()
+    }
+
+    private static func verb(_ name: String) -> String {
+        switch name {
+        case "bash": return "bash"
+        case "fs_write": return "write"
+        case "fs_edit": return "edit"
+        case "fs_read": return "read"
+        case "grep", "history_search": return "search"
+        case "code_mode": return "code"
+        case _ where name.hasPrefix("agent_"): return "agent"
+        default: return name
+        }
+    }
 }
 
 /// The client's whole view of one session, kept as a pure value.
@@ -124,7 +227,12 @@ public struct Conversation: Sendable, Equatable {
     public private(set) var peek: ChildPeek?
     public private(set) var hasAdoptedCut = false
 
+    /// Moves when what `rows` would return may have changed, so a host can keep
+    /// its projection until then and a streamed token never rebuilds it.
+    public private(set) var revision = 0
+
     private var entries: [String: JSONValue] = [:]
+    private var lastMetadata: JSONValue?
 
     public init(sessionID: String) {
         self.sessionID = sessionID
@@ -139,12 +247,15 @@ public struct Conversation: Sendable, Equatable {
 
     // MARK: Transitions
 
-    /// Adopts one completed transfer.
-    public mutating func apply(cut: Cut) {
+    /// Adopts one completed transfer. Returns whether anything changed, because
+    /// the idle refresh delivers an identical cut every second and must cost a
+    /// comparison rather than a redraw.
+    @discardableResult
+    public mutating func apply(cut: Cut) -> Bool {
         role = cut.identity.role
         connectionID = cut.identity.connectionID
+        let wasAdopted = hasAdoptedCut
         hasAdoptedCut = true
-
         var landed = false
         for entry in cut.entries {
             guard let id = entry["id"]?.string, entries[id] == nil else { continue }
@@ -157,14 +268,23 @@ public struct Conversation: Sendable, Equatable {
 
         // A history page fills in older entries beside the live window, so its
         // metadata must not stand in for the newer cut already adopted.
-        guard cut.window != "history", cut.window != "lineage" else { return }
-        applyMetadata(cut.metadata)
+        guard cut.window != "history", cut.window != "lineage" else {
+            if landed { revision += 1 }
+            return landed
+        }
+        let metadataChanged = cut.metadata != lastMetadata
+        if metadataChanged {
+            lastMetadata = cut.metadata
+            applyMetadata(cut.metadata)
+        }
+        if landed || metadataChanged { revision += 1 }
 
         // An ended stream stays drawn until its durable entry lands, or the
         // reply would vanish for the moment between `end` and this cut.
         if landed {
             streams = streams.filter { !$0.value.ended }
         }
+        return landed || metadataChanged || !wasAdopted
     }
 
     /// Folds one uncorrelated frame. An unknown event is ignored by rule.
@@ -483,7 +603,7 @@ public struct Conversation: Sendable, Equatable {
                         arguments: call["arguments"] ?? .null,
                         result: nil,
                         isError: false
-                    )))
+                    ), callID: call["id"]?.string))
                 default:
                     break
                 }
@@ -498,7 +618,11 @@ public struct Conversation: Sendable, Equatable {
             let failed = message?["isError"]?.bool ?? false
             if let callID = message?["toolCallId"]?.string, let index = toolIndex[callID],
                case .tool(let name, let arguments, _, _) = rows[index].kind {
-                rows[index] = .init(id: rows[index].id, kind: .tool(name: name, arguments: arguments, result: result, isError: failed))
+                rows[index] = .init(
+                    id: rows[index].id,
+                    kind: .tool(name: name, arguments: arguments, result: result, isError: failed),
+                    callID: rows[index].callID
+                )
             } else {
                 rows.append(.init(id: id, kind: .tool(
                     name: message?["toolName"]?.string ?? "tool",

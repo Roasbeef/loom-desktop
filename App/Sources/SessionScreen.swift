@@ -1,12 +1,12 @@
 import LoomKit
+import Markup
 import MissionKit
 import SwiftUI
 
-/// One session: the transcript, the composer, and a review pane.
+/// One session: the transcript, the composer floating over it, and an inspector.
 struct SessionScreen: View {
     @Environment(AppModel.self) private var model
     let sessionID: String
-    @State private var showsReview = false
 
     private var record: SessionRecord? {
         model.sessions.first { $0.id == sessionID }
@@ -19,13 +19,7 @@ struct SessionScreen: View {
     var body: some View {
         Group {
             if let record, record.state.isResident, let controller = model.controller(for: sessionID) {
-                LiveSession(
-                    record: record,
-                    controller: controller,
-                    placement: model.placement(of: record),
-                    showsReview: $showsReview,
-                    reconnect: { daemon?.attach(sessionID) }
-                )
+                LiveSession(record: record, controller: controller, placement: model.placement(of: record))
             } else if let record {
                 NotRunning(record: record)
             } else {
@@ -48,20 +42,28 @@ private struct NotRunning: View {
     @State private var isOpening = false
 
     var body: some View {
-        VStack(spacing: 12) {
-            Text(record.title).font(.title3.weight(.medium))
-            Text(record.workspace).font(Theme.meta).foregroundStyle(.secondary)
-            switch record.state {
-            case .reserved(let failure):
-                Text(failure ?? "This session never finished starting.")
-                    .foregroundStyle(Theme.failure)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 480)
-            case .recoveryBlocked:
-                Text("Recovery is blocked, so this session cannot open.")
-                    .foregroundStyle(Theme.failure)
-            default:
-                Button(isOpening ? "Resuming…" : "Resume session") {
+        ContentUnavailableView {
+            Label(record.title, systemImage: "moon.zzz")
+        } description: {
+            VStack(spacing: 6) {
+                Text(record.workspace).font(Theme.meta)
+                switch record.state {
+                case .reserved(let failure):
+                    Text(failure ?? "This session never finished starting.")
+                        .foregroundStyle(Theme.failure)
+                case .recoveryBlocked:
+                    Text("Recovery is blocked, so this session cannot open.")
+                        .foregroundStyle(Theme.failure)
+                default:
+                    Text("The conversation is saved. Resuming uses one of the daemon's session slots.")
+                }
+                if let error {
+                    Text(error).foregroundStyle(Theme.failure)
+                }
+            }
+        } actions: {
+            if canResume {
+                Button(isOpening ? "Resuming…" : "Resume Session") {
                     isOpening = true
                     Task {
                         defer { isOpening = false }
@@ -72,13 +74,19 @@ private struct NotRunning: View {
                         }
                     }
                 }
+                .buttonStyle(.glassProminent)
+                .keyboardShortcut(.defaultAction)
                 .disabled(isOpening)
             }
-            if let error {
-                Text(error).font(.callout).foregroundStyle(Theme.failure)
-            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(record.title)
+    }
+
+    private var canResume: Bool {
+        switch record.state {
+        case .reserved, .recoveryBlocked: return false
+        default: return true
+        }
     }
 }
 
@@ -87,375 +95,648 @@ private struct LiveSession: View {
     let record: SessionRecord
     let controller: SessionController
     let placement: Placement?
-    @Binding var showsReview: Bool
-    let reconnect: () -> Void
+    @State private var query = ""
+
+    private var subtitle: String {
+        var parts: [String] = []
+        if let placement { parts.append(placement.label) }
+        parts.append([record.workspaceName, controller.branch].compactMap { $0 }.joined(separator: " · "))
+        return parts.joined(separator: "  ·  ")
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            TranscriptView(controller: controller)
-            VStack(spacing: 10) {
-                // A dead socket must never look connected, or a person acts on
-                // a screen that has stopped telling the truth.
-                if !controller.isLive {
-                    HStack {
-                        Text("Disconnected from this session. What you see may be out of date.")
-                            .font(.callout)
-                        Spacer()
-                        Button("Reconnect", action: reconnect)
-                    }
-                    .padding(10)
-                    .surface(fill: Theme.attention.opacity(0.07))
-                }
-                if !controller.conversation.remoteChildren.isEmpty {
-                    RemoteAgentsStrip(controller: controller)
-                }
-                ForEach(controller.conversation.escalations) { escalation in
-                    ApprovalCard(record: escalation, controller: controller)
-                }
-                if let error = controller.lastError {
-                    Text(error)
-                        .font(.callout)
-                        .foregroundStyle(Theme.failure)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                Composer(controller: controller)
+        @Bindable var model = model
+        @Bindable var controller = controller
+        TranscriptView(controller: controller, query: query)
+            .safeAreaBar(edge: .bottom, spacing: 0) {
+                ComposerStack(controller: controller)
             }
-            .frame(maxWidth: 780)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 16)
-        }
-        .frame(maxWidth: .infinity)
-        .navigationTitle(record.title)
-        .sheet(isPresented: Binding(
-            get: { controller.conversation.peek != nil },
-            set: { if !$0 { controller.endPeek() } }
-        )) {
-            ChildPeekSheet(controller: controller)
-        }
-        .inspector(isPresented: $showsReview) {
-            ReviewPane(controller: controller)
-                .inspectorColumnWidth(min: 320, ideal: 460, max: 760)
-        }
-        .toolbar {
-            ToolbarItem(placement: .navigation) {
-                SessionHeader(record: record, controller: controller, placement: placement)
+            .navigationTitle(record.title)
+            .navigationSubtitle(subtitle)
+            .searchable(text: $query, isPresented: $controller.isSearching, placement: .toolbar, prompt: "Find in transcript")
+            .inspector(isPresented: $model.showsInspector) {
+                SessionInspector(record: record, controller: controller, placement: placement)
+                    .inspectorColumnWidth(min: 320, ideal: 460, max: 800)
             }
-            ToolbarItemGroup {
-                if controller.conversation.strands.count > 1 {
-                    @Bindable var controller = controller
-                    Picker("Strand", selection: $controller.focusedStrand) {
-                        ForEach(controller.conversation.strands) { strand in
-                            Text(strand.id).tag(strand.id)
+            .sheet(isPresented: Binding(
+                get: { controller.peek != nil },
+                set: { if !$0 { controller.endPeek() } }
+            )) {
+                ChildPeekSheet(controller: controller)
+            }
+            .toolbar {
+                if controller.strands.count > 1 {
+                    ToolbarItem {
+                        Picker("Agent", selection: $controller.focusedStrand) {
+                            ForEach(controller.strands) { strand in
+                                Text(StrandName.display(strand.id)).tag(strand.id)
+                            }
                         }
+                        .help("Choose which agent's transcript to read")
                     }
-                    .fixedSize()
+                    ToolbarSpacer(.fixed)
                 }
-                Button {
-                    showsReview.toggle()
-                    if showsReview { controller.requestDiff() }
-                } label: {
-                    Label("Review changes", systemImage: "plus.forwardslash.minus")
+                ToolbarItem {
+                    Button {
+                        model.showsInspector.toggle()
+                    } label: {
+                        Label("Inspector", systemImage: "sidebar.trailing")
+                    }
+                    .help("Show the changes, agents and details (⌥⌘I)")
                 }
-                .help("Review the worktree's changes")
             }
-        }
     }
 }
 
-/// A single quiet line of what this session is: place, model, spend, people.
-private struct SessionHeader: View {
-    let record: SessionRecord
-    let controller: SessionController
-    let placement: Placement?
-
-    var body: some View {
-        let conversation = controller.conversation
-        HStack(spacing: 10) {
-            Text(record.title).font(.headline).lineLimit(1)
-            Group {
-                Text([record.workspaceName, conversation.branch].compactMap { $0 }.joined(separator: " · "))
-                if let placement {
-                    Label(placement.label, systemImage: placement.isSplit ? "arrow.left.arrow.right" : "desktopcomputer")
-                        .help(placement.isSplit
-                            ? "The conversation and keys are on \(placement.brain). Tools run on \(placement.hands)."
-                            : "The conversation and its tools run on \(placement.brain).")
-                }
-                if let model = controller.strand?.model { Text(model) }
-                if let cost = conversation.totalCost, cost > 0 {
-                    Text(cost, format: .currency(code: "USD").precision(.fractionLength(2)))
-                }
-                if conversation.peers.count > 1 {
-                    Label("\(conversation.peers.count)", systemImage: "person.2")
-                        .help(conversation.peers.map { "\($0.name) (\($0.role))" }.joined(separator: ", "))
-                }
-            }
-            .font(Theme.meta)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
+enum StrandName {
+    /// `sub:^main/build-1a2b` reads as `build`, and `main` stays itself.
+    static func display(_ id: String) -> String {
+        guard id.hasPrefix("sub:") else { return id }
+        let last = id.split(separator: "/").last.map(String.init) ?? id
+        if let dash = last.lastIndex(of: "-"), last.distance(from: dash, to: last.endIndex) <= 6 {
+            return String(last[..<dash])
         }
+        return last
     }
 }
 
+/// The reading column.
+///
+/// It follows the newest output while the person is at the bottom and stays put
+/// once they scroll up, with a control to return. That is the behaviour that lets
+/// someone read an earlier step while the agent keeps working.
 private struct TranscriptView: View {
     let controller: SessionController
+    let query: String
+    @State private var position = ScrollPosition(edge: .bottom)
+    @State private var isAtBottom = true
+
+    private var visibleBlocks: [TranscriptBlock] {
+        guard !query.isEmpty else { return controller.blocks }
+        return controller.blocks.filter { $0.contains(query) }
+    }
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                if controller.conversation.hasOlder(strand: controller.focusedStrand) {
-                    Button(controller.isLoadingOlder ? "Loading…" : "Load earlier") {
+            LazyVStack(alignment: .leading, spacing: 18) {
+                if controller.hasOlder, query.isEmpty {
+                    Button(controller.isLoadingOlder ? "Loading…" : "Load Earlier") {
                         controller.loadOlder()
                     }
                     .buttonStyle(.link)
                     .frame(maxWidth: .infinity)
                 }
-                ForEach(controller.rows) { row in
-                    RowView(row: row, tails: controller.conversation.toolTails)
+                ForEach(visibleBlocks) { block in
+                    BlockView(block: block, controller: controller)
                 }
-                if let stream = controller.stream {
-                    StreamView(stream: stream)
+                if query.isEmpty {
+                    LiveTail(controller: controller)
                 }
-                if controller.isBusy, controller.stream == nil {
-                    ProgressView().controlSize(.small)
+                if !query.isEmpty, visibleBlocks.isEmpty {
+                    Text("No matches in what is loaded.")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity)
                 }
-                Color.clear.frame(height: 1).id("bottom")
+                if !controller.isAdopted {
+                    ProgressView().controlSize(.small).frame(maxWidth: .infinity)
+                }
             }
-            .frame(maxWidth: 780, alignment: .leading)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
+            .frame(maxWidth: Theme.contentWidth, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.top, 20)
+            .padding(.bottom, 14)
             .frame(maxWidth: .infinity)
         }
+        .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            // The visible rectangle accounts for the composer's inset, which the
+            // raw offset does not, so a short transcript never reads as scrolled.
+            geometry.visibleRect.maxY >= geometry.contentSize.height - 40
+        } action: { _, atBottom in
+            isAtBottom = atBottom
+        }
+        .overlay(alignment: .bottom) {
+            if !isAtBottom {
+                Button {
+                    withAnimation(.smooth(duration: 0.25)) { position.scrollTo(edge: .bottom) }
+                } label: {
+                    Label("Latest", systemImage: "arrow.down")
+                        .font(Theme.label)
+                        .padding(.horizontal, 4)
+                }
+                .buttonStyle(.glass)
+                .controlSize(.small)
+                .padding(.bottom, 10)
+                .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+        }
+        .animation(.smooth(duration: 0.18), value: isAtBottom)
     }
 }
 
-private struct RowView: View {
+extension TranscriptBlock {
+    func contains(_ query: String) -> Bool {
+        func search(_ text: String) -> Bool { text.localizedCaseInsensitiveContains(query) }
+        func search(_ row: TranscriptRow) -> Bool {
+            switch row.kind {
+            case .user(let text, _), .assistant(let text), .thinking(let text), .notice(let text), .failure(let text):
+                return search(text)
+            case .tool(let name, let arguments, let result, _):
+                return search(name) || search(arguments.compactText) || search(result ?? "")
+            }
+        }
+        switch self {
+        case .row(let row): return search(row)
+        case .activity(let rows): return rows.contains(where: search)
+        }
+    }
+}
+
+private struct BlockView: View {
+    let block: TranscriptBlock
+    let controller: SessionController
+
+    var body: some View {
+        switch block {
+        case .row(let row):
+            RowView(row: row)
+        case .activity(let rows):
+            ActivityGroup(rows: rows, tails: controller.toolTails)
+        }
+    }
+}
+
+struct RowView: View {
     let row: TranscriptRow
-    let tails: [String: String]
+    @State private var isHovering = false
 
     var body: some View {
         switch row.kind {
         case .user(let text, let author):
-            HStack {
+            HStack(alignment: .top, spacing: 6) {
                 Spacer(minLength: 80)
+                CopyButton(text: text, label: "Copy message")
+                    .opacity(isHovering ? 1 : 0)
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(text)
+                        .font(Theme.body)
+                        .lineSpacing(3)
                         .textSelection(.enabled)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .surface()
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 9)
+                        .background(Theme.tintStrong, in: .rect(cornerRadius: 14))
                     if let author, author != "Owner" {
                         Text(author).font(Theme.meta).foregroundStyle(.secondary)
                     }
                 }
             }
+            .padding(.top, 6)
+            .onHover { isHovering = $0 }
         case .assistant(let text):
-            MarkdownText(source: text)
+            MarkdownView(source: text)
+                .overlay(alignment: .topTrailing) {
+                    CopyButton(text: text, label: "Copy reply")
+                        .opacity(isHovering ? 1 : 0)
+                }
+                .onHover { isHovering = $0 }
         case .thinking(let text):
-            Disclosure(title: "Thinking", icon: "brain") {
-                Text(text).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+            Disclosure {
+                Image(systemName: "brain").foregroundStyle(.tertiary)
+                Text("Thought").foregroundStyle(.secondary)
+            } content: {
+                Text(text)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
-        case .tool(let name, let arguments, let result, let isError):
-            ToolRow(name: name, arguments: arguments, result: result, isError: isError)
+        case .tool:
+            ToolRow(row: row, tail: nil)
         case .notice(let text):
-            Text(text).font(Theme.meta).foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                VStack { Divider() }
+                Text(text.split(separator: "\n").first.map(String.init) ?? text)
+                    .font(Theme.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .layoutPriority(1)
+                    .help(text)
+                VStack { Divider() }
+            }
         case .failure(let text):
-            Text(text)
-                .textSelection(.enabled)
-                .foregroundStyle(Theme.failure)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .surface(fill: Theme.failure.opacity(0.08))
+            Label {
+                Text(text).textSelection(.enabled)
+            } icon: {
+                Image(systemName: "exclamationmark.octagon").foregroundStyle(Theme.failure)
+            }
+            .font(Theme.body)
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .surface(fill: Theme.failure.opacity(0.09))
         }
     }
 }
 
-/// A tool call collapsed to one line: the tool, the argument that identifies
-/// the call, and whether it failed. The detail is one click away.
-private struct ToolRow: View {
-    let name: String
-    let arguments: JSONValue
-    let result: String?
-    let isError: Bool
+/// A run of tool calls read as one line until the person opens it, and open by
+/// itself while it is running, so work is visible while it happens.
+private struct ActivityGroup: View {
+    let rows: [TranscriptRow]
+    let tails: [String: String]
+    @State private var userOpened: Bool?
 
-    private var summary: String {
-        for key in ["command", "path", "pattern", "query", "url", "code"] {
+    private var status: ToolSummary.Status { ToolSummary.status(rows) }
+    private var isOpen: Bool { userOpened ?? (status == .running) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.smooth(duration: 0.18)) { userOpened = !isOpen }
+            } label: {
+                HStack(spacing: 8) {
+                    statusIcon
+                    Text(ToolSummary.describe(rows))
+                        .font(Theme.label)
+                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(ToolSummary.describe(rows))
+            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+
+            if isOpen {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(rows) { row in
+                        ToolRow(row: row, tail: row.callID.flatMap { tails[$0] })
+                    }
+                }
+                .padding(.leading, 22)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch status {
+        case .running:
+            ProgressView().controlSize(.mini).frame(width: 14)
+        case .done:
+            Image(systemName: "checkmark.circle").foregroundStyle(.tertiary).frame(width: 14)
+        case .failed:
+            Image(systemName: "exclamationmark.circle").foregroundStyle(Theme.failure).frame(width: 14)
+        }
+    }
+}
+
+/// One tool call, drawn for what the tool does. A shell command reads as a command
+/// and its output, and a write reads as the change it made.
+private struct ToolRow: View {
+    let row: TranscriptRow
+    let tail: String?
+    @State private var isOpen = false
+
+    private var parts: (name: String, arguments: JSONValue, result: String?, isError: Bool)? {
+        if case .tool(let name, let arguments, let result, let isError) = row.kind {
+            return (name, arguments, result, isError)
+        }
+        return nil
+    }
+
+    var body: some View {
+        if let parts {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: icon(parts.name))
+                            .font(.system(size: 11))
+                            .foregroundStyle(parts.isError ? Theme.failure : .secondary)
+                            .frame(width: 14)
+                        Text(title(parts.name, parts.arguments))
+                            .font(Theme.code)
+                            .foregroundStyle(parts.isError ? Theme.failure : .primary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 4)
+                        if parts.result == nil {
+                            ProgressView().controlSize(.mini)
+                        }
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help(parts.name)
+                .accessibilityLabel("\(parts.name): \(title(parts.name, parts.arguments))")
+
+                if parts.result == nil, let tail, !tail.isEmpty {
+                    OutputBlock(text: tail, tint: .secondary)
+                }
+                if isOpen {
+                    detail(parts)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func detail(_ parts: (name: String, arguments: JSONValue, result: String?, isError: Bool)) -> some View {
+        switch parts.name {
+        case "fs_write":
+            DiffView(summary: Diff.between(old: "", new: parts.arguments["content"]?.string ?? ""))
+        case "fs_edit":
+            DiffView(summary: Diff.between(
+                old: parts.arguments["old"]?.string ?? parts.arguments["old_string"]?.string ?? "",
+                new: parts.arguments["new"]?.string ?? parts.arguments["new_string"]?.string ?? ""
+            ))
+        case "bash", "fs_read", "grep":
+            EmptyView()
+        default:
+            if parts.arguments != .null {
+                OutputBlock(text: parts.arguments.compactText, tint: .secondary)
+            }
+        }
+        if let result = parts.result, !result.isEmpty {
+            OutputBlock(text: result, tint: parts.isError ? Theme.failure : .primary)
+        }
+    }
+
+    private func icon(_ name: String) -> String {
+        switch name {
+        case "bash": return "terminal"
+        case "fs_read": return "doc.text"
+        case "fs_write", "fs_edit": return "pencil"
+        case "grep", "history_search": return "magnifyingglass"
+        case "code_mode": return "curlybraces"
+        case _ where name.hasPrefix("agent_"): return "person.2"
+        default: return "wrench.and.screwdriver"
+        }
+    }
+
+    private func title(_ name: String, _ arguments: JSONValue) -> String {
+        for key in ["command", "path", "pattern", "query", "url"] {
             if let value = arguments[key]?.string {
                 return value.split(separator: "\n").first.map(String.init) ?? value
             }
         }
-        return arguments == .null ? "" : arguments.compactText
-    }
-
-    var body: some View {
-        Disclosure(
-            title: name,
-            subtitle: summary,
-            icon: isError ? "exclamationmark.triangle" : "terminal",
-            tint: isError ? Theme.failure : .secondary,
-            running: result == nil
-        ) {
-            VStack(alignment: .leading, spacing: 8) {
-                if arguments != .null {
-                    CodeBlock(text: arguments.compactText)
-                }
-                if let result, !result.isEmpty {
-                    CodeBlock(text: result, tint: isError ? Theme.failure : .primary)
-                }
-            }
-        }
+        return name
     }
 }
 
-private struct Disclosure<Content: View>: View {
-    var title: String
-    var subtitle: String = ""
-    var icon: String
-    var tint: Color = .secondary
-    var running = false
+private struct OutputBlock: View {
+    let text: String
+    var tint: Color
+
+    var body: some View {
+        ScrollView([.vertical, .horizontal]) {
+            Text(text)
+                .font(.system(size: 11.5).monospaced())
+                .foregroundStyle(tint)
+                .lineSpacing(2)
+                .textSelection(.enabled)
+                .fixedSize()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+        }
+        .frame(maxHeight: 260)
+        .fixedSize(horizontal: false, vertical: true)
+        .surface(radius: 8)
+    }
+}
+
+private struct Disclosure<Header: View, Content: View>: View {
+    @ViewBuilder var header: () -> Header
     @ViewBuilder var content: () -> Content
     @State private var isOpen = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                isOpen.toggle()
+                withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
             } label: {
                 HStack(spacing: 7) {
-                    Image(systemName: icon).foregroundStyle(tint).frame(width: 14)
-                    Text(title).font(.system(size: 12, weight: .medium, design: .monospaced))
-                    Text(subtitle)
-                        .font(Theme.meta)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 8)
-                    if running { ProgressView().controlSize(.mini) }
+                    header()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
                         .rotationEffect(.degrees(isOpen ? 90 : 0))
                 }
-                .contentShape(Rectangle())
+                .font(Theme.label)
+                .contentShape(.rect)
             }
             .buttonStyle(.plain)
-
-            if isOpen {
-                content()
-            }
+            if isOpen { content() }
         }
     }
 }
 
-private struct CodeBlock: View {
-    let text: String
-    var tint: Color = .primary
+/// What the agent is doing right now. It reads the stream alone, so tokens arriving
+/// redraw this view and not the transcript above it. Its pieces are direct children
+/// of the transcript's lazy stack.
+private struct LiveTail: View {
+    let controller: SessionController
 
     var body: some View {
-        ScrollView {
-            Text(text)
-                .font(.system(size: 11.5, design: .monospaced))
-                .foregroundStyle(tint)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-        }
-        .frame(maxHeight: 240)
-        .fixedSize(horizontal: false, vertical: true)
-        .surface()
-    }
-}
-
-private struct StreamView: View {
-    let stream: LiveStream
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        if let stream = controller.stream {
             if !stream.thinking.isEmpty, stream.text.isEmpty {
-                Text(stream.thinking.suffix(400))
+                Text(stream.thinking.suffix(500))
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .lineSpacing(3)
             }
             if !stream.text.isEmpty {
-                MarkdownText(source: stream.text)
+                MarkdownView(source: stream.text, isStreaming: true).blocks
             }
             ForEach(stream.tools) { tool in
-                HStack(spacing: 7) {
-                    ProgressView().controlSize(.mini)
-                    Text(tool.name).font(.system(size: 12, weight: .medium, design: .monospaced))
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.mini).frame(width: 14)
+                    Text(tool.name).font(Theme.code).foregroundStyle(.secondary)
                 }
             }
+        }
+        if let since = controller.busySince {
+            WorkingLine(since: since)
         }
     }
 }
 
-/// Subagents on other orchestrators. Each row is the stub the parent's daemon
-/// holds, so it keeps its last glance when that machine cannot be reached.
-private struct RemoteAgentsStrip: View {
+/// The elapsed time of a run. Its timeline ticks once a second and redraws only
+/// this line.
+private struct WorkingLine: View {
+    let since: Date
+
+    var body: some View {
+        TimelineView(.periodic(from: since, by: 1)) { context in
+            HStack(spacing: 8) {
+                StatusDot(liveness: .working)
+                Text("Working")
+                Text(Duration.seconds(context.date.timeIntervalSince(since)).formatted(.units(allowed: [.minutes, .seconds], width: .narrow)))
+                    .monospacedDigit()
+                    .foregroundStyle(.tertiary)
+            }
+            .font(Theme.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: Composer
+
+/// Everything that floats over the transcript. It shares one glass container, since
+/// glass cannot sample other glass and nearby pieces must be drawn together.
+private struct ComposerStack: View {
     let controller: SessionController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(controller.conversation.remoteChildren) { child in
-                Button {
-                    controller.peek(child: child)
-                } label: {
+        GlassEffectContainer(spacing: 10) {
+            VStack(spacing: 10) {
+                if !controller.isLive {
                     HStack(spacing: 8) {
-                        Circle()
-                            .fill(child.isActive ? Theme.working : Color.secondary.opacity(0.5))
-                            .frame(width: 7, height: 7)
-                        Text(child.title).lineLimit(1)
-                        Text("@ \(child.orchestrator)").font(Theme.meta).foregroundStyle(.secondary)
-                        Text(child.summary).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        ProgressView().controlSize(.mini)
+                        Text("Reconnecting. What you see may be out of date.")
+                            .font(Theme.caption)
                         Spacer()
-                        Text(child.standing).font(Theme.meta).foregroundStyle(.secondary)
-                        if let age = child.ageMs, age > 30_000 {
-                            Text("\(age / 1000)s old").font(Theme.meta).foregroundStyle(Theme.attention)
-                        }
                     }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .glassEffect(.regular.tint(Theme.attention.opacity(0.18)), in: .rect(cornerRadius: 12))
                 }
-                .buttonStyle(.plain)
+                ForEach(controller.escalations) { escalation in
+                    ApprovalCard(record: escalation, controller: controller)
+                }
+                if !controller.remoteChildren.isEmpty {
+                    RemoteAgentsStrip(controller: controller)
+                }
+                ForEach(controller.pendingInputs.filter { $0.strand == controller.focusedStrand }) { input in
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock").foregroundStyle(.secondary)
+                        Text(input.text).lineLimit(1)
+                        Spacer()
+                        Text(input.kind == "steer" ? "next step" : "queued")
+                            .font(Theme.meta)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(Theme.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 12))
+                }
+                if let error = controller.lastError {
+                    Text(error)
+                        .font(Theme.caption)
+                        .foregroundStyle(Theme.failure)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                }
+                Composer(controller: controller)
             }
         }
-        .surface()
+        .frame(maxWidth: Theme.contentWidth)
+        .padding(.horizontal, 28)
+        .padding(.bottom, 14)
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity)
+        .animation(.smooth(duration: 0.2), value: controller.escalations)
     }
 }
 
-/// A read-only page of a remote child's transcript, drawn as plain text because
-/// it is model output from another machine.
-private struct ChildPeekSheet: View {
-    @Environment(\.dismiss) private var dismiss
+private struct Composer: View {
     let controller: SessionController
+    @State private var text = ""
+    @FocusState private var isFocused: Bool
 
     var body: some View {
-        let peek = controller.conversation.peek
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(peek?.child ?? "").font(.system(.headline, design: .monospaced)).lineLimit(1)
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.cancelAction)
-            }
-            if peek?.isPending == true {
-                ProgressView().controlSize(.small)
-            }
-            if let failure = peek?.failure {
-                Text(failure).foregroundStyle(Theme.failure)
-            }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(peek?.rows ?? []) { row in
-                        RowView(row: row, tails: [:])
+        let busy = controller.isBusy
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(placeholder(busy), text: $text, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(Theme.body)
+                .lineLimit(1...12)
+                .focused($isFocused)
+                .onKeyPress(keys: [.return]) { press in
+                    if press.modifiers.contains(.shift) || press.modifiers.contains(.option) { return .ignored }
+                    send()
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    guard controller.isBusy else { return .ignored }
+                    controller.abort()
+                    return .handled
+                }
+                .accessibilityLabel("Message")
+
+            HStack(spacing: 10) {
+                Group {
+                    if let model = controller.strand?.model {
+                        Label(model, systemImage: "cpu")
                     }
+                    if let tokens = controller.totalTokens, tokens > 0 {
+                        Text("\(tokens.formatted(.number.notation(.compactName))) tokens")
+                    }
+                    if let cost = controller.totalCost, cost > 0 {
+                        Text(cost, format: .currency(code: "USD").precision(.fractionLength(2)))
+                    }
+                    if controller.peers.count > 1 {
+                        Label("\(controller.peers.count)", systemImage: "person.2")
+                            .help(controller.peers.map { "\($0.name) (\($0.role))" }.joined(separator: ", "))
+                    }
+                }
+                .font(Theme.meta)
+                .foregroundStyle(.secondary)
+                .labelStyle(.titleAndIcon)
+                .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                if busy, text.isEmpty {
+                    Button {
+                        controller.abort()
+                    } label: {
+                        Image(systemName: "stop.fill").font(.system(size: 10))
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                    .help("Stop this run (⎋)")
+                    .accessibilityLabel("Stop this run")
+                } else {
+                    Button(action: send) {
+                        Image(systemName: "arrow.up").font(.system(size: 11, weight: .bold))
+                    }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help(busy ? "Steer this run (↩)" : "Send (↩)")
+                    .accessibilityLabel(busy ? "Steer this run" : "Send")
                 }
             }
         }
-        .padding(20)
-        .frame(width: 640, height: 520)
+        .padding(.horizontal, 14)
+        .padding(.top, 11)
+        .padding(.bottom, 8)
+        .glassEffect(.regular, in: .rect(cornerRadius: 18))
+        .onAppear { isFocused = true }
+    }
+
+    private func placeholder(_ busy: Bool) -> String {
+        busy ? "Steer this run…" : "Message \(StrandName.display(controller.focusedStrand))…"
+    }
+
+    private func send() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        controller.send(text: trimmed)
+        text = ""
     }
 }
+
+// MARK: Approvals
 
 /// The consent surface.
 ///
@@ -469,196 +750,411 @@ struct ApprovalCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "hand.raised").foregroundStyle(Theme.attention)
-                Text("Allow ")
-                    + Text(record.tool.isEmpty ? "an unnamed tool" : record.tool).font(.body.monospaced().weight(.medium))
-                    + Text("?")
+            HStack(spacing: 8) {
+                Image(systemName: "hand.raised.fill")
+                    .foregroundStyle(Theme.attention)
+                Text("Allow \(Text(record.tool.isEmpty ? "an unnamed tool" : record.tool).font(.body.monospaced().weight(.semibold)))?")
+                    .font(.system(size: 14, weight: .medium))
                 Spacer()
-                if !record.strand.isEmpty {
-                    Text(record.strand).font(Theme.meta).foregroundStyle(.secondary)
+                Group {
+                    if !record.strand.isEmpty { Text(StrandName.display(record.strand)) }
+                    if let placement = record.placement { Text("@ \(placement)") }
                 }
-                if let placement = record.placement {
-                    Text("@ \(placement)").font(Theme.meta).foregroundStyle(.secondary)
-                }
-            }
-            if !record.reason.isEmpty {
-                Text(record.reason).font(.callout).foregroundStyle(.secondary)
+                .font(Theme.meta)
+                .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("It asks for").font(.caption).foregroundStyle(.secondary)
                 ForEach(record.authorityLines, id: \.self) { line in
-                    Text(line).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                    Text(line).font(.system(size: 12.5, weight: .medium).monospaced()).textSelection(.enabled)
                 }
                 if !record.outsideCeiling.isEmpty {
                     Text("Also requested, beyond what this session may grant, so an approval will not include it:")
-                        .font(.caption)
+                        .font(Theme.caption)
                         .foregroundStyle(Theme.attention)
+                        .padding(.top, 3)
                     ForEach(record.outsideCeiling, id: \.self) { line in
-                        Text(line).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(line).font(.system(size: 12).monospaced()).foregroundStyle(.secondary)
                     }
                 }
                 if record.untranslatableGrants > 0 {
                     Text("\(record.untranslatableGrants) more this version of the app cannot show.")
-                        .font(.callout)
+                        .font(Theme.caption)
                         .foregroundStyle(Theme.failure)
                 }
             }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("A sample of the call, written by the model. The approval covers the whole action.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
                 ScrollView {
                     Text(record.safePreview.isEmpty ? "(no preview)" : record.safePreview)
-                        .font(.system(size: 11.5, design: .monospaced))
+                        .font(.system(size: 11.5).monospaced())
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
+                        .padding(9)
                 }
-                .frame(maxHeight: 110)
+                .frame(maxHeight: 96)
                 .fixedSize(horizontal: false, vertical: true)
-                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.hairline))
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.72), in: .rect(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Theme.hairline, lineWidth: 0.5))
+                Text("A sample of the call, written by the model. The approval covers the whole action.")
+                    .font(Theme.caption)
+                    .foregroundStyle(.secondary)
             }
 
-            HStack {
+            HStack(spacing: 8) {
+                if !record.reason.isEmpty {
+                    Text(record.reason)
+                        .font(Theme.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
                 Spacer()
                 Button("Deny") { controller.deny(record) }
+                    .buttonStyle(.glass)
+                    .help("Deny (⇧⌘D)")
                 Button("Allow") { controller.approve(record) }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Theme.attention)
+                    .buttonStyle(.glassProminent)
+                    .tint(Theme.grant)
                     .disabled(!record.canApprove)
+                    .help("Allow once (⇧⌘A)")
             }
         }
-        .padding(12)
-        .surface(fill: Theme.attention.opacity(0.07))
+        .padding(14)
+        .glassEffect(.regular.tint(Theme.attention.opacity(0.14)), in: .rect(cornerRadius: 18))
     }
 }
 
-private struct Composer: View {
+// MARK: Remote agents
+
+/// Subagents on other orchestrators. Each row is the stub the parent's daemon
+/// holds, so it keeps its last glance when that machine cannot be reached.
+private struct RemoteAgentsStrip: View {
     let controller: SessionController
-    @State private var text = ""
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        let busy = controller.isBusy
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField(busy ? "Steer this run…" : "Message \(controller.focusedStrand)…", text: $text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...10)
-                .focused($isFocused)
-                .onSubmit(send)
-                .padding(.vertical, 6)
-
-            if busy, text.isEmpty {
-                Button(action: controller.abort) {
-                    Image(systemName: "stop.fill").font(.system(size: 11))
-                        .frame(width: 26, height: 26)
-                        .background(Color.primary.opacity(0.85), in: Circle())
-                        .foregroundStyle(Color(nsColor: .windowBackgroundColor))
-                }
-                .buttonStyle(.plain)
-                .help("Stop this run")
-            } else {
-                Button(action: send) {
-                    Image(systemName: "arrow.up").font(.system(size: 12, weight: .semibold))
-                        .frame(width: 26, height: 26)
-                        .background(text.isEmpty ? Theme.hairline : Color.primary.opacity(0.85), in: Circle())
-                        .foregroundStyle(Color(nsColor: .windowBackgroundColor))
-                }
-                .buttonStyle(.plain)
-                .disabled(text.isEmpty)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .surface(fill: Color(nsColor: .textBackgroundColor), radius: 12)
-        .onAppear { isFocused = true }
-    }
-
-    private func send() {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        controller.send(text: trimmed)
-        text = ""
-    }
-}
-
-/// The worktree's changes, as the daemon observes them.
-private struct ReviewPane: View {
-    let controller: SessionController
-
-    var body: some View {
-        let board = controller.conversation.worktree
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Text("Changes").font(.headline)
-                    Spacer()
-                    Button {
-                        controller.requestDiff()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                }
-                if let board {
-                    if board["status"]?.string == "failed" {
-                        Text(board["message"]?.string ?? "The observation failed.")
-                            .foregroundStyle(Theme.failure)
-                    }
-                    let entries = board["entries"]?.array ?? []
-                    if entries.isEmpty, board["status"]?.string == "ready" {
-                        Text("No uncommitted changes.").foregroundStyle(.secondary)
-                    }
-                    ForEach(entries, id: \.self) { entry in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(entry["path"]?.string ?? "")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                            DiffText(patch: entry["patch"]?.string ?? "")
-                        }
-                    }
-                    if let omitted = board["omitted"]?.int, omitted > 0 {
-                        Text("\(omitted) more files were not captured.").font(.callout).foregroundStyle(.secondary)
-                    }
-                    if let committed = board["committed"]?["patch"]?.string, !committed.isEmpty {
-                        Text("Committed in this session").font(.headline).padding(.top, 6)
-                        DiffText(patch: committed)
-                    }
-                } else {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .padding(14)
-        }
-    }
-}
-
-/// A patch in full colour: red for removed lines, green for added.
-struct DiffText: View {
-    let patch: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(patch.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { _, line in
-                Text(line.isEmpty ? " " : String(line))
-                    .font(.system(size: 11, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 0.5)
-                    .background(background(line))
+            ForEach(controller.remoteChildren) { child in
+                Button {
+                    controller.peek(child: child)
+                } label: {
+                    RemoteChildRow(child: child)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
             }
         }
-        .surface(fill: .clear, radius: 6)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+    }
+}
+
+struct RemoteChildRow: View {
+    let child: RemoteChild
+
+    var body: some View {
+        HStack(spacing: 8) {
+            StatusDot(liveness: child.isActive ? .working : .idle)
+            Text(child.title).font(Theme.label).lineLimit(1)
+            Text("@ \(child.orchestrator)").font(Theme.meta).foregroundStyle(.secondary)
+            Text(child.summary).font(Theme.caption).foregroundStyle(.secondary).lineLimit(1)
+            Spacer(minLength: 4)
+            Text(child.standing).font(Theme.meta).foregroundStyle(.secondary)
+            if let age = child.ageMs, age > 30_000 {
+                Text("\(age / 1000)s old").font(Theme.meta).foregroundStyle(Theme.attention)
+            }
+        }
+    }
+}
+
+/// A read-only page of a remote child's transcript. Its markdown is drawn as plain
+/// text, because it is model output from another machine.
+private struct ChildPeekSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let controller: SessionController
+
+    var body: some View {
+        let peek = controller.peek
+        NavigationStack {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    if peek?.isPending == true {
+                        ProgressView().controlSize(.small)
+                    }
+                    if let failure = peek?.failure {
+                        Text(failure).foregroundStyle(Theme.failure)
+                    }
+                    ForEach(peek?.rows ?? []) { row in
+                        if case .assistant(let text) = row.kind {
+                            Text(text).font(Theme.body).textSelection(.enabled)
+                        } else {
+                            RowView(row: row)
+                        }
+                    }
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .navigationTitle(StrandName.display(peek?.child ?? ""))
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                }
+            }
+        }
+        .frame(width: 680, height: 540)
+    }
+}
+
+// MARK: Inspector
+
+private struct SessionInspector: View {
+    let record: SessionRecord
+    let controller: SessionController
+    let placement: Placement?
+
+    enum Tab: String, CaseIterable, Identifiable {
+        case changes = "Changes"
+        case agents = "Agents"
+        case details = "Details"
+        var id: Self { self }
     }
 
-    private func background(_ line: Substring) -> Color {
-        if line.hasPrefix("+"), !line.hasPrefix("+++") { return Color.green.opacity(0.18) }
-        if line.hasPrefix("-"), !line.hasPrefix("---") { return Color.red.opacity(0.18) }
-        return .clear
+    @SceneStorage("inspectorTab") private var tab = Tab.changes
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Inspector", selection: $tab) {
+                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+
+            ScrollView {
+                Group {
+                    switch tab {
+                    case .changes: ChangesPane(controller: controller)
+                    case .agents: AgentsPane(controller: controller)
+                    case .details: DetailsPane(record: record, controller: controller, placement: placement)
+                    }
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+/// The worktree's changes, as the daemon observes them on the machine with the
+/// checkout. It reads again whenever a tool run in this session settles.
+private struct ChangesPane: View {
+    let controller: SessionController
+
+    private var settledTools: Int {
+        controller.blocks.reduce(0) { total, block in
+            if case .activity(let rows) = block { return total + rows.count }
+            return total
+        }
+    }
+
+    var body: some View {
+        let board = controller.worktree
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                let entries = board?["entries"]?.array ?? []
+                Text(entries.isEmpty ? "Changes" : "\(entries.count) changed file\(entries.count == 1 ? "" : "s")")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    controller.requestDiff()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Read the worktree again")
+                .accessibilityLabel("Refresh changes")
+            }
+            if let board {
+                if board["status"]?.string == "failed" {
+                    Text(board["message"]?.string ?? "The observation failed.")
+                        .foregroundStyle(Theme.failure)
+                } else if board["status"]?.string == "pending" {
+                    ProgressView().controlSize(.small)
+                }
+                let entries = board["entries"]?.array ?? []
+                if entries.isEmpty, board["status"]?.string == "ready" {
+                    Text("No uncommitted changes.").foregroundStyle(.secondary)
+                }
+                ForEach(entries, id: \.self) { entry in
+                    FileChange(entry: entry)
+                }
+                if let omitted = board["omitted"]?.int, omitted > 0 {
+                    Text("\(omitted) more files were not captured.")
+                        .font(Theme.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let committed = board["committed"]?["patch"]?.string, !committed.isEmpty {
+                    Text("Committed in this session").font(.headline).padding(.top, 6)
+                    DiffView(summary: Diff.parse(committed))
+                }
+            } else {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .task(id: settledTools) {
+            try? await Task.sleep(for: .milliseconds(300))
+            controller.requestDiff()
+        }
+    }
+}
+
+private struct FileChange: View {
+    let entry: JSONValue
+    @State private var isOpen = true
+
+    var body: some View {
+        let path = entry["path"]?.string ?? ""
+        let summary = Diff.parse(entry["patch"]?.string ?? "")
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    Text(path).font(.system(size: 12, weight: .medium).monospaced()).lineLimit(1).truncationMode(.head)
+                    Spacer(minLength: 6)
+                    if summary.added > 0 {
+                        Text("+\(summary.added)").font(Theme.meta).foregroundStyle(Theme.addedText)
+                    }
+                    if summary.removed > 0 {
+                        Text("−\(summary.removed)").font(Theme.meta).foregroundStyle(Theme.removedText)
+                    }
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(path), \(summary.added) added, \(summary.removed) removed")
+
+            if isOpen {
+                DiffView(summary: summary, language: Syntax.language(forPath: path))
+            }
+        }
+    }
+}
+
+/// Every agent in this session, on this orchestrator or another.
+private struct AgentsPane: View {
+    let controller: SessionController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(controller.strands) { strand in
+                Button {
+                    controller.focusedStrand = strand.id
+                } label: {
+                    HStack(spacing: 8) {
+                        StatusDot(liveness: strand.isBusy ? .working : .idle)
+                        Text(StrandName.display(strand.id))
+                            .font(.system(size: 13, weight: strand.id == controller.focusedStrand ? .semibold : .regular))
+                        Spacer()
+                        if let model = strand.model {
+                            Text(model).font(Theme.meta).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(strand.id == controller.focusedStrand ? Theme.tintStrong : .clear, in: .rect(cornerRadius: 7))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+            }
+            if !controller.remoteChildren.isEmpty {
+                Text("On other machines")
+                    .font(Theme.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 10)
+                ForEach(controller.remoteChildren) { child in
+                    Button {
+                        controller.peek(child: child)
+                    } label: {
+                        RemoteChildRow(child: child)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct DetailsPane: View {
+    let record: SessionRecord
+    let controller: SessionController
+    let placement: Placement?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            group("Where") {
+                if let placement {
+                    row("Conversation", placement.brain)
+                    row("Tools", placement.hands)
+                }
+                row("Workspace", record.workspace)
+                if let branch = controller.branch { row("Branch", branch) }
+            }
+            group("Usage") {
+                row("Total tokens", (controller.totalTokens ?? 0).formatted())
+                row("Input", (controller.usage["input"]?.int ?? 0).formatted())
+                row("Output", (controller.usage["output"]?.int ?? 0).formatted())
+                row("Cache read", (controller.usage["cacheRead"]?.int ?? 0).formatted())
+                if let cost = controller.totalCost, cost > 0 {
+                    row("Cost", cost.formatted(.currency(code: "USD").precision(.fractionLength(4))))
+                } else {
+                    row("Cost", "Not priced")
+                }
+            }
+            if !controller.peers.isEmpty {
+                group("Attached") {
+                    ForEach(controller.peers) { peer in
+                        row(peer.name, peer.role)
+                    }
+                }
+            }
+            group("Session") {
+                HStack {
+                    Text(record.id).font(Theme.meta).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                    CopyButton(text: record.id, label: "Copy session ID")
+                }
+                row("Created", record.createdAt.formatted(date: .abbreviated, time: .shortened))
+            }
+        }
+    }
+
+    private func group<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.headline)
+            content()
+        }
+    }
+
+    private func row(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label).font(Theme.caption).foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(size: 12).monospaced())
+                .multilineTextAlignment(.trailing)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+        }
     }
 }

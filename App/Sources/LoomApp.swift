@@ -1,6 +1,7 @@
 import LoomKit
 import MissionKit
 import SwiftUI
+import UserNotifications
 
 @main
 struct LoomApp: App {
@@ -10,28 +11,34 @@ struct LoomApp: App {
         WindowGroup("Loom", id: "main") {
             RootView()
                 .environment(model)
-                .frame(minWidth: 960, minHeight: 600)
+                .frame(minWidth: 880, minHeight: 560)
                 .task {
                     model.start()
+                    Announcer.shared.watch(model)
                     #if DEBUG
                     DebugDriver.start(model: model)
                     #endif
                 }
         }
-        .windowToolbarStyle(.unified(showsTitle: false))
-        .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("Dispatch Agent…") { model.isDispatching = true }
-                    .keyboardShortcut("n")
+        .defaultSize(width: 1280, height: 820)
+        .windowToolbarStyle(.unified)
+        .commands { LoomCommands(model: model) }
+
+        // A session in its own window, for keeping one on a second display.
+        WindowGroup("Session", id: "session", for: String.self) { $sessionID in
+            if let sessionID {
+                NavigationStack {
+                    SessionScreen(sessionID: sessionID)
+                }
+                .environment(model)
+                .frame(minWidth: 560, minHeight: 480)
             }
-            CommandMenu("Go") {
-                Button("Inbox") { model.destination = .inbox }
-                    .keyboardShortcut("1")
-                Button("Mission Control") { model.destination = .mission }
-                    .keyboardShortcut("2")
-                Button("Machines") { model.destination = .machines }
-                    .keyboardShortcut("3")
-            }
+        }
+        .defaultSize(width: 820, height: 760)
+        .windowToolbarStyle(.unified)
+
+        Settings {
+            SettingsView().environment(model)
         }
 
         // The count stays visible when the window is not, since being told an
@@ -40,8 +47,76 @@ struct LoomApp: App {
             MenuBarContent().environment(model)
         } label: {
             let waiting = model.attention.count
-            Label(waiting == 0 ? "Loom" : "\(waiting)", systemImage: waiting == 0 ? "circle.dotted" : "circle.inset.filled")
-                .labelStyle(.titleAndIcon)
+            if waiting == 0 {
+                Image(systemName: "circle.dotted")
+            } else {
+                Label("\(waiting)", systemImage: "circle.inset.filled").labelStyle(.titleAndIcon)
+            }
+        }
+    }
+}
+
+/// The menu bar: every command a person can reach, with its shortcut on show. It is
+/// how a Mac app teaches its keyboard.
+private struct LoomCommands: Commands {
+    let model: AppModel
+
+    private var session: SessionController? { model.currentSession }
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Agent…") { model.isDispatching = true }
+                .keyboardShortcut("n")
+            Button("Connect a Daemon…") {
+                model.daemonSuggestion = nil
+                model.isAddingDaemon = true
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+        }
+        CommandGroup(after: .sidebar) {
+            Button(model.showsInspector ? "Hide Inspector" : "Show Inspector") {
+                model.showsInspector.toggle()
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+        }
+        CommandMenu("Go") {
+            Button("Command Palette…") { model.isPaletteOpen.toggle() }
+                .keyboardShortcut("k")
+            Divider()
+            Button("Inbox") { model.destination = .inbox }
+                .keyboardShortcut("1")
+            Button("Mission Control") { model.destination = .mission }
+                .keyboardShortcut("2")
+            Button("Machines") { model.destination = .machines }
+                .keyboardShortcut("3")
+            Divider()
+            Button("Next Session Needing You") { model.goToNextNeedingYou() }
+                .keyboardShortcut("j")
+                .disabled(model.attention.isEmpty)
+        }
+        CommandMenu("Session") {
+            // These answer the first card on screen, which is the record the person
+            // is looking at, so the echo still states what was displayed.
+            Button("Allow Request") {
+                if let session, let record = session.escalations.first { session.approve(record) }
+            }
+            .keyboardShortcut("a", modifiers: [.command, .shift])
+            .disabled(session?.escalations.first?.canApprove != true)
+            Button("Deny Request") {
+                if let session, let record = session.escalations.first { session.deny(record) }
+            }
+            .keyboardShortcut("d", modifiers: [.command, .shift])
+            .disabled(session?.escalations.isEmpty != false)
+            Divider()
+            Button("Stop Run") { session?.abort() }
+                .keyboardShortcut(".")
+                .disabled(session?.isBusy != true)
+            Button("Find in Transcript") { session?.isSearching = true }
+                .keyboardShortcut("f")
+                .disabled(session == nil)
+            Button("Refresh Changes") { session?.requestDiff() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(session == nil)
         }
     }
 }
@@ -61,7 +136,7 @@ private struct MenuBarContent: View {
         }
         Divider()
         Button("Mission Control") { show(.mission) }
-        Button("Dispatch Agent…") {
+        Button("New Agent…") {
             show(.mission)
             model.isDispatching = true
         }
@@ -72,6 +147,100 @@ private struct MenuBarContent: View {
     private func show(_ destination: Destination) {
         model.destination = destination
         openWindow(id: "main")
-        NSApplication.shared.activate(ignoringOtherApps: true)
+        NSApplication.shared.activate()
+    }
+}
+
+/// Reports new attention items outside the window: the Dock badge always, and a
+/// notification while the app is in the background.
+@MainActor
+final class Announcer {
+    static let shared = Announcer()
+    private var known: Set<String> = []
+    private var isWatching = false
+
+    func watch(_ model: AppModel) {
+        guard !isWatching else { return }
+        isWatching = true
+        let notifies = UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true
+        if notifies, !isUnderTest {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
+        }
+        Task {
+            while true {
+                try? await Task.sleep(for: .seconds(1))
+                update(model.attention)
+            }
+        }
+    }
+
+    private var isUnderTest: Bool {
+        ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] != nil
+    }
+
+    private func update(_ items: [AttentionItem]) {
+        NSApp.dockTile.badgeLabel = items.isEmpty ? nil : "\(items.count)"
+        let current = Set(items.map(\.id))
+        let fresh = items.filter { !known.contains($0.id) }
+
+        // The first read is a backlog, not news.
+        let isFirstRead = known.isEmpty && !hasRead
+        hasRead = true
+        known = current
+        guard !isFirstRead, !NSApp.isActive, !isUnderTest,
+              UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true else { return }
+        for item in fresh {
+            let content = UNMutableNotificationContent()
+            content.title = item.agent
+            content.subtitle = item.kind.title
+            content.body = item.title
+            content.sound = .default
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: item.id, content: content, trigger: nil))
+        }
+    }
+
+    private var hasRead = false
+}
+
+struct SettingsView: View {
+    @Environment(AppModel.self) private var model
+    @AppStorage("notifications") private var notifications = true
+
+    var body: some View {
+        @Bindable var model = model
+        Form {
+            Section("Notifications") {
+                Toggle("Notify me when an agent needs me", isOn: $notifications)
+            }
+            Section("Daemons") {
+                ForEach(model.daemons) { daemon in
+                    LabeledContent(daemon.label) {
+                        HStack(spacing: 8) {
+                            Text(stateLabel(daemon)).foregroundStyle(.secondary)
+                            if daemon.isRemote {
+                                Button("Remove") { model.removeDaemon(daemon) }
+                            }
+                        }
+                    }
+                }
+                Button("Connect a Daemon…") {
+                    model.daemonSuggestion = nil
+                    model.isAddingDaemon = true
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 480, height: 320)
+        .sheet(isPresented: $model.isAddingDaemon) {
+            AddDaemonSheet()
+        }
+    }
+
+    private func stateLabel(_ daemon: DaemonConnection) -> String {
+        switch daemon.state {
+        case .connected: return "Connected"
+        case .connecting: return "Connecting"
+        case .unavailable: return "Unavailable"
+        }
     }
 }

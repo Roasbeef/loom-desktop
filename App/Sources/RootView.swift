@@ -1,23 +1,34 @@
 import LoomKit
+import Markup
 import MissionKit
 import SwiftUI
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.appearsActive) private var appearsActive
+    @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
         @Bindable var model = model
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
+                .navigationSplitViewColumnWidth(min: 230, ideal: 270, max: 380)
         } detail: {
-            switch model.destination {
-            case .inbox: InboxView()
-            case .machines: MachinesView()
-            case .session(let id): SessionScreen(sessionID: id).id(id)
-            case .mission, nil: MissionControlView()
+            detail
+        }
+        .overlay {
+            if model.isPaletteOpen {
+                CommandPalette()
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
+        .animation(.smooth(duration: 0.14), value: model.isPaletteOpen)
+        #if DEBUG
+        // Draws controls as a frontmost window does, so a capture can check them
+        // without taking focus from whatever a person is doing.
+        .environment(\.appearsActive, ProcessInfo.processInfo.environment["LOOM_FORCE_ACTIVE"] != nil ? true : appearsActive)
+        .environment(\.controlActiveState, ProcessInfo.processInfo.environment["LOOM_FORCE_ACTIVE"] != nil ? .key : controlActiveState)
+        #endif
         .sheet(isPresented: $model.isDispatching) {
             DispatchSheet()
         }
@@ -25,93 +36,203 @@ struct RootView: View {
             AddDaemonSheet()
         }
     }
+
+    @ViewBuilder
+    private var detail: some View {
+        if model.isDaemonMissing {
+            DaemonMissingView()
+        } else {
+            switch model.destination {
+            case .inbox: InboxView()
+            case .machines: MachinesView()
+            case .session(let id): SessionScreen(sessionID: id).id(id)
+            case .mission, nil: MissionControlView()
+            }
+        }
+    }
 }
+
+/// The first thing a new person sees when no daemon is running, so it says what to
+/// do and offers to do it. Starting the daemon goes through the installed client.
+private struct DaemonMissingView: View {
+    @Environment(AppModel.self) private var model
+    @State private var isStarting = false
+    @State private var error: String?
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("loomd isn't running", systemImage: "bolt.slash")
+        } description: {
+            VStack(spacing: 6) {
+                Text("Loom needs its daemon to run agents. Your sessions are saved and will come back with it.")
+                if case .unavailable(let reason)? = model.daemons.first?.state {
+                    Text(reason).font(Theme.meta).foregroundStyle(.tertiary)
+                }
+                if let error {
+                    Text(error).foregroundStyle(Theme.failure)
+                }
+            }
+        } actions: {
+            Button(isStarting ? "Starting…" : "Start loomd") {
+                isStarting = true
+                error = nil
+                Task {
+                    defer { isStarting = false }
+                    do {
+                        try await model.startDaemon()
+                    } catch {
+                        self.error = error.localizedDescription
+                    }
+                }
+            }
+            .buttonStyle(.glassProminent)
+            .keyboardShortcut(.defaultAction)
+            .disabled(isStarting)
+        }
+    }
+}
+
+// MARK: Sidebar
 
 private struct SidebarView: View {
     @Environment(AppModel.self) private var model
-    @AppStorage("sidebarGrouping") private var grouping = SidebarGrouping.project
+    @AppStorage("sidebarGrouping") private var grouping = SidebarGrouping.status
+    @State private var showsSaved = false
 
-    private func groupName(_ record: SessionRecord) -> String {
-        switch grouping {
-        case .project: return record.workspaceName
-        case .machine: return model.placement(of: record)?.hands ?? record.workspaceName
-        }
-    }
-
-    private var groups: [(workspace: String, sessions: [SessionRecord])] {
-        let visible = model.sessions.filter { record in
+    private var visible: [SessionRecord] {
+        model.sessions.filter { record in
             if case .reserved(let failure) = record.state { return failure != nil }
             return true
         }
-        return Dictionary(grouping: visible, by: groupName)
-            .map { ($0.key, $0.value) }
-            .sorted { lhs, rhs in
-                (lhs.sessions.first?.createdAt ?? .distantPast) > (rhs.sessions.first?.createdAt ?? .distantPast)
+    }
+
+    private func liveness(_ record: SessionRecord) -> AgentCard.Liveness {
+        Mission.liveness(session: record, activity: model.activity[record.id])
+    }
+
+    /// Sessions in groups by what they need, by project or by machine. Status is
+    /// the default because a person returning to the app asks what needs them.
+    private var sections: [(title: String, sessions: [SessionRecord])] {
+        switch grouping {
+        case .status:
+            let order: [(AgentCard.Liveness, String)] = [(.needsYou, "Needs You"), (.working, "Working"), (.idle, "Idle"), (.unknown, "Not Answering")]
+            return order.compactMap { state, title in
+                let rows = visible.filter { liveness($0) == state }
+                return rows.isEmpty ? nil : (title, rows)
             }
+        case .project, .machine:
+            let key: (SessionRecord) -> String = { record in
+                grouping == .project
+                    ? record.workspaceName
+                    : model.placement(of: record)?.hands ?? "This machine"
+            }
+            return Dictionary(grouping: visible.filter { liveness($0) != .off }, by: key)
+                .map { ($0.key, $0.value) }
+                .sorted { $0.title < $1.title }
+        }
+    }
+
+    private var saved: [SessionRecord] {
+        visible.filter { liveness($0) == .off }
+    }
+
+    private var groupings: [SidebarGrouping] {
+        model.isMultiMachine ? SidebarGrouping.allCases : [.status, .project]
     }
 
     var body: some View {
         @Bindable var model = model
         List(selection: $model.destination) {
             Section {
-                Label {
-                    HStack {
-                        Text("Inbox")
-                        Spacer()
-                        let count = model.attention.count
-                        if count > 0 {
-                            Text("\(count)")
-                                .font(.caption.monospacedDigit().weight(.medium))
-                                .foregroundStyle(Theme.attention)
-                        }
-                    }
-                } icon: {
-                    Image(systemName: "tray")
-                }
-                .tag(Destination.inbox)
-
+                Label("Inbox", systemImage: "tray")
+                    .badge(model.attention.count)
+                    .tag(Destination.inbox)
                 Label("Mission Control", systemImage: "square.grid.2x2")
                     .tag(Destination.mission)
-
-                // A person on one machine has no use for this page.
                 if model.isMultiMachine {
                     Label("Machines", systemImage: "server.rack")
                         .tag(Destination.machines)
                 }
             }
 
-            if model.isMultiMachine {
-                Picker("Group by", selection: $grouping) {
-                    ForEach(SidebarGrouping.allCases) { Text($0.rawValue).tag($0) }
+            ForEach(sections, id: \.title) { section in
+                Section(section.title) {
+                    ForEach(section.sessions) { record in
+                        SessionRow(record: record, activity: model.activity[record.id], placement: model.placement(of: record))
+                            .tag(Destination.session(record.id))
+                            .sessionContextMenu(record: record)
+                    }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .listRowSeparator(.hidden)
             }
 
-            ForEach(groups, id: \.workspace) { group in
-                Section(group.workspace) {
-                    ForEach(group.sessions) { record in
-                        SessionRow(
-                            record: record,
-                            activity: model.activity[record.id],
-                            placement: model.placement(of: record)
-                        )
+            if !saved.isEmpty {
+                Section("Saved", isExpanded: $showsSaved) {
+                    ForEach(saved) { record in
+                        SessionRow(record: record, activity: nil, placement: model.placement(of: record))
                             .tag(Destination.session(record.id))
+                            .sessionContextMenu(record: record)
                     }
                 }
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom, spacing: 0) { DaemonFooter() }
+        .safeAreaBar(edge: .bottom, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Picker("Group by", selection: $grouping) {
+                    ForEach(groupings) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+                DaemonFooter()
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 10)
+            .padding(.top, 6)
+        }
         .toolbar {
-            ToolbarItem {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     model.isDispatching = true
                 } label: {
-                    Label("Dispatch Agent", systemImage: "square.and.pencil")
+                    Label("New Agent", systemImage: "plus")
                 }
-                .help("Dispatch an agent (⌘N)")
+                .help("Dispatch a new agent (⌘N)")
+            }
+        }
+    }
+}
+
+extension View {
+    func sessionContextMenu(record: SessionRecord) -> some View {
+        modifier(SessionContextMenu(record: record))
+    }
+}
+
+private struct SessionContextMenu: ViewModifier {
+    @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
+    let record: SessionRecord
+
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            Button("Open in New Window") {
+                openWindow(id: "session", value: record.id)
+            }
+            if record.executor == nil, record.pool == nil {
+                Button("Reveal Workspace in Finder") {
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: record.workspace)
+                }
+            }
+            Button("Copy Session ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(record.id, forType: .string)
+            }
+            if record.state.isResident {
+                Divider()
+                Button("Stop Session") {
+                    Task { try? await model.daemon(holding: record.id)?.stop(record.id) }
+                }
             }
         }
     }
@@ -123,30 +244,37 @@ private struct SessionRow: View {
     let placement: Placement?
 
     private var liveness: AgentCard.Liveness {
-        switch activity?.state {
-        case .needsYou: return .needsYou
-        case .working: return .working
-        case .idle: return .idle
-        case .unknown: return .unknown
-        case nil: return record.state.isResident ? .idle : .off
-        }
+        Mission.liveness(session: record, activity: activity)
+    }
+
+    private var preview: String? {
+        guard let line = activity?.lastMessage ?? record.subtitle, line != record.title else { return nil }
+        return Markdown.plainPreview(line)
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             StatusDot(liveness: liveness)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(record.title).lineLimit(1)
-                if let line = activity?.lastMessage ?? record.subtitle, line != record.title {
-                    // Markdown markers are noise in a one-line preview.
-                    Text(line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: ""))
-                        .font(.caption)
+                .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(record.title).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(record.createdAt.compactAge)
+                        .font(.system(size: 10.5))
+                        .monospacedDigit()
+                        .foregroundStyle(.tertiary)
+                }
+                if let preview {
+                    Text(preview)
+                        .font(Theme.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
                 if let placement, placement.isSplit {
-                    Text(placement.label)
-                        .font(Theme.meta)
+                    Label(placement.hands, systemImage: "arrow.right")
+                        .labelStyle(.titleAndIcon)
+                        .font(.system(size: 10.5).monospaced())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -154,6 +282,21 @@ private struct SessionRow: View {
                     Text("Moving to \(movingTo)").font(Theme.meta).foregroundStyle(Theme.attention)
                 }
             }
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+extension Date {
+    /// "4m", "2h", "3d": a sidebar has no room for more, and no need.
+    var compactAge: String {
+        let seconds = Int(-timeIntervalSinceNow)
+        switch seconds {
+        case ..<60: return "now"
+        case ..<3600: return "\(seconds / 60)m"
+        case ..<86400: return "\(seconds / 3600)h"
+        default: return "\(seconds / 86400)d"
         }
     }
 }
@@ -163,37 +306,31 @@ private struct DaemonFooter: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             ForEach(model.daemons) { daemon in
-                VStack(alignment: .leading, spacing: 3) {
-                    switch daemon.state {
-                    case .connected:
-                        HStack(spacing: 6) {
-                            if let status = daemon.status {
-                                CapacityMeter(used: status.resident, capacity: status.capacity)
-                            }
-                            Text(model.daemons.count > 1 ? daemon.label : "\(daemon.status?.resident ?? 0)/\(daemon.status?.capacity ?? 0) running")
-                                .lineLimit(1)
+                switch daemon.state {
+                case .connected:
+                    HStack(spacing: 6) {
+                        if let status = daemon.status {
+                            CapacityMeter(used: status.resident, capacity: status.capacity)
                         }
+                        Text(model.daemons.count > 1 ? daemon.label : "\(daemon.status?.resident ?? 0) of \(daemon.status?.capacity ?? 0) running")
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
                         if let deployment = daemon.deployment, deployment.isDistributed, deployment.state != "ok" {
-                            Text("Deployment \(deployment.state)").foregroundStyle(Theme.attention)
+                            Text(deployment.state).foregroundStyle(Theme.attention)
                         }
-                    case .connecting:
-                        Text("Connecting to \(daemon.label)…")
-                    case .unavailable(let reason):
-                        Text("\(daemon.label) unavailable").foregroundStyle(Theme.failure)
-                        Text(reason).lineLimit(2)
                     }
+                case .connecting:
+                    Text("Connecting to \(daemon.label)…")
+                case .unavailable:
+                    Text("\(daemon.label) unavailable").foregroundStyle(Theme.failure).lineLimit(1)
                 }
-            }
-            HStack(spacing: 6) {
-                Text("loomd \(model.daemons.first?.hello?.buildVersion ?? "")")
             }
         }
         .font(Theme.meta)
         .foregroundStyle(.secondary)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
     }
 }
 
@@ -203,33 +340,38 @@ struct CapacityMeter: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(0..<max(capacity, 0), id: \.self) { slot in
+            ForEach(0..<min(max(capacity, 0), 16), id: \.self) { slot in
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(slot < used ? Theme.working : Theme.hairline)
-                    .frame(width: 5, height: 9)
+                    .fill(slot < used ? Color.primary.opacity(0.65) : Color.primary.opacity(0.12))
+                    .frame(width: 4, height: 9)
             }
         }
+        .accessibilityElement()
         .accessibilityLabel("\(used) of \(capacity) session slots in use")
     }
 }
 
-/// The new-agent form: where to run and what to do, and nothing more.
+// MARK: Dispatch
+
+/// The new-agent form. The prompt comes first because it is why a person opened it,
+/// and where it runs defaults to the last choice so a repeat takes one keystroke.
 ///
-/// A person on one machine sees a path and a prompt. With executors configured,
-/// they also choose where the tools run, and the workspace becomes a name that
-/// machine registered, since a path here means nothing on that machine.
-private struct DispatchSheet: View {
+/// With executors configured, a person also chooses where the tools run, and the
+/// workspace becomes a name that machine registered, since a path here means
+/// nothing on that machine.
+struct DispatchSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("lastWorkspace") private var lastWorkspace = ""
     @State private var daemonID = "local"
     @State private var placement = PlacementChoice.local
     @State private var workspace = ""
     @State private var remoteWorkspaces: [String] = []
     @State private var configuration = ""
-    @State private var name = ""
     @State private var prompt = ""
     @State private var error: String?
     @State private var isSending = false
+    @FocusState private var isPromptFocused: Bool
 
     // Held across attempts so a retry after a lost reply recovers the session
     // the first attempt made rather than creating a second one.
@@ -244,20 +386,24 @@ private struct DispatchSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Dispatch an agent").font(.headline)
+        VStack(spacing: 0) {
+            TextField("What should this agent do?", text: $prompt, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 15))
+                .lineLimit(4...14)
+                .focused($isPromptFocused)
+                .padding(18)
+                .accessibilityLabel("Prompt")
 
-            if model.daemons.count > 1 {
-                LabeledContent("Agent runs on") {
+            Divider()
+
+            Form {
+                if model.daemons.count > 1 {
                     Picker("Agent runs on", selection: $daemonID) {
                         ForEach(model.daemons) { Text($0.label).tag($0.id) }
                     }
-                    .labelsHidden()
                 }
-            }
-
-            if !options.isEmpty {
-                LabeledContent("Tools run on") {
+                if !options.isEmpty {
                     Picker("Tools run on", selection: $placement) {
                         Text(daemon?.label ?? "This machine").tag(PlacementChoice.local)
                         ForEach(options) { option in
@@ -266,63 +412,57 @@ private struct DispatchSheet: View {
                                 .selectionDisabled(option.state == "down" || option.state == "full")
                         }
                     }
-                    .labelsHidden()
+                }
+                workspaceField
+                if daemon?.isRemote == true {
+                    // A configuration path is read on the machine holding the session.
+                    TextField("Configuration", text: $configuration, prompt: Text("Path on that machine"))
+                        .font(.system(size: 12).monospaced())
                 }
             }
-
-            workspaceField
-
-            if daemon?.isRemote == true {
-                // A configuration path is read on the machine that holds the session.
-                TextField("Configuration path on that machine", text: $configuration)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-            }
-
-            TextField("Name (optional)", text: $name)
-                .textFieldStyle(.roundedBorder)
-
-            TextEditor(text: $prompt)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .frame(minHeight: 120)
-                .surface()
-                .overlay(alignment: .topLeading) {
-                    if prompt.isEmpty {
-                        Text("What should this agent do?")
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 13)
-                            .padding(.vertical, 8)
-                            .allowsHitTesting(false)
-                    }
-                }
+            .formStyle(.columns)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
 
             if let error {
-                Text(error).font(.callout).foregroundStyle(Theme.failure)
+                Text(error)
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.failure)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 8)
             }
 
+            Divider()
+
             HStack {
+                Text("⌘↩ to dispatch").font(Theme.caption).foregroundStyle(.tertiary)
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Button(isSending ? "Dispatching…" : "Dispatch", action: send)
                     .keyboardShortcut(.return, modifiers: .command)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.glassProminent)
                     .disabled(isSending || workspace.isEmpty || prompt.isEmpty)
             }
+            .padding(14)
         }
-        .padding(20)
-        .frame(width: 560)
+        .frame(width: 580)
+        .onAppear {
+            isPromptFocused = true
+            workspace = lastWorkspace
+        }
         .onChange(of: daemonID) {
             placement = .local
             workspace = ""
             requestKey = UUID().uuidString
         }
-        .task(id: placement) {
+        .onChange(of: placement) {
             // Changing where it runs changes what the workspace field means.
             workspace = ""
             requestKey = UUID().uuidString
+        }
+        .task(id: placement) {
             remoteWorkspaces = []
             if case .executor(let name) = placement, let daemon {
                 remoteWorkspaces = await daemon.workspaces(onExecutor: name)
@@ -335,33 +475,36 @@ private struct DispatchSheet: View {
     private var workspaceField: some View {
         switch placement {
         case .local:
-            HStack {
-                TextField("Workspace path", text: $workspace)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(.body, design: .monospaced))
-                if let daemon, !model.knownWorkspaces(on: daemon).isEmpty {
-                    Menu("Recent") {
-                        ForEach(model.knownWorkspaces(on: daemon), id: \.self) { path in
-                            Button(path) { workspace = path }
+            LabeledContent("Workspace") {
+                HStack(spacing: 6) {
+                    TextField("Workspace", text: $workspace, prompt: Text("/path/to/project"))
+                        .labelsHidden()
+                        .font(.system(size: 12).monospaced())
+                    if let daemon, !model.knownWorkspaces(on: daemon).isEmpty {
+                        Menu {
+                            ForEach(model.knownWorkspaces(on: daemon), id: \.self) { path in
+                                Button(path) { workspace = path }
+                            }
+                        } label: {
+                            Image(systemName: "clock")
                         }
+                        .menuIndicator(.hidden)
+                        .fixedSize()
+                        .help("Recent workspaces")
+                        .accessibilityLabel("Recent workspaces")
                     }
-                    .fixedSize()
-                }
-                if daemon?.isRemote != true {
-                    Button("Choose…", action: choose)
+                    if daemon?.isRemote != true {
+                        Button("Choose…", action: choose)
+                    }
                 }
             }
         case .executor where !remoteWorkspaces.isEmpty:
-            LabeledContent("Workspace") {
-                Picker("Workspace", selection: $workspace) {
-                    ForEach(remoteWorkspaces, id: \.self) { Text($0).tag($0) }
-                }
-                .labelsHidden()
+            Picker("Workspace", selection: $workspace) {
+                ForEach(remoteWorkspaces, id: \.self) { Text($0).tag($0) }
             }
         case .executor, .pool:
-            TextField("Workspace name registered on that machine", text: $workspace)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.body, design: .monospaced))
+            TextField("Workspace", text: $workspace, prompt: Text("Name registered on that machine"))
+                .font(.system(size: 12).monospaced())
         }
     }
 
@@ -369,6 +512,7 @@ private struct DispatchSheet: View {
         var parts = [option.name]
         if case .pool = option.choice { parts.append("pool") }
         if let platform = option.platform { parts.append(platform) }
+        if let free = option.freeScopes, option.state == "ready" { parts.append("\(free) free") }
         if option.state != "ready" { parts.append(option.state) }
         return parts.joined(separator: " · ")
     }
@@ -383,9 +527,10 @@ private struct DispatchSheet: View {
     }
 
     private func send() {
-        guard let daemon else { return }
+        guard let daemon, !workspace.isEmpty, !prompt.isEmpty else { return }
         isSending = true
         error = nil
+        let firstLine = prompt.split(separator: "\n").first.map { String($0.prefix(60)) } ?? ""
 
         // The same configuration the terminal falls back to with no --config.
         let path = daemon.localRoot?.appendingPathComponent("loom.toml").path ?? configuration
@@ -394,12 +539,13 @@ private struct DispatchSheet: View {
             do {
                 let id = try await daemon.dispatch(
                     workspace: workspace,
-                    name: name,
+                    name: firstLine,
                     prompt: prompt,
                     placement: placement,
                     configuration: path,
                     requestKey: requestKey
                 )
+                if placement == .local { lastWorkspace = workspace }
                 model.destination = .session(id)
                 dismiss()
             } catch {

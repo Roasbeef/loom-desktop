@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """A scripted OpenAI-compatible model endpoint for driving the app offline.
 
-It lets a test daemon run real sessions with no credential and no spend. A user
-turn containing "escalate" answers with a write outside the workspace, which policy refuses,
-so the approval path can be exercised. A tool result is acknowledged in text.
-Anything else streams a short markdown reply.
+It lets a test daemon run real sessions with no credential and no spend. Each
+keyword in the last user turn selects a script:
+
+  escalate   a write outside the workspace, which policy refuses
+  demo       a realistic multi-step run: reads, a shell command, a real edit,
+             then a markdown report with headings, a list, a table and code
+  long       streams about 4000 words at speed, for measuring frame drops
+  slow       like the default reply, but slow enough to catch mid-stream
+
+Anything else streams a short markdown reply. A tool result continues whichever
+script produced the call.
 """
 import json
 import sys
@@ -22,27 +29,121 @@ def chunk(delta, finish=None):
     }
 
 
-def script(messages):
-    """Chooses the reply from the last message of the conversation."""
-    last = messages[-1] if messages else {}
-    if last.get("role") == "tool":
-        yield chunk({"content": "The tool returned; that is the end of this scripted run."})
-        yield chunk({}, "stop")
-        return
-    text = json.dumps(last.get("content", ""))
-    if "escalate" in text:
-        args = json.dumps({"path": "/Users/Shared/loom-desktop-escalation-test", "content": "hello"})
-        call = {"index": 0, "id": "call-1", "type": "function",
-                "function": {"name": "fs_write", "arguments": args}}
-        yield chunk({"tool_calls": [call]})
-        yield chunk({}, "tool_calls")
-        return
-    reply = ("Here is a **scripted** reply with `inline code`.\n\n"
-             "```swift\nprint(\"hello from the fake provider\")\n```\n\nDone.")
-    for word in reply.split(" "):
+def call(index, name, arguments):
+    return chunk({"tool_calls": [{
+        "index": index,
+        "id": f"call-{time.time_ns()}-{index}",
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }]})
+
+
+def text_stream(text, delay=0.012):
+    for word in text.split(" "):
         yield chunk({"content": word + " "})
-        time.sleep(0.05)
+        if delay:
+            time.sleep(delay)
     yield chunk({}, "stop")
+
+
+REPORT = """## Retry budget is now per host
+
+The fetcher retried without any bound, so one slow host could hold every worker. I added a **per-host budget** and a jittered backoff.
+
+### What changed
+
+- `fetch.py` wraps each request in a bounded retry loop.
+- `BUDGET` caps attempts at three per host, per minute.
+- A host over budget fails fast instead of queueing.
+
+| Case | Before | After |
+|---|---|---|
+| Healthy host | 1 attempt | 1 attempt |
+| Flaky host | unbounded | at most 3 |
+| Dead host | blocks workers | fails in 40 ms |
+
+### The core of it
+
+```python
+def fetch(url, budget=BUDGET):
+    for attempt in range(budget):
+        try:
+            return get(url, timeout=2.0)
+        except Timeout:
+            time.sleep(backoff(attempt))
+    raise BudgetExceeded(url)
+```
+
+> The budget resets on a timer rather than on success, so a host that recovers cannot immediately stampede.
+
+All 12 tests pass. Want me to wire the budget into the metrics dashboard next?"""
+
+LONG = " ".join(
+    f"Paragraph {i} walks through the `session_channel` credit rule and why a **stop-and-wait** lane keeps replies ordered."
+    + ("\n\n" if i % 4 == 3 else "")
+    for i in range(240)
+)
+
+
+def steps_taken(messages):
+    """Counts tool results since the last user turn."""
+    count = 0
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            break
+        if message.get("role") == "tool":
+            count += 1
+    return count
+
+
+def last_user_text(messages):
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return json.dumps(message.get("content", ""))
+    return ""
+
+
+def script(messages):
+    """Chooses the next reply from where the conversation stands."""
+    prompt = last_user_text(messages)
+    steps = steps_taken(messages)
+
+    if "demo" in prompt:
+        if steps == 0:
+            yield chunk({"content": "I'll look at how the fetcher handles failures, then add a bounded retry."})
+            yield call(0, "bash", {"command": "ls -la"})
+            yield chunk({}, "tool_calls")
+        elif steps == 1:
+            yield call(0, "fs_write", {"path": "fetch.py", "content": "import time\n\nBUDGET = 3\n\n\ndef fetch(url, budget=BUDGET):\n    for attempt in range(budget):\n        try:\n            return get(url, timeout=2.0)\n        except Timeout:\n            time.sleep(backoff(attempt))\n    raise BudgetExceeded(url)\n"})
+            yield chunk({}, "tool_calls")
+        elif steps == 2:
+            yield chunk({"content": "Now the tests."})
+            yield call(0, "bash", {"command": "python3 -c \"print('12 passed in 0.31s')\""})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream(REPORT)
+        return
+
+    if "escalate" in prompt:
+        if steps == 0:
+            args = {"path": "/Users/Shared/loom-desktop-escalation-test", "content": "hello"}
+            yield call(0, "fs_write", args)
+            yield chunk({}, "tool_calls")
+        else:
+            yield chunk({"content": "That write was refused, so I am waiting on your approval."})
+            yield chunk({}, "stop")
+        return
+
+    if "long" in prompt:
+        yield from text_stream(LONG, delay=0.004)
+        return
+
+    delay = 0.25 if "slow" in prompt else 0.03
+    yield from text_stream(
+        "Here is a **scripted** reply with `inline code`.\n\n"
+        "```swift\nprint(\"hello from the fake provider\")\n```\n\nDone.",
+        delay,
+    )
 
 
 class Handler(BaseHTTPRequestHandler):

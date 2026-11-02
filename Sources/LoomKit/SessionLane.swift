@@ -22,8 +22,11 @@ public actor SessionLane {
     /// The server answers one command within six seconds.
     private static let replyDeadline = 6.0
     /// The reconcile cadence with no notice to act on. `catch_up` is also the
-    /// only way to see metadata-only changes, which produce no notice.
+    /// only way to see metadata-only changes, which produce no notice, so the
+    /// refresh never stops. It relaxes while cuts keep coming back empty and
+    /// tightens at the first notice, so a resting session costs almost nothing.
     private static let idleRefresh: Duration = .seconds(1)
+    private static let restingRefresh: Duration = .seconds(5)
 
     public let sessionID: String
     public nonisolated let events: AsyncStream<LaneEvent>
@@ -37,6 +40,7 @@ public actor SessionLane {
     private var identity: Cut.Identity?
     private var nextSeq = 0
     private var dirty = false
+    private var refreshInterval = SessionLane.idleRefresh
     private var closed = false
     private var readerTask: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
@@ -265,9 +269,11 @@ public actor SessionLane {
         switch frame.event {
         case "committed":
             // A notice is a hint to reconcile, idempotent and order-free.
+            refreshInterval = Self.idleRefresh
             if (frame.seq ?? .max) >= nextSeq { dirty = true }
-        case "input_queue_changed":
-            dirty = true
+        case "input_queue_changed", "stream_delta":
+            refreshInterval = Self.idleRefresh
+            if frame.event == "input_queue_changed" { dirty = true }
         default:
             break
         }
@@ -282,11 +288,16 @@ public actor SessionLane {
         while !closed {
             try? await Task.sleep(for: tick)
             sinceRefresh += tick
-            guard dirty || sinceRefresh >= Self.idleRefresh else { continue }
+            guard dirty || sinceRefresh >= refreshInterval else { continue }
             dirty = false
             sinceRefresh = .zero
             do {
-                try await transfer(cmd: "catch_up", body: ["from_seq": .int(Int64(nextSeq))])
+                let cut = try await transfer(cmd: "catch_up", body: ["from_seq": .int(Int64(nextSeq))])
+                if cut.entries.isEmpty {
+                    refreshInterval = min(refreshInterval * 2, Self.restingRefresh)
+                } else {
+                    refreshInterval = Self.idleRefresh
+                }
             } catch let error as LoomError {
                 // A server refusal leaves the socket healthy, and the next tick
                 // retries. Every other failure has already ended the lane.

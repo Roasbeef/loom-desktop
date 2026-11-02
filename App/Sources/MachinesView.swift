@@ -21,8 +21,10 @@ struct MachinesView: View {
                     ElsewhereSection(groups: elsewhere)
                 }
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 20)
+            .frame(maxWidth: 1180, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
         .navigationTitle("Machines")
         .toolbar {
@@ -33,7 +35,7 @@ struct MachinesView: View {
                 } label: {
                     Label("Connect a daemon", systemImage: "plus")
                 }
-                .help("Connect to a daemon on another machine")
+                .help("Connect to a daemon on another machine (⇧⌘N)")
             }
         }
     }
@@ -277,7 +279,7 @@ struct AddDaemonSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Button("Connect", action: connect)
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.glassProminent)
                     .disabled(name.isEmpty || address.isEmpty || token.isEmpty)
             }
         }

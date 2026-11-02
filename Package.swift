@@ -1,4 +1,4 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 // The client logic lives in packages that build with `swift build` alone, so
@@ -7,22 +7,24 @@ import PackageDescription
 // and scripts/bundle.sh wraps its binary into a signed .app.
 let package = Package(
     name: "LoomDesktop",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v26), .iOS(.v26)],
     products: [
         .library(name: "LoomKit", targets: ["LoomKit"]),
         .library(name: "MissionKit", targets: ["MissionKit"]),
+        .library(name: "Markup", targets: ["Markup"]),
         .executable(name: "loom-probe", targets: ["loom-probe"]),
         .executable(name: "Loom", targets: ["Loom"]),
     ],
     targets: [
         .target(name: "LoomKit"),
+        .target(name: "Markup"),
         .target(name: "MissionKit", dependencies: ["LoomKit"]),
         .executableTarget(name: "loom-probe", dependencies: ["LoomKit", "MissionKit"]),
         .executableTarget(
             name: "Loom",
-            dependencies: ["LoomKit", "MissionKit"],
+            dependencies: ["LoomKit", "MissionKit", "Markup"],
             path: "App/Sources"
         ),
-        .testTarget(name: "LoomKitTests", dependencies: ["LoomKit", "MissionKit"]),
+        .testTarget(name: "LoomKitTests", dependencies: ["LoomKit", "MissionKit", "Markup"]),
     ]
 )

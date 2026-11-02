@@ -128,7 +128,9 @@ public enum Mission {
                         kind: .approval,
                         source: .session(id: session.id, escalation: escalation),
                         agent: session.title,
-                        title: escalation.reason.isEmpty ? "Allow \(escalation.tool)?" : escalation.reason,
+                        // What is being asked for says more than the generic reason.
+                        title: escalation.authorityLines.first
+                            ?? (escalation.reason.isEmpty ? "Allow \(escalation.tool)?" : escalation.reason),
                         detail: escalation.safePreview
                     ))
                 }

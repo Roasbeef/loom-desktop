@@ -14,6 +14,7 @@ enum Destination: Hashable {
 
 /// How a person last chose to group the sidebar.
 enum SidebarGrouping: String, CaseIterable, Identifiable {
+    case status = "Status"
     case project = "Project"
     case machine = "Machine"
     var id: Self { self }
@@ -206,6 +207,13 @@ final class DaemonConnection: Identifiable {
             attach(row.sessionID)
         }
 
+        // A socket can drop while its session lives on, so a session someone
+        // attached to is reattached. Nothing unsent is carried across, as the
+        // protocol requires (section 6.7).
+        for (id, controller) in attached where !controller.isLive && resident.contains(id) {
+            attach(id)?.focusedStrand = controller.focusedStrand
+        }
+
         if ticks % Self.deploymentEvery == 0 {
             await refreshDeployment(control)
         }
@@ -293,6 +301,8 @@ final class AppModel {
     var destination: Destination? = .mission
     var isDispatching = false
     var isAddingDaemon = false
+    var isPaletteOpen = false
+    var showsInspector = false
 
     /// A name to prefill, when a person follows a session held elsewhere.
     var daemonSuggestion: (name: String, address: String)?
@@ -313,6 +323,26 @@ final class AppModel {
         daemons.reduce(into: [:]) { $0.merge($1.attached) { _, new in new } }
     }
 
+    /// Whether the app has nothing to show until a daemon runs.
+    var isDaemonMissing: Bool {
+        guard daemons.count == 1, case .unavailable? = daemons.first?.state else { return false }
+        return daemons.first?.hello == nil
+    }
+
+    /// Moves to the next thing waiting, the one-key route through a busy fleet.
+    func goToNextNeedingYou() {
+        let targets = attention.compactMap { item -> String? in
+            if case .session(let id, _) = item.source { return id }
+            return nil
+        }
+        guard !targets.isEmpty else { return }
+        if case .session(let current) = destination, let index = targets.firstIndex(of: current) {
+            destination = .session(targets[(index + 1) % targets.count])
+        } else {
+            destination = .session(targets[0])
+        }
+    }
+
     /// Whether placement is worth any screen space. A person on one machine with
     /// no executors never sees brain and hands vocabulary.
     var isMultiMachine: Bool {
@@ -325,7 +355,7 @@ final class AppModel {
             activity: activity,
             // A dead lane's records may be stale and cannot be answered, so the
             // inbox shows the count until a fresh lane reads them.
-            escalations: attached.filter(\.value.isLive).mapValues(\.conversation.escalations),
+            escalations: attached.filter(\.value.isLive).mapValues(\.escalations),
             unhealthy: daemons.flatMap { daemon in
                 Mission.blastRadius(nodes: daemon.deployment?.nodes ?? [], sessions: daemon.sessions)
             }
@@ -345,6 +375,12 @@ final class AppModel {
         }
     }
 
+    /// The session the main window shows, which the Session menu acts on.
+    var currentSession: SessionController? {
+        if case .session(let id) = destination { return controller(for: id) }
+        return nil
+    }
+
     func daemon(holding sessionID: String) -> DaemonConnection? {
         daemons.first { daemon in daemon.sessions.contains { $0.id == sessionID } }
     }
@@ -361,6 +397,36 @@ final class AppModel {
     /// Workspaces already used on this daemon, for the dispatch sheet.
     func knownWorkspaces(on daemon: DaemonConnection) -> [String] {
         Array(Set(daemon.sessions.filter { $0.executor == nil && $0.pool == nil }.map(\.workspace))).sorted()
+    }
+
+    /// Starts the installed daemon by asking the `loom` client to reach it, which
+    /// runs the launch procedure with its locks and identity checks. Reimplementing
+    /// that here could leave two daemons racing for one state root.
+    func startDaemon() async throws {
+        let candidates = [
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/loom").path,
+            "/opt/homebrew/bin/loom",
+            "/usr/local/bin/loom",
+        ]
+        guard let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
+            throw LoomError.discovery("Could not find the loom command. Install Loom, then try again.")
+        }
+        var arguments = ["sessions", "list"]
+        if let root = daemons.first?.localRoot, root != DaemonDiscovery.defaultRoot {
+            arguments = ["--state-dir", root.path] + arguments
+        }
+        try await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: path)
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            try process.run()
+            process.waitUntilExit()
+            if process.terminationStatus != 0 {
+                throw LoomError.discovery("loom could not start the daemon (exit \(process.terminationStatus)).")
+            }
+        }.value
     }
 
     func start() {
@@ -415,21 +481,49 @@ final class AppModel {
 }
 
 /// One attached session: a lane and the projection of what it reports.
+///
+/// The value `Conversation` stays out of observation. Each fact a view draws is
+/// its own observed property, set only when it actually changes, so a streamed
+/// token invalidates the stream view and leaves a 5,000-row transcript alone. The
+/// idle refresh's identical cut costs one comparison and redraws nothing.
 @MainActor
 @Observable
 final class SessionController {
     let sessionID: String
 
-    private(set) var conversation: Conversation
+    private(set) var blocks: [TranscriptBlock] = []
+    private(set) var stream: LiveStream?
+    private(set) var strands: [Strand] = []
+    private(set) var escalations: [Escalation] = []
+    private(set) var remoteChildren: [RemoteChild] = []
+    private(set) var peek: ChildPeek?
+    private(set) var peers: [Peer] = []
+    private(set) var pendingInputs: [PendingInput] = []
+    private(set) var worktree: JSONValue?
+    private(set) var branch: String?
+    private(set) var usage: JSONValue = .null
+    private(set) var hasOlder = false
+    private(set) var isAdopted = false
+    private(set) var toolTails: [String: String] = [:]
     private(set) var isLive = true
     private(set) var lastError: String?
     private(set) var isLoadingOlder = false
-    private var olderCursor: Int?
-    var focusedStrand = "main"
+    private(set) var busySince: Date?
+    var isSearching = false
 
-    private let endpoint: DaemonEndpoint
-    private var lane: SessionLane?
-    private var pump: Task<Void, Never>?
+    var focusedStrand = "main" {
+        didSet {
+            if focusedStrand != oldValue { syncAll(force: true) }
+        }
+    }
+
+    @ObservationIgnored private var conversation: Conversation
+    @ObservationIgnored private var projectedRevision = -1
+    @ObservationIgnored private var olderCursor: Int?
+    @ObservationIgnored private var streamFlush: Task<Void, Never>?
+    @ObservationIgnored private let endpoint: DaemonEndpoint
+    @ObservationIgnored private var lane: SessionLane?
+    @ObservationIgnored private var pump: Task<Void, Never>?
 
     init(sessionID: String, endpoint: DaemonEndpoint) {
         self.sessionID = sessionID
@@ -437,10 +531,10 @@ final class SessionController {
         conversation = Conversation(sessionID: sessionID)
     }
 
-    var rows: [TranscriptRow] { conversation.rows(strand: focusedStrand) }
-    var strand: Strand? { conversation.strands.first { $0.id == focusedStrand } }
-    var stream: LiveStream? { conversation.streams[focusedStrand] }
+    var strand: Strand? { strands.first { $0.id == focusedStrand } }
     var isBusy: Bool { strand?.isBusy ?? false }
+    var totalCost: Double? { usage["cost"]?["total"]?.double }
+    var totalTokens: Int? { usage["totalTokens"]?.int }
 
     func connect() {
         pump = Task { await self.run() }
@@ -461,9 +555,14 @@ final class SessionController {
             for await event in lane.events {
                 switch event {
                 case .cut(let cut):
-                    conversation.apply(cut: cut)
+                    if conversation.apply(cut: cut) { syncAll() }
                 case .push(let frame):
                     conversation.apply(push: frame)
+                    if frame.event == "stream_delta" {
+                        scheduleStreamFlush()
+                    } else {
+                        syncPushed()
+                    }
                 case .closed(let error):
                     isLive = false
                     if let error { lastError = error.localizedDescription }
@@ -476,8 +575,60 @@ final class SessionController {
         }
     }
 
+    /// Coalesces tokens to the display's pace. A provider can deliver hundreds a
+    /// second, and laying out text for each one would drop frames for no gain.
+    private func scheduleStreamFlush() {
+        guard streamFlush == nil else { return }
+        streamFlush = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(33))
+            guard let self else { return }
+            self.streamFlush = nil
+            self.setStream()
+        }
+    }
+
+    private func setStream() {
+        let next = conversation.streams[focusedStrand]
+        if stream != next { stream = next }
+    }
+
+    private func syncPushed() {
+        assign(\.peers, conversation.peers)
+        assign(\.toolTails, conversation.toolTails)
+        assign(\.worktree, conversation.worktree)
+        assign(\.remoteChildren, conversation.remoteChildren)
+        assign(\.peek, conversation.peek)
+        setStream()
+    }
+
+    private func syncAll(force: Bool = false) {
+        if force || projectedRevision != conversation.revision {
+            projectedRevision = conversation.revision
+            assign(\.blocks, TranscriptBlock.group(conversation.rows(strand: focusedStrand)))
+            assign(\.hasOlder, conversation.hasOlder(strand: focusedStrand))
+        }
+        assign(\.strands, conversation.strands)
+        assign(\.escalations, conversation.escalations)
+        assign(\.pendingInputs, conversation.pendingInputs)
+        assign(\.branch, conversation.branch)
+        assign(\.usage, conversation.usage)
+        assign(\.isAdopted, conversation.hasAdoptedCut)
+        syncPushed()
+
+        // The elapsed time is this client's own observation of the run.
+        if isBusy {
+            if busySince == nil { busySince = Date() }
+        } else if busySince != nil {
+            busySince = nil
+        }
+    }
+
+    private func assign<T: Equatable>(_ path: ReferenceWritableKeyPath<SessionController, T>, _ value: T) {
+        if self[keyPath: path] != value { self[keyPath: path] = value }
+    }
+
     func waitUntilAdopted() async {
-        while !conversation.hasAdoptedCut && isLive {
+        while !isAdopted && isLive {
             try? await Task.sleep(for: .milliseconds(50))
         }
     }
@@ -508,8 +659,19 @@ final class SessionController {
         perform { lane in _ = try await lane.deny(record) }
     }
 
+    /// Asks for a fresh board. A refusal because a read is already running is not
+    /// worth saying: that read's answer is on its way.
     func requestDiff() {
-        perform { lane in try await lane.requestWorktreeDiff() }
+        guard let lane else { return }
+        Task {
+            do {
+                try await lane.requestWorktreeDiff()
+            } catch LoomError.server(code: "busy", _, _) {
+                return
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
     }
 
     func loadOlder() {
@@ -528,12 +690,14 @@ final class SessionController {
     /// Reads a page of a subagent running on another orchestrator.
     func peek(child: RemoteChild) {
         conversation.beginPeek(child: child.id)
+        syncPushed()
         let id = child.id
         perform { lane in try await lane.requestChildHistory(child: id) }
     }
 
     func endPeek() {
         conversation.endPeek()
+        syncPushed()
     }
 
     private func perform(_ action: @escaping @Sendable (SessionLane) async throws -> Void) {
