@@ -12,12 +12,13 @@ enum Destination: Hashable {
     case session(String)
 }
 
-/// How a person last chose to group the sidebar.
-enum SidebarGrouping: String, CaseIterable, Identifiable {
-    case status = "Status"
-    case project = "Project"
-    case machine = "Machine"
-    var id: Self { self }
+/// A session that was created, whose first message never went out. The session is
+/// kept, so the person can open it and write the message there.
+struct CreatedButUnsent: LocalizedError {
+    let sessionID: String
+    let reason: String
+
+    var errorDescription: String? { Refusal.unopened(reason: reason) }
 }
 
 /// A saved way to reach a daemon on another machine.
@@ -303,8 +304,14 @@ final class DaemonConnection: Identifiable {
         )
         lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") shareable=\(options.isShareable)"
 
-        _ = try await control.openUntilResident(sessionID: record.id)
-        try await refresh(control)
+        // From here the session exists, so a failure must say so and name it.
+        do {
+            _ = try await control.openUntilResident(sessionID: record.id)
+            try await refresh(control)
+        } catch {
+            try? await refresh(control)
+            throw CreatedButUnsent(sessionID: record.id, reason: error.localizedDescription)
+        }
         guard let controller = attach(record.id) else { return record.id }
         await controller.waitUntilAdopted()
         controller.send(text: prompt)
@@ -328,7 +335,19 @@ final class AppModel {
     var isDispatching = false
     var isAddingDaemon = false
     var isPaletteOpen = false
-    var showsInspector = false
+    /// Whether the inspector column is open, kept across launches with the rest of
+    /// the window's layout.
+    var showsInspector = UserDefaults.standard.bool(forKey: "showsInspector") {
+        didSet { UserDefaults.standard.set(showsInspector, forKey: "showsInspector") }
+    }
+
+    /// The appearance a person chose. The system's own is the default.
+    var appearance = AppearanceChoice.stored {
+        didSet {
+            UserDefaults.standard.set(appearance.rawValue, forKey: AppearanceChoice.key)
+            appearance.apply()
+        }
+    }
 
     /// A name to prefill, when a person follows a session held elsewhere.
     var daemonSuggestion: (name: String, address: String)?
@@ -516,13 +535,52 @@ final class AppModel {
         }
         let saved = SavedDaemon(id: UUID(), name: name, address: address)
         try CredentialStore.save(token, for: saved.id)
+        keep(saved, token: token)
+    }
+
+    /// Records a daemon whose credential is already in the keychain, and connects.
+    private func keep(_ saved: SavedDaemon, token: String) {
         var all = Self.loadSaved()
         all.append(saved)
-        UserDefaults.standard.set(try JSONEncoder().encode(all), forKey: Self.savedKey)
-
+        if let data = try? JSONEncoder().encode(all) {
+            UserDefaults.standard.set(data, forKey: Self.savedKey)
+        }
         let connection = DaemonConnection(id: saved.id.uuidString, source: .remote(saved, token: token))
         daemons.append(connection)
         connection.start()
+    }
+
+    #if DEBUG
+    /// Connects a daemon for a test without saving it, so a run leaves no saved
+    /// address or keychain item behind on the machine that ran it.
+    func attachForTest(name: String, address: String, token: String) throws {
+        _ = try DaemonEndpoint(address: address, token: token)
+        let saved = SavedDaemon(id: UUID(), name: name, address: address)
+        let connection = DaemonConnection(id: saved.id.uuidString, source: .remote(saved, token: token))
+        daemons.append(connection)
+        connection.start()
+    }
+
+    func detachForTest(name: String) {
+        guard let connection = daemons.first(where: { $0.label == name && $0.isRemote }) else { return }
+        removeDaemon(connection)
+    }
+    #endif
+
+    /// Exchanges a claim token for a credential this app drew, then connects with it.
+    /// The credential is in the keychain before the daemon hears its digest, so a
+    /// lost reply is recovered by claiming again. A refused claim removes it.
+    func claimDaemon(name: String, address: String, claim: String, credential: String) async throws {
+        _ = try DaemonEndpoint(address: address, token: credential)
+        let saved = SavedDaemon(id: UUID(), name: name, address: address)
+        try CredentialStore.save(credential, for: saved.id)
+        do {
+            _ = try await Claim.redeem(address: address, claim: claim, credential: credential)
+        } catch {
+            CredentialStore.delete(for: saved.id)
+            throw error
+        }
+        keep(saved, token: credential)
     }
 
     func removeDaemon(_ connection: DaemonConnection) {

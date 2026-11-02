@@ -1008,6 +1008,7 @@ def machines_lists_each_node(c):
 # Scenarios for session life-cycle, creation, sharing and administration live in
 # their own file, imported here so they run before the faults damage the cluster.
 import scenarios_lifecycle  # noqa: E402,F401
+import scenarios_admin  # noqa: E402,F401
 
 
 # Faults. These run last among the functional scenarios, since they damage the cluster.
@@ -1078,6 +1079,9 @@ def idle_is_quiet(c):
     share = used / (time.monotonic() - started)
     c.notes.append(f"Idle CPU {share:.2%}, frames {stats}")
     check(share < 0.05, f"idle CPU {share:.1%}")
+
+
+import scenarios_down  # noqa: E402,F401
 
 
 @scenario()

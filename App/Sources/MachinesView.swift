@@ -279,6 +279,17 @@ private struct ElsewhereSection: View {
                             if let executor = record.executorNode ?? record.executor {
                                 Text("→ \(executor)").font(Theme.meta).foregroundStyle(.secondary)
                             }
+                            Spacer(minLength: 0)
+                            let launch = LaunchWords.line(address: group.address, session: record.id)
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(launch, forType: .string)
+                            } label: {
+                                Image(systemName: "doc.on.doc")
+                            }
+                            .buttonStyle(.plain)
+                            .help("Copy: \(launch)")
+                            .accessibilityLabel("Copy launch command for \(record.title)")
                         }
                         .font(.callout)
                     }
@@ -302,6 +313,7 @@ struct AddDaemonSheet: View {
     @State private var address = ""
     @State private var token = ""
     @State private var error: String?
+    @State private var isClaiming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -313,12 +325,17 @@ struct AddDaemonSheet: View {
 
             TextField("Name, such as box", text: $name)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Daemon name")
             TextField("wss://box.example.ts.net or ws://127.0.0.1:7441", text: $address)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(.body, design: .monospaced))
-            SecureField("Credential for that daemon", text: $token)
+                .accessibilityLabel("Daemon address")
+            SecureField("Credential or claim token for that daemon", text: $token)
                 .textFieldStyle(.roundedBorder)
-            Text("The credential is kept in your login keychain.")
+                .accessibilityLabel("Credential")
+            Text(Claim.isClaimToken(token.trimmingCharacters(in: .whitespacesAndNewlines))
+                 ? "A claim token is exchanged once for a credential that only this app holds."
+                 : "The credential is kept in your login keychain.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -330,10 +347,10 @@ struct AddDaemonSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Connect", action: connect)
+                Button(isClaiming ? "Claiming…" : "Connect", action: connect)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.glassProminent)
-                    .disabled(name.isEmpty || address.isEmpty || token.isEmpty)
+                    .disabled(name.isEmpty || address.isEmpty || token.isEmpty || isClaiming)
             }
         }
         .padding(20)
@@ -347,15 +364,31 @@ struct AddDaemonSheet: View {
     }
 
     private func connect() {
-        do {
-            try model.addDaemon(
-                name: name,
-                address: address.trimmingCharacters(in: .whitespacesAndNewlines),
-                token: token.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-            dismiss()
-        } catch {
-            self.error = error.localizedDescription
+        let address = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let given = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Claim.isClaimToken(given) else {
+            do {
+                try model.addDaemon(name: name, address: address, token: given)
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+            return
+        }
+
+        // The credential is drawn here and kept before the daemon hears its digest,
+        // so a reply that never arrives can be recovered by claiming again.
+        let credential = Claim.newCredential()
+        isClaiming = true
+        error = nil
+        Task {
+            defer { isClaiming = false }
+            do {
+                try await model.claimDaemon(name: name, address: address, claim: given, credential: credential)
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
         }
     }
 }

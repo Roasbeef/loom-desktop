@@ -191,8 +191,11 @@ def a_session_is_created_with_a_profile_model_name_and_box(c):
 
 
 def find_box_label(c, prefix="box"):
-    """A placement segment's name, which carries its platform and free scopes."""
-    return wait_for(lambda: next((n["name"] for n in c.app.tree() if n["role"] == "AXRadioButton" and n["name"].startswith(prefix)), None), what=f"the {prefix} segment")
+    """A placement segment's name, which carries its platform and free scopes.
+
+    The sidebar's machine filter has a segment named for the machine as well, so a
+    placement segment is the one whose name has the separator between its facts."""
+    return wait_for(lambda: next((n["name"] for n in c.app.tree() if n["role"] == "AXRadioButton" and n["name"].startswith(prefix) and " · " in n["name"]), None), what=f"the {prefix} segment")
 
 
 @scenario("NS-12", "NS-08")

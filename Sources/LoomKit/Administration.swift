@@ -132,8 +132,25 @@ public enum Refusal {
         case "not_movable": return "That session can't be moved."
         case "unavailable": return "The daemon can't do that right now."
         case "conflict": return "That can't happen while the session is working. Wait for it to stop, then try again."
+        case "executor_unknown": return "That executor is not in the daemon's configuration. Check its name."
+        case "pool_unknown": return "That pool is not in the daemon's configuration. Check its name."
+        case "not_initialized": return "That session never finished being created. Create it again."
+        case "not_owner": return "That session belongs to another orchestrator."
+        case "stale_operation": return "The daemon no longer holds that operation. Look at the session's state."
         default: return nil
         }
+    }
+}
+
+extension Refusal {
+    /// What to tell a person when a session was created and did not open. The
+    /// daemon's reason keeps its own words, minus the protocol codes in front.
+    public static func unopened(reason: String) -> String {
+        var cause = reason
+        for code in ["start_failed: ", "executor_unavailable: "] where cause.hasPrefix(code) {
+            cause.removeFirst(code.count)
+        }
+        return "The session was created but did not open. It is in the list: resume it there once the cause is corrected, or delete it. The daemon said: \(cause)"
     }
 }
 
