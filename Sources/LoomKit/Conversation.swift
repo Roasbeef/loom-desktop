@@ -24,6 +24,10 @@ public struct PendingInput: Sendable, Equatable, Identifiable {
     public let strand: String
     public let kind: String
     public let text: String
+    /// Whether this client may edit or withdraw the input. The daemon decides per
+    /// recipient: only the principal who submitted it can.
+    public let editable: Bool
+    public let revision: Int?
 }
 
 /// What a provider request has streamed so far. Deltas are ephemeral and never
@@ -84,6 +88,17 @@ public struct ChildPeek: Sendable, Equatable {
     public let next: Int?
 }
 
+/// An approval that was answered.
+public struct Decision: Sendable, Equatable {
+    public let id: String
+    public let seq: Int
+    public let strand: String
+    public let tool: String
+    public let summary: String
+    /// `approved`, `rejected` or `consumed`, as the ledger records it.
+    public let outcome: String
+}
+
 /// One row of the drawn transcript.
 public struct TranscriptRow: Sendable, Equatable, Identifiable {
     public enum Kind: Sendable, Equatable {
@@ -93,50 +108,37 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
         case tool(name: String, arguments: JSONValue, result: String?, isError: Bool)
         case notice(text: String)
         case failure(text: String)
+        /// A subagent the strand started, left outside the fold so it is not missed.
+        case spawned(child: String, purpose: String)
+        /// A subagent's report, as `agent_wait` returned it.
+        case agentReport(child: String, outcome: String, report: String)
+        /// A decided approval, from the session's ledger.
+        case decision(tool: String, summary: String, outcome: String)
     }
 
     public let id: String
     public let kind: Kind
     /// The tool call this row draws, which keys its live output.
     public let callID: String?
+    /// When the daemon recorded this row, in milliseconds. Every duration the
+    /// transcript states comes from these and never from this client's clock.
+    public var at: Int?
+    /// When a tool call's result was recorded.
+    public var settledAt: Int?
+    /// How long a response took, from the record before it to this one.
+    public var tookMs: Int?
+    /// Images the message carried, which the row names but does not draw.
+    public var images = 0
+    /// The structured result a tool returned beside its text.
+    public var details: JSONValue?
+    /// The record's place in the session's sequence, which orders decisions among rows.
+    public var seq: Int?
 
-    public init(id: String, kind: Kind, callID: String? = nil) {
+    public init(id: String, kind: Kind, callID: String? = nil, at: Int? = nil) {
         self.id = id
         self.kind = kind
         self.callID = callID
-    }
-}
-
-/// A unit of the drawn transcript: one row, or a run of tool calls read as one.
-public enum TranscriptBlock: Sendable, Equatable, Identifiable {
-    case row(TranscriptRow)
-    case activity([TranscriptRow])
-
-    public var id: String {
-        switch self {
-        case .row(let row): return row.id
-        case .activity(let rows): return "activity/\(rows.first?.id ?? "")"
-        }
-    }
-
-    /// Folds consecutive tool rows, since a run of ten shell commands is one
-    /// thing to a reader until they choose to look inside.
-    public static func group(_ rows: [TranscriptRow]) -> [TranscriptBlock] {
-        var blocks: [TranscriptBlock] = []
-        var run: [TranscriptRow] = []
-        for row in rows {
-            if case .tool = row.kind {
-                run.append(row)
-            } else {
-                if !run.isEmpty {
-                    blocks.append(.activity(run))
-                    run = []
-                }
-                blocks.append(.row(row))
-            }
-        }
-        if !run.isEmpty { blocks.append(.activity(run)) }
-        return blocks
+        self.at = at
     }
 }
 
@@ -251,6 +253,8 @@ public struct Conversation: Sendable, Equatable {
     public private(set) var surfaces: [String: JSONValue] = [:]
     public private(set) var peek: ChildPeek?
     public private(set) var hasAdoptedCut = false
+    /// Approvals already answered, from the session's ledger, keyed by id.
+    public private(set) var decisions: [String: Decision] = [:]
 
     /// Moves when what `rows` would return may have changed, so a host can keep
     /// its projection until then and a streamed token never rebuilds it.
@@ -291,6 +295,11 @@ public struct Conversation: Sendable, Equatable {
             oldestSeq = min(oldestSeq ?? oldest, oldest)
         }
 
+        // The ledger of decided approvals is a metadata-only read of other cells.
+        if cut.window == "decided" {
+            return adopt(decisions: cut.metadata)
+        }
+
         // A history page fills in older entries beside the live window, so its
         // metadata must not stand in for the newer cut already adopted.
         guard cut.window != "history", cut.window != "lineage" else {
@@ -310,6 +319,28 @@ public struct Conversation: Sendable, Equatable {
             streams = streams.filter { !$0.value.ended }
         }
         return landed || metadataChanged || !wasAdopted
+    }
+
+    /// Reads the decided escalations out of a `decided` transfer.
+    private mutating func adopt(decisions metadata: JSONValue) -> Bool {
+        var changed = false
+        for cell in metadata["cells"]?.array ?? [] {
+            guard let record = Self.escalation(cell), record.status != "pending" else { continue }
+            let decision = Decision(
+                id: record.id,
+                seq: cell["seq"]?.int ?? record.seq,
+                strand: record.strand,
+                tool: record.tool,
+                summary: record.authorityLines.first ?? record.action,
+                outcome: record.status
+            )
+            if decisions[record.id] != decision {
+                decisions[record.id] = decision
+                changed = true
+            }
+        }
+        if changed { revision += 1 }
+        return changed
     }
 
     /// Folds one uncorrelated frame. An unknown event is ignored by rule.
@@ -448,7 +479,9 @@ public struct Conversation: Sendable, Equatable {
                 id: id,
                 strand: row["strand"]?.string ?? "",
                 kind: row["kind"]?.string ?? "",
-                text: row["text"]?.string ?? ""
+                text: row["text"]?.string ?? "",
+                editable: row["editable"]?.bool ?? false,
+                revision: row["revision"]?.int
             )
         }
     }
@@ -534,11 +567,21 @@ public struct Conversation: Sendable, Equatable {
             chain.append(entry)
             cursor = entry["parentId"]?.string
         }
+        var rows = Self.rows(ordered: Array(chain.reversed()))
 
-        var rows: [TranscriptRow] = []
-        var toolIndex: [String: Int] = [:]
-        for entry in chain.reversed() {
-            Self.append(entry, to: &rows, toolIndex: &toolIndex)
+        // A decision stands among the rows by the sequence of its record, so it
+        // reads where the person answered and not at the end.
+        for decision in decisions.values.filter({ $0.strand == strand || $0.strand.isEmpty }).sorted(by: { $0.seq < $1.seq }) {
+            let row = TranscriptRow(
+                id: "decision/\(decision.id)",
+                kind: .decision(tool: decision.tool, summary: decision.summary, outcome: decision.outcome),
+                at: nil
+            )
+            if let index = rows.firstIndex(where: { ($0.seq ?? 0) > decision.seq }) {
+                rows.insert(row, at: index)
+            } else if rows.first?.seq.map({ $0 <= decision.seq }) ?? false {
+                rows.append(row)
+            }
         }
         return rows
     }
@@ -547,8 +590,10 @@ public struct Conversation: Sendable, Equatable {
     static func rows(ordered entries: [JSONValue]) -> [TranscriptRow] {
         var rows: [TranscriptRow] = []
         var toolIndex: [String: Int] = [:]
+        var previous: Int?
         for entry in entries {
-            append(entry, to: &rows, toolIndex: &toolIndex)
+            append(entry, previous: previous, to: &rows, toolIndex: &toolIndex)
+            previous = entry["timestamp"]?.int ?? previous
         }
         return rows
     }
@@ -556,49 +601,89 @@ public struct Conversation: Sendable, Equatable {
     /// Whether this strand's chain continues below what is held. Asking the
     /// chain itself means the answer cannot go stale as pages arrive.
     public func hasOlder(strand: String) -> Bool {
+        olderAnchor(strand: strand) != nil || oldestIsOpaque(strand: strand)
+    }
+
+    /// The identity of the entry the chain needs next: the parent of the oldest
+    /// held record, which is what `history_lineage` is asked to start from.
+    /// Nil when the chain is complete, or when a record too large to decode
+    /// hides its parent.
+    public func olderAnchor(strand: String) -> String? {
         var cursor = strands.first { $0.id == strand }?.leaf
         while let id = cursor {
-            guard let entry = entries[id] else { return true }
+            guard let entry = entries[id] else { return id }
+            if entry["unknownParent"]?.bool == true { return nil }
+            cursor = entry["parentId"]?.string
+        }
+        return nil
+    }
 
-            // An oversized record was not decoded, so its parent is unknown.
+    private func oldestIsOpaque(strand: String) -> Bool {
+        var cursor = strands.first { $0.id == strand }?.leaf
+        while let id = cursor, let entry = entries[id] {
             if entry["unknownParent"]?.bool == true { return true }
             cursor = entry["parentId"]?.string
         }
         return false
     }
 
-    private static func append(_ entry: JSONValue, to rows: inout [TranscriptRow], toolIndex: inout [String: Int]) {
+    /// How many of the person's messages the strand's held chain contains. A
+    /// page of older records counts as a turn once this goes up.
+    public func inputCount(strand: String) -> Int {
+        rows(strand: strand).filter {
+            if case .user = $0.kind { return true }
+            return false
+        }.count
+    }
+
+    private static func append(
+        _ entry: JSONValue,
+        previous: Int?,
+        to rows: inout [TranscriptRow],
+        toolIndex: inout [String: Int]
+    ) {
         let id = entry["id"]?.string ?? UUID().uuidString
+        let at = entry["timestamp"]?.int
+        let seq = entry["seq"]?.int
+        let before = rows.count
         switch entry["type"]?.string {
         case "message":
-            appendMessage(entry["message"], id: id, to: &rows, toolIndex: &toolIndex)
+            appendMessage(entry["message"], id: id, at: at, previous: previous, to: &rows, toolIndex: &toolIndex)
         case "compaction":
-            rows.append(.init(id: id, kind: .notice(text: "Earlier conversation compacted.")))
+            rows.append(.init(id: id, kind: .notice(text: "Earlier conversation compacted."), at: at))
         case "branch_summary":
-            rows.append(.init(id: id, kind: .notice(text: "Returned from another branch.")))
+            rows.append(.init(id: id, kind: .notice(text: "Returned from another branch."), at: at))
         case "custom":
             break
         case "oversized":
-            rows.append(.init(id: id, kind: .notice(text: "A record of \(entry["size"]?.int ?? 0) bytes was left out.")))
+            rows.append(.init(id: id, kind: .notice(text: "A record of \(entry["size"]?.int ?? 0) bytes was left out."), at: at))
         case let other:
             // The type set is closed, so an unknown type is corruption and is
             // shown as such rather than skipped (protocol section 5.7).
-            rows.append(.init(id: id, kind: .failure(text: "Unrecognized entry type \(other ?? "none").")))
+            rows.append(.init(id: id, kind: .failure(text: "Unrecognized entry type \(other ?? "none")."), at: at))
+        }
+        for index in before..<rows.count {
+            if rows[index].at == nil { rows[index].at = at }
+            rows[index].seq = seq
         }
     }
 
     private static func appendMessage(
         _ message: JSONValue?,
         id: String,
+        at: Int?,
+        previous: Int?,
         to rows: inout [TranscriptRow],
         toolIndex: inout [String: Int]
     ) {
         let blocks = message?["content"]?.array ?? []
+        let took = at.flatMap { now in previous.map { max(0, now - $0) } }
         switch message?["role"]?.string {
         case "user":
             let origin = message?["origin"]
             let author = origin?["name"]?.string ?? origin?["strand"]?.string
             let body = text(of: blocks)
+            let images = blocks.filter { $0["type"]?.string == "image" }.count
 
             // The harness writes its own notes into the conversation as user
             // turns with no author. Drawing one as a person's message would put
@@ -606,7 +691,9 @@ public struct Conversation: Sendable, Equatable {
             if author == nil, body.hasPrefix("[loom] ") {
                 rows.append(.init(id: id, kind: .notice(text: String(body.dropFirst(7)))))
             } else {
-                rows.append(.init(id: id, kind: .user(text: body, author: author)))
+                var row = TranscriptRow(id: id, kind: .user(text: body, author: author))
+                row.images = images
+                rows.append(row)
             }
 
         case "assistant":
@@ -617,7 +704,9 @@ public struct Conversation: Sendable, Equatable {
                     rows.append(.init(id: rowID, kind: .assistant(text: block["text"]?.string ?? "")))
                 case "thinking":
                     if block["redacted"]?.bool != true, let thinking = block["thinking"]?.string, !thinking.isEmpty {
-                        rows.append(.init(id: rowID, kind: .thinking(text: thinking)))
+                        var row = TranscriptRow(id: rowID, kind: .thinking(text: thinking))
+                        row.tookMs = took
+                        rows.append(row)
                     }
                 case "toolCall":
                     // A pushed `entry` event nests the call, while a transfer
@@ -634,6 +723,9 @@ public struct Conversation: Sendable, Equatable {
                     break
                 }
             }
+            if message?["stopReason"]?.string == "aborted" {
+                rows.append(.init(id: "\(id)/stopped", kind: .notice(text: "Stopped before the turn finished.")))
+            }
             if let error = message?["errorMessage"]?.string {
                 rows.append(.init(id: "\(id)/error", kind: .failure(text: error)))
             }
@@ -642,20 +734,53 @@ public struct Conversation: Sendable, Equatable {
             // A result folds into the row of the call it answers.
             let result = text(of: blocks)
             let failed = message?["isError"]?.bool ?? false
+            let details = message?["details"]
             if let callID = message?["toolCallId"]?.string, let index = toolIndex[callID],
                case .tool(let name, let arguments, _, _) = rows[index].kind {
-                rows[index] = .init(
+                var row = TranscriptRow(
                     id: rows[index].id,
                     kind: .tool(name: name, arguments: arguments, result: result, isError: failed),
-                    callID: rows[index].callID
+                    callID: rows[index].callID,
+                    at: rows[index].at
                 )
+                row.settledAt = at
+                row.details = details
+                rows[index] = row
+
+                if name == "agent_spawn", !failed, let child = details?["strand"]?.string {
+                    var spawned = TranscriptRow(
+                        id: row.id,
+                        kind: .spawned(child: child, purpose: arguments["purpose"]?.string ?? ""),
+                        callID: row.callID,
+                        at: row.at
+                    )
+                    spawned.settledAt = at
+                    rows[index] = spawned
+                }
+                if name == "agent_wait", !failed {
+                    for (number, ready) in (details?["results"]?.array ?? []).enumerated()
+                    where ready["state"]?.string == "ready" {
+                        rows.append(.init(
+                            id: "\(id)/report/\(number)",
+                            kind: .agentReport(
+                                child: ready["strand"]?.string ?? "",
+                                outcome: ready["outcome"]?.string ?? "settled",
+                                report: ready["report"]?.string ?? ""
+                            ),
+                            at: at
+                        ))
+                    }
+                }
             } else {
-                rows.append(.init(id: id, kind: .tool(
+                var row = TranscriptRow(id: id, kind: .tool(
                     name: message?["toolName"]?.string ?? "tool",
                     arguments: .null,
                     result: result,
                     isError: failed
-                )))
+                ))
+                row.settledAt = at
+                row.details = details
+                rows.append(row)
             }
 
         default:
