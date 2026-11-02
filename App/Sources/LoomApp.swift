@@ -72,6 +72,10 @@ private struct LoomCommands: Commands {
             .keyboardShortcut("n", modifiers: [.command, .shift])
         }
         CommandGroup(after: .sidebar) {
+            Button("Toggle Sidebar") {
+                model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
+            }
+            .keyboardShortcut("b")
             Button(model.showsInspector ? "Hide Inspector" : "Show Inspector") {
                 model.showsInspector.toggle()
             }

@@ -215,6 +215,15 @@ enum DebugDriver {
             ComposerModel.debugSendDelay = Int(parts[1]).flatMap { $0 > 0 ? Duration.milliseconds($0) : nil }
         case "pasteimage" where parts.count > 1:
             pasteImage(at: rest)
+        case "staleapprove":
+            // Answers the pending request with a copy whose sequence is one behind, as a
+            // card does when the record moved after it was drawn.
+            if let controller = model.currentSession, let record = controller.escalations.first {
+                controller.approve(Escalation(
+                    id: record.id, seq: record.seq - 1, status: record.status, strand: record.strand, tool: record.tool,
+                    action: record.action, preview: record.preview, reason: record.reason, source: record.source, grants: record.grants
+                ))
+            }
         case "approve" where parts.count > 1:
             if let controller = model.controller(for: parts[1]), let record = controller.escalations.first {
                 controller.approve(record)
@@ -403,6 +412,7 @@ enum Snapshot {
             "actionError": model.actions.error ?? "",
             "isPaletteOpen": model.isPaletteOpen,
             "showsInspector": model.showsInspector,
+            "showsSidebar": model.sidebarVisibility != .detailOnly,
             "isMultiMachine": model.isMultiMachine,
             "isDaemonMissing": model.isDaemonMissing,
             "attention": model.attention.map { ["id": $0.id, "kind": $0.kind.title, "agent": $0.agent, "title": $0.title] },
@@ -459,13 +469,15 @@ enum Snapshot {
                         case .spawned(let child, let purpose): return "spawned \(child) \(purpose)"
                         case .agentReport(let child, let outcome, let report): return "report \(child) \(outcome) \(report)"
                         case .decision(let tool, let summary, let outcome): return "decision \(outcome) \(tool) \(summary)"
+                        case .memory(let lines, _): return MemoryContext.summary(lines: lines)
                         }
                     }
                 },
                 "folds": session.blocks.compactMap { block -> [String: Any]? in
                     guard case .fold(let fold) = block else { return nil }
                     return ["title": fold.title, "steps": fold.steps, "files": fold.files, "failed": fold.failed, "live": fold.isLive,
-                            "added": fold.added, "removed": fold.removed, "rows": fold.rows.count]
+                            "added": fold.added, "removed": fold.removed, "rows": fold.rows.count, "interrupted": fold.isInterrupted,
+                            "details": fold.rows.compactMap { $0.details?.compactText }]
                 },
                 "focusedStrand": session.focusedStrand,
                 "hasOlder": session.hasOlder,
@@ -487,6 +499,8 @@ enum Snapshot {
                 "btwStatus": session.showsSideQuestion ? session.surfaces["btw"]?["board"]?["status"]?.string ?? "" : "",
                 "editing": session.composer.editing?.text ?? "",
                 "models": session.catalogue.models,
+                "outputRate": session.outputRate ?? 0,
+                "pushedEvents": session.pushedEvents,
                 "to": StrandName.display(session.focusedStrand),
                 "who": session.who ?? "",
                 "cacheOutlook": session.cacheOutlook(at: Date()) ?? "",

@@ -112,6 +112,39 @@ struct FoldRow: View {
     }
 }
 
+/// The notes index the daemon attached to a run, closed to one line. Opening it shows
+/// the text the model was given, which the person did not write.
+struct MemoryRow: View {
+    let lines: Int
+    let text: String
+    @State private var isOpen = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "brain").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text(MemoryContext.summary(lines: lines)).font(Theme.label).foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    Spacer(minLength: 0)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(MemoryContext.summary(lines: lines))
+            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+            if isOpen {
+                OutputBlock(text: text, tint: .secondary)
+            }
+        }
+    }
+}
+
 // MARK: Steps
 
 /// One tool call: a verb, what it acted on, and what it changed.

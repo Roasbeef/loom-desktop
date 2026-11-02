@@ -272,6 +272,8 @@ extension TranscriptBlock {
                 return search(child) || search(report)
             case .decision(let tool, let summary, _):
                 return search(tool) || search(summary)
+            case .memory(_, let text):
+                return search(text)
             }
         }
         switch self {
@@ -343,6 +345,8 @@ struct RowView: View {
             AgentReportLine(child: child, outcome: outcome, report: report)
         case .decision(let tool, let summary, let outcome):
             DecisionLine(tool: tool, summary: summary, outcome: outcome)
+        case .memory(let lines, let text):
+            MemoryRow(lines: lines, text: text)
         case .notice(let text):
             HStack(spacing: 10) {
                 VStack { Divider() }
@@ -545,7 +549,7 @@ struct ApprovalButtons: View {
         if record.canRemember, controller.role == "owner" {
             Menu {
                 Button("Allow for This Session") { controller.approve(record, remember: true) }
-                    .help("Keeps this authority for the session, across restarts.")
+                    .help(record.rememberedAuthority)
             } label: {
                 Image(systemName: "chevron.down")
             }

@@ -126,6 +126,8 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
         case agentReport(child: String, outcome: String, report: String)
         /// A decided approval, from the session's ledger.
         case decision(tool: String, summary: String, outcome: String)
+        /// The memory context the daemon attached to a run: a notes index nobody typed.
+        case memory(lines: Int, text: String)
     }
 
     public let id: String
@@ -286,6 +288,8 @@ public struct Conversation: Sendable, Equatable {
     /// Prompts a draining daemon handed back, for the host to put in the editor.
     /// Each is the prompt's last copy, so the host empties the list as it takes them.
     public private(set) var returnedDrafts: [ReturnedDraft] = []
+    /// How fast each strand last generated, timed from this client's own observation.
+    public private(set) var generation = GenerationRate()
 
     /// Moves when what `rows` would return may have changed, so a host can keep
     /// its projection until then and a streamed token never rebuilds it.
@@ -344,6 +348,9 @@ public struct Conversation: Sendable, Equatable {
         }
         if landed || metadataChanged { revision += 1 }
 
+        // A request already running at attach is one this client saw only the end of.
+        if !wasAdopted { generation.attached(busy: strands.filter(\.isBusy).map(\.id)) }
+
         // An ended stream stays drawn until its durable entry lands, or the
         // reply would vanish for the moment between `end` and this cut.
         if landed {
@@ -375,9 +382,17 @@ public struct Conversation: Sendable, Equatable {
     }
 
     /// Folds one uncorrelated frame. An unknown event is ignored by rule.
-    public mutating func apply(push frame: EventEnvelope) {
+    public mutating func apply(push frame: EventEnvelope, now: Int = Int(Date().timeIntervalSince1970 * 1000)) {
         switch frame.event {
+        case "usage_observation", "usage":
+            if let strand = frame.body["strand"]?.string {
+                let usage = frame.body["last_usage"] ?? frame.body["usage"]
+                generation.settle(strand: strand, output: usage?["output"]?.int ?? 0, now: now)
+            }
         case "stream_delta":
+            if let strand = frame.body["strand"]?.string, let id = frame.body["generation"]?.string, frame.body["kind"]?.string != "end" {
+                generation.fragment(strand: strand, generation: id, now: now)
+            }
             applyDelta(frame.body)
         case "presence":
             peers = (frame.body["peers"]?.array ?? []).compactMap(Self.peer)
@@ -820,7 +835,9 @@ public struct Conversation: Sendable, Equatable {
             // The harness writes its own notes into the conversation as user
             // turns with no author. Drawing one as a person's message would put
             // words in their mouth.
-            if author == nil, body.hasPrefix("[loom] ") {
+            if let lines = MemoryContext.lines(in: body) {
+                rows.append(.init(id: id, kind: .memory(lines: lines, text: body)))
+            } else if author == nil, body.hasPrefix("[loom] ") {
                 rows.append(.init(id: id, kind: .notice(text: String(body.dropFirst(7)))))
             } else {
                 var row = TranscriptRow(id: id, kind: .user(text: body, author: author))

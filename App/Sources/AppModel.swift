@@ -1,5 +1,6 @@
 import Foundation
 import LoomKit
+import SwiftUI
 import MissionKit
 import Observation
 import Security
@@ -329,6 +330,8 @@ final class AppModel {
     var isAddingDaemon = false
     var isPaletteOpen = false
     var showsInspector = false
+    /// Whether the sidebar column shows. The toolbar's control and ⌘B change the same value.
+    var sidebarVisibility: NavigationSplitViewVisibility = .automatic
 
     /// A name to prefill, when a person follows a session held elsewhere.
     var daemonSuggestion: (name: String, address: String)?
@@ -581,6 +584,8 @@ final class SessionController {
     private(set) var remoteUsage: [RemoteUsage] = []
     private(set) var role = ""
     private(set) var connectionID = ""
+    /// Tokens a second of the focused strand's last timed generation.
+    private(set) var outputRate: Int?
     /// The newest request on the focused strand, which the cache outlook counts from.
     private(set) var cacheStamp: CacheStamp?
     /// The highest record sequence `/clear` hid on each strand, so a cleared window
@@ -604,6 +609,10 @@ final class SessionController {
         }
     }
 
+    #if DEBUG
+    /// How many pushes of each kind arrived, so a scenario can tell a missing event from a missing reading.
+    @ObservationIgnored private(set) var pushedEvents: [String: Int] = [:]
+    #endif
     @ObservationIgnored private var conversation: Conversation
     @ObservationIgnored private var projectedRevision = -1
     @ObservationIgnored private var olderCursor: Int?
@@ -646,6 +655,9 @@ final class SessionController {
                 case .cut(let cut):
                     if conversation.apply(cut: cut) { syncAll() }
                 case .push(let frame):
+                    #if DEBUG
+                    pushedEvents[frame.event, default: 0] += 1
+                    #endif
                     conversation.apply(push: frame)
                     if frame.event == "stream_delta" {
                         scheduleStreamFlush()
@@ -723,6 +735,7 @@ final class SessionController {
         assign(\.remoteUsage, conversation.remoteUsage)
         assign(\.role, conversation.role)
         assign(\.connectionID, conversation.connectionID)
+        assign(\.outputRate, conversation.generation.rate(strand: focusedStrand))
         if todo == nil, let seeded = notesTodo() { todo = seeded }
         setStream()
     }

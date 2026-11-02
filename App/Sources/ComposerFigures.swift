@@ -13,6 +13,12 @@ struct ComposerFigures: View {
     var body: some View {
         ContextFigure(controller: controller)
         CacheOutlookFigure(controller: controller)
+        let rate = controller.outputRate.map { "\($0) tok/s" } ?? "— tok/s"
+        Text(rate)
+            .foregroundStyle(controller.outputRate == nil ? .tertiary : .secondary)
+            .help("Output tokens a second of the last timed generation on this strand")
+            .accessibilityLabel("Output speed")
+            .accessibilityValue(rate)
         let cost = UsageWords.estimate(usage: controller.usage)
         if !cost.hasSuffix("—") {
             Text(cost)

@@ -190,3 +190,127 @@ final class ApprovalLedgerTests: XCTestCase {
         XCTAssertEqual(Decision.ledgerWords([], matching: nil), "No request has been answered in this session.")
     }
 }
+
+final class GenerationRateTests: XCTestCase {
+    func testARequestSeenFromItsFirstFragmentIsTimedAtItsUsageReading() {
+        var rate = GenerationRate()
+        rate.fragment(strand: "main", generation: "g1", now: 10_000)
+        rate.fragment(strand: "main", generation: "g1", now: 11_000)
+        rate.settle(strand: "main", output: 300, now: 12_000)
+        XCTAssertEqual(rate.rate(strand: "main"), 150)
+    }
+
+    func testAShortWindowLeavesTheLastRateStanding() {
+        var rate = GenerationRate()
+        rate.fragment(strand: "main", generation: "g1", now: 0)
+        rate.settle(strand: "main", output: 300, now: 2_000)
+        rate.fragment(strand: "main", generation: "g2", now: 2_200)
+        rate.settle(strand: "main", output: 900, now: 2_700)
+        XCTAssertEqual(rate.rate(strand: "main"), 150, "under a second says nothing")
+        rate.settle(strand: "main", output: 900, now: 9_000)
+        XCTAssertEqual(rate.rate(strand: "main"), 150, "one clock settles one reading")
+    }
+
+    func testARequestRunningWhenTheLaneAttachedIsNeverTimed() {
+        var rate = GenerationRate()
+        rate.attached(busy: ["main"])
+        rate.fragment(strand: "main", generation: "mid", now: 5_000)
+        rate.settle(strand: "main", output: 500, now: 9_000)
+        XCTAssertNil(rate.rate(strand: "main"))
+        rate.fragment(strand: "main", generation: "next", now: 10_000)
+        rate.settle(strand: "main", output: 500, now: 12_000)
+        XCTAssertEqual(rate.rate(strand: "main"), 250)
+    }
+
+    func testStrandsAreTimedIndependently() {
+        var rate = GenerationRate()
+        rate.fragment(strand: "main", generation: "g1", now: 0)
+        rate.settle(strand: "advisor", output: 100, now: 5_000)
+        XCTAssertNil(rate.rate(strand: "advisor"))
+        XCTAssertNil(rate.rate(strand: "main"))
+    }
+
+    func testTheConversationFeedsItFromPushedFrames() {
+        var state = Conversation(sessionID: session)
+        func push(_ event: String, _ body: JSONValue, at now: Int) {
+            state.apply(push: EventEnvelope(replyTo: nil, event: event, seq: nil, body: body), now: now)
+        }
+        push("stream_delta", ["strand": "main", "generation": "g1", "kind": "text", "text": "hi"], at: 0)
+        push("stream_delta", ["strand": "main", "generation": "g1", "kind": "end"], at: 3_900)
+        push("usage_observation", ["strand": "main", "usage": ["output": 400]], at: 4_000)
+        XCTAssertEqual(state.generation.rate(strand: "main"), 100)
+    }
+}
+
+final class FoldParityTests: XCTestCase {
+    func testTheNotesIndexIsAMemoryContextAndAPromptIsNot() {
+        let notes = "Notes saved in this repository by earlier sessions.\n\n```loom-notes\n- (fact) a\n- (fact) b\n```"
+        XCTAssertEqual(MemoryContext.lines(in: notes), 2)
+        XCTAssertEqual(MemoryContext.lines(in: "Distilled memory from this repository's earlier sessions.\n\n```loom-memory\n- a\n```"), 1)
+        XCTAssertNil(MemoryContext.lines(in: "Notes saved in this repository by earlier sessions, but no fence"))
+        XCTAssertNil(MemoryContext.lines(in: "please fix the retry budget"))
+        XCTAssertEqual(MemoryContext.summary(lines: 1), "Memory context, 1 line")
+        XCTAssertEqual(MemoryContext.summary(lines: 3), "Memory context, 3 lines")
+    }
+
+    func testAMemoryContextJoinsTheTurnItFollowsAndOpensNone() {
+        let user = TranscriptRow(id: "u", kind: .user(text: "go", author: "Owner"), at: 1_000)
+        let memory = TranscriptRow(id: "m", kind: .memory(lines: 2, text: "notes"))
+        let step = TranscriptRow(id: "t", kind: .tool(name: "bash", arguments: ["command": "ls"], result: "ok", isError: false), at: 2_000)
+        let answer = TranscriptRow(id: "a", kind: .assistant(text: "done"), at: 3_000)
+        let blocks = TranscriptBlock.group([user, memory, step, answer])
+        guard blocks.count == 3, case .fold(let fold) = blocks[1] else { return XCTFail("expected user, fold, answer: \(blocks)") }
+        XCTAssertEqual(fold.rows.map(\.id), ["m", "t"])
+        XCTAssertEqual(fold.steps, 1, "a memory row is not a step")
+    }
+
+    func testAMemoryContextWithNoWorkStandsAlone() {
+        let user = TranscriptRow(id: "u", kind: .user(text: "go", author: "Owner"), at: 1_000)
+        let memory = TranscriptRow(id: "m", kind: .memory(lines: 1, text: "notes"))
+        let answer = TranscriptRow(id: "a", kind: .assistant(text: "done"), at: 3_000)
+        XCTAssertEqual(TranscriptBlock.group([user, memory, answer]).count, 3)
+    }
+
+    func testAStoppedTurnOrACancelledCommandSaysInterrupted() {
+        let user = TranscriptRow(id: "u", kind: .user(text: "go", author: "Owner"), at: 0)
+        var stopped = TranscriptRow(id: "t", kind: .tool(name: "bash", arguments: ["command": "sleep 9"], result: "gone", isError: true), at: 1_000)
+        stopped.settledAt = 3_000
+        stopped.details = ["cancelled": .bool(true)]
+        let blocks = TranscriptBlock.group([user, stopped])
+        guard case .fold(let fold) = blocks[1] else { return XCTFail("expected a fold") }
+        XCTAssertTrue(fold.isInterrupted)
+        XCTAssertEqual(fold.title, "Worked 3s · 1 step · 1 failed · interrupted")
+    }
+
+    func testADeadlineIsNotAnInterruption() {
+        var timedOut = TranscriptRow(id: "t", kind: .tool(name: "bash", arguments: [:], result: "late", isError: true), at: 0)
+        timedOut.details = ["cancelled": .bool(true), "timed_out": .bool(true)]
+        XCTAssertFalse(Fold.wasInterrupted([timedOut]))
+        let notice = TranscriptRow(id: "x/stopped", kind: .notice(text: "Stopped before the turn finished."))
+        XCTAssertTrue(Fold.wasInterrupted([notice]))
+    }
+}
+
+final class SessionApprovalTests: XCTestCase {
+    private func request(_ grants: [JSONValue]) -> Escalation {
+        Escalation(id: "e", seq: 1, status: "pending", strand: "main", tool: "bash", action: "run", preview: "", reason: "", source: "", grants: grants)
+    }
+
+    func testOneUnlimitedWallGrantMayBeRememberedForTheExactAction() {
+        let wall = request([["type": "limit", "field": "wall_seconds", "value": 0]])
+        XCTAssertTrue(wall.canRemember)
+        XCTAssertEqual(wall.rememberedAuthority, "Session approval permits only this exact action on this strand.")
+    }
+
+    func testAWallGrantWithOthersOrANonZeroValueStaysOnceOnly() {
+        XCTAssertFalse(request([["type": "limit", "field": "wall_seconds", "value": 30]]).canRemember)
+        XCTAssertFalse(request([["type": "limit", "field": "wall_seconds", "value": 0], ["type": "writable_root", "path": "/tmp"]]).canRemember)
+        XCTAssertFalse(request([["type": "limit", "field": "pids", "value": 0]]).canRemember)
+    }
+
+    func testAFilesystemGrantKeepsTheRestartWords() {
+        let write = request([["type": "writable_root", "path": "/tmp/x"]])
+        XCTAssertTrue(write.canRemember)
+        XCTAssertEqual(write.rememberedAuthority, "Session approval persists across restart.")
+    }
+}
