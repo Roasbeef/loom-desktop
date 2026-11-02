@@ -12,14 +12,6 @@ enum Destination: Hashable {
     case session(String)
 }
 
-/// How a person last chose to group the sidebar.
-enum SidebarGrouping: String, CaseIterable, Identifiable {
-    case status = "Status"
-    case project = "Project"
-    case machine = "Machine"
-    var id: Self { self }
-}
-
 /// A saved way to reach a daemon on another machine.
 struct SavedDaemon: Codable, Hashable, Identifiable {
     let id: UUID

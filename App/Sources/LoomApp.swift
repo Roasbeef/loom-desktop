@@ -91,6 +91,9 @@ private struct LoomCommands: Commands {
             Button("Next Session Needing You") { model.goToNextNeedingYou() }
                 .keyboardShortcut("j")
             Button("People…") { model.actions.showsPeople = true }
+            Button(UserDefaults.standard.bool(forKey: "sidebarSavedOpen") ? "Hide Saved Sessions" : "Show Saved Sessions") {
+                UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: "sidebarSavedOpen"), forKey: "sidebarSavedOpen")
+            }
         }
         CommandMenu("Session") {
             SessionMenuItems(model: model)

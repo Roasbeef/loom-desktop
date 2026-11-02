@@ -15,29 +15,29 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| HM-01 | List sessions, grouped by project, newest first | view/sidebar.gleam:362 | `sessions.list` | code (RootView.swift:115, grouping by Project; ControlClient.swift:45) | 1 |
-| HM-02 | Live activity word and dot for each running row (working, idle, needs you) | view/home_table.gleam:1092 | `sessions.activity` | code (RootView.swift:256) | 1 |
-| HM-03 | Open a running session from a row | view/sidebar.gleam:839 | local; `ui.link` equivalent | code (RootView.swift:169) | 1 |
-| HM-04 | Resume a saved session from a row | view/sidebar.gleam:859 | `sessions.open`, `operations.get` | code (SessionScreen.swift:66; AppModel.swift:253) | 1 |
-| HM-05 | Saved sessions behind a remembered "N saved" toggle | view/sidebar.gleam:708 | local | code (RootView.swift:176; collapse state is not persisted) | 2 |
-| HM-06 | Fold quiet rows behind "Show N more" | view/sidebar.gleam:667 | local | code (RootView.swift:158; native lists every row and needs no bound) | 3 |
-| HM-07 | Machine pills that filter the list, with counts | view/sidebar.gleam:566 | local | partial (RootView.swift:123 groups by machine; no filter or counts) | 2 |
+| HM-01 | List sessions, grouped by project, newest first | view/sidebar.gleam:362 | `sessions.list` | yes (SidebarRows.sections, newest first under each project heading with its count; sidebar_groups_by_project_newest_first) | 1 |
+| HM-02 | Live activity word and dot for each running row (working, idle, needs you) | view/home_table.gleam:1092 | `sessions.activity` | yes (SidebarRows.standing; the row says working, idle or needs you; sidebar_rows_say_what_each_session_is_doing) | 1 |
+| HM-03 | Open a running session from a row | view/sidebar.gleam:839 | local; `ui.link` equivalent | yes (a running row is selected with the driver's `select`, which sets the destination as a click does; the sidebar rows are not in the accessibility tree) | 1 |
+| HM-04 | Resume a saved session from a row | view/sidebar.gleam:859 | `sessions.open`, `operations.get` | yes (a saved row opens to Resume Session; sidebar_opens_running_and_saved_rows) | 1 |
+| HM-05 | Saved sessions behind a remembered "N saved" toggle | view/sidebar.gleam:708 | local | yes (the "N saved" fold is stored in the defaults and toggled by Go > Show Saved Sessions) | 2 |
+| HM-06 | Fold quiet rows behind "Show N more" | view/sidebar.gleam:667 | local | no (native lists every row in a scrolling sidebar and needs no bound; kept as a deliberate difference) | 3 |
+| HM-07 | Machine pills that filter the list, with counts | view/sidebar.gleam:566 | local | yes (a Machine segment with a count for each machine filters the sidebar; a_machine_filter_keeps_only_that_machines_rows) | 2 |
 | HM-08 | Row tag `agent → code` | view/sidebar.gleam:893 | `sessions.list` | yes (RootView.swift:296) | 2 |
-| HM-09 | Row subtitle, the first line of the first prompt | view/sidebar.gleam:893 | `sessions.list` | partial (RootView.swift:266 shows the subtitle only when there is no last message) | 2 |
-| HM-10 | Worktree directory name on a row | sessions.gleam:430 | `sessions.list` | no | 3 |
+| HM-09 | Row subtitle, the first line of the first prompt | view/sidebar.gleam:893 | `sessions.list` | code (SidebarRow draws the daemon's subtitle, unit tested; this app always names a session, so the cluster has no session with a subtitle to show) | 2 |
+| HM-10 | Worktree directory name on a row | sessions.gleam:430 | `sessions.list` | yes (SidebarRows.worktree reads the linked worktree pointer of a local workspace; the row's quiet line leads with the directory name) | 3 |
 | HM-11 | Sidebar "New session" | view/sidebar.gleam:528 | local | yes (RootView.swift:202) | 1 |
-| HM-12 | Sidebar foot: Admin door | view/sidebar.gleam:757 | `ui.link` equivalent | no | 3 |
+| HM-12 | Sidebar foot: Admin door | view/sidebar.gleam:757 | `ui.link` equivalent | yes (the sidebar's People button opens the people sheet) | 3 |
 | HM-13 | Row menu with "Rename, move or delete" | view/sidebar.gleam:932 | local | yes (SessionActions.swift; context menu and Session menu) | 2 |
 | HM-14 | Archive a saved row with a question | view/archiving.gleam:206 | `sessions.archive` | yes (SessionActions.swift) | 2 |
 | HM-15 | Stop and archive a running row, asking when mid-turn | view/archiving.gleam:310 | `sessions.stop`, `sessions.archive` | yes (SessionActions.swift; stops, waits for saved, archives) | 2 |
 | HM-16 | Stop a running row, asking when it is mid-turn | view/home_table.gleam:689 | `sessions.stop` | yes (SessionActions.swift, asks only when mid-turn) | 2 |
 | HM-17 | Delete a saved or blocked row, with a question | view/home_table.gleam:746 | `sessions.delete` | yes (SessionActions.swift) | 2 |
 | HM-18 | Rename a row in place | view/home_table.gleam:997 | `sessions.rename`† | yes (SessionActions.swift RenameSheet; `sessions.rename` read from server.gleam) | 2 |
-| HM-19 | Row state words: saved, moving to, needs attention, failed to start | view/home_table.gleam:1094 | `sessions.list` | partial (RootView.swift:304 and SessionScreen.swift:51 say moving, failed and blocked; "saved" is a section title) | 2 |
-| HM-20 | Row age, UTC minute in a title, and membership role | view/home_table.gleam:1111 | `sessions.list` | partial (RootView.swift:280 shows the age of the last observed change; no created age or role) | 3 |
+| HM-19 | Row state words: saved, moving to, needs attention, failed to start | view/home_table.gleam:1094 | `sessions.list` | partial (SidebarRows.standing words saved, moving to X, needs attention and failed to start: reason are unit tested; the scenario reaches saved only, because no move or failed start can be scripted) | 2 |
+| HM-20 | Row age, UTC minute in a title, and membership role | view/home_table.gleam:1111 | `sessions.list` | partial (the quiet line gives the age since creation in words; the daemon sends no membership role in `sessions.list`, so none is drawn) | 3 |
 | HM-21 | "Waiting" banner on the home with a Review button | view/new_session.gleam:299 | `sessions.activity` | yes (MissionViews.swift:23) | 1 |
 | HM-22 | Count of waiting sessions on the sidebar menu button | component.gleam:7504 | `sessions.activity` | yes (RootView.swift:148, Inbox badge) | 2 |
-| HM-23 | Show the full session list from the composer home | view/new_session.gleam:250 | local | code (MissionViews.swift:9, Mission Control) | 2 |
+| HM-23 | Show the full session list from the composer home | view/new_session.gleam:250 | local | yes (Mission Control lists every session; the_sidebar_foot_opens_people_and_mission_control_lists_everyone) | 2 |
 | HM-24 | Note drawn beside the row a press concerned | view/home_table.gleam:243 | local | partial (SessionScreen.swift:61 for resume; RootView.swift:241 discards a stop error) | 3 |
 
 ## New session
@@ -346,7 +346,7 @@ The web page has no schedule surface beyond these two commands.
 | MA-08 | Copy enroll, renew and revoke commands | view/admin_machine.gleam:681; view/admin_machine.gleam:689; view/admin_machine.gleam:749 | none, the operator runs them | yes (MachineDetailSheet.swift prints the renew, revoke and enroll commands; the app runs none) | 3 |
 | MA-09 | Scopes tab: counts and scopes that block a reopen | view/admin_machine.gleam:901 | `deployment.status` | code (MachineDetailSheet.swift shows scope counts and each scope that did not close cleanly; the fixture has no unclean scope) | 3 |
 | MA-10 | Copy the release-scope command | view/admin_machine.gleam:777 | none, the operator runs it | code (MachineDetailSheet.swift prints `loomd executor release <session>` for each unclean scope; none exists in the fixture) | 3 |
-| MA-11 | Show a machine's sessions in the sidebar | admin.gleam:1399 | local | no | 3 |
+| MA-11 | Show a machine's sessions in the sidebar | admin.gleam:1399 | local | yes (the Machine segment filters the sidebar to one machine's sessions) | 3 |
 | MA-12 | Admin page Machines and People parts | admin.gleam:1305 | local | yes (Machines only: MachinesView.swift:9; people are in CR rows) | 3 |
 | MA-13 | Placement strip: "Agent on", "Commands on" | view/placement.gleam:42 | `sessions.list` | yes (SessionScreen.swift:102 and :1155) | 2 |
 | MA-14 | "Runs on" in the Session tab | view/session_tab.gleam:170 | `sessions.list` | yes (SessionScreen.swift:1158) | 3 |

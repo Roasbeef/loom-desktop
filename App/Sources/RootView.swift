@@ -98,43 +98,20 @@ private struct DaemonMissingView: View {
 private struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("sidebarGrouping") private var grouping = SidebarGrouping.status
-    @State private var showsSaved = false
+    @AppStorage("sidebarMachine") private var machineFilter = ""
+    @AppStorage("sidebarSavedOpen") private var showsSaved = false
 
-    private var visible: [SessionRecord] {
-        model.sessions.filter { record in
-            if case .reserved(let failure) = record.state { return failure != nil }
-            return true
-        }
+    /// A filter for a machine that no longer holds sessions would hide everything.
+    private var filter: String? {
+        machineFilter.isEmpty || !model.machineCounts.contains { $0.name == machineFilter } ? nil : machineFilter
     }
 
-    private func liveness(_ record: SessionRecord) -> AgentCard.Liveness {
-        Mission.liveness(session: record, activity: model.activity[record.id])
+    private var sections: [SidebarSection] {
+        model.sidebarSections(grouping: grouping, machineFilter: filter)
     }
 
-    /// Sessions in groups by what they need, by project or by machine. Status is
-    /// the default because a person returning to the app asks what needs them.
-    private var sections: [(title: String, sessions: [SessionRecord])] {
-        switch grouping {
-        case .status:
-            let order: [(AgentCard.Liveness, String)] = [(.needsYou, "Needs You"), (.working, "Working"), (.idle, "Idle"), (.unknown, "Not Answering")]
-            return order.compactMap { state, title in
-                let rows = visible.filter { liveness($0) == state }
-                return rows.isEmpty ? nil : (title, rows)
-            }
-        case .project, .machine:
-            let key: (SessionRecord) -> String = { record in
-                grouping == .project
-                    ? record.workspaceName
-                    : model.placement(of: record)?.hands ?? "This machine"
-            }
-            return Dictionary(grouping: visible.filter { liveness($0) != .off }, by: key)
-                .map { ($0.key, $0.value) }
-                .sorted { $0.title < $1.title }
-        }
-    }
-
-    private var saved: [SessionRecord] {
-        visible.filter { liveness($0) == .off }
+    private var saved: [SidebarRow] {
+        model.sidebarSaved(machineFilter: filter)
     }
 
     private var groupings: [SidebarGrouping] {
@@ -143,10 +120,14 @@ private struct SidebarView: View {
 
     /// A project heading carries a button that starts a session in that folder.
     @ViewBuilder
-    private func sectionHeader(_ title: String, sessions: [SessionRecord]) -> some View {
-        let folder = sessions.first { $0.executor == nil && $0.pool == nil }?.workspace
+    private func sectionHeader(_ section: SidebarSection) -> some View {
+        let title = section.title
+        let folder = section.rows
+            .compactMap { row in model.sessions.first { $0.id == row.id } }
+            .first { $0.executor == nil && $0.pool == nil }?.workspace
         HStack {
             Text(title)
+            Text("\(section.count)").font(Theme.caption).foregroundStyle(.tertiary)
             if grouping == .project, let folder {
                 Spacer()
                 Button {
@@ -179,29 +160,29 @@ private struct SidebarView: View {
 
             ForEach(sections, id: \.title) { section in
                 Section {
-                    ForEach(section.sessions) { record in
+                    ForEach(section.rows) { row in
                         SessionRow(
-                            record: record,
-                            activity: model.activity[record.id],
-                            placement: model.placement(of: record),
-                            ask: model.controller(for: record.id)?.escalations.first?.authorityLines.first,
-                            changed: model.daemon(holding: record.id)?.lastChanged[record.id],
-                            isUnseen: model.hasUnseenReply(record.id)
+                            row: row,
+                            activity: model.activity[row.id],
+                            placement: model.sessions.first { $0.id == row.id }.flatMap { model.placement(of: $0) },
+                            ask: model.controller(for: row.id)?.escalations.first?.authorityLines.first,
+                            changed: model.daemon(holding: row.id)?.lastChanged[row.id],
+                            isUnseen: model.hasUnseenReply(row.id)
                         )
-                            .tag(Destination.session(record.id))
-                            .sessionContextMenu(record: record)
+                            .tag(Destination.session(row.id))
+                            .sessionContextMenu(id: row.id)
                     }
                 } header: {
-                    sectionHeader(section.title, sessions: section.sessions)
+                    sectionHeader(section)
                 }
             }
 
             if !saved.isEmpty {
-                Section("Saved", isExpanded: $showsSaved) {
-                    ForEach(saved) { record in
-                        SessionRow(record: record, activity: nil, placement: model.placement(of: record))
-                            .tag(Destination.session(record.id))
-                            .sessionContextMenu(record: record)
+                Section("\(saved.count) saved", isExpanded: $showsSaved) {
+                    ForEach(saved) { row in
+                        SessionRow(row: row, activity: nil, placement: model.sessions.first { $0.id == row.id }.flatMap { model.placement(of: $0) })
+                            .tag(Destination.session(row.id))
+                            .sessionContextMenu(id: row.id)
                     }
                 }
             }
@@ -215,6 +196,25 @@ private struct SidebarView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.small)
+                if model.isMultiMachine, model.machineCounts.count > 1 {
+                    Picker("Machine", selection: $machineFilter) {
+                        Text("All \(model.sessions.count)").tag("")
+                        ForEach(model.machineCounts, id: \.name) { Text("\($0.name) \($0.count)").tag($0.name) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                }
+                Button {
+                    model.actions.showsPeople = true
+                } label: {
+                    Label("People", systemImage: "person.2")
+                        .font(Theme.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("The people who can use this daemon, and their sign-ins")
+                .accessibilityLabel("Open People")
                 DaemonFooter()
             }
             .padding(.horizontal, 14)
@@ -235,18 +235,27 @@ private struct SidebarView: View {
 }
 
 extension View {
-    func sessionContextMenu(record: SessionRecord) -> some View {
-        modifier(SessionContextMenu(record: record))
+    func sessionContextMenu(id: String) -> some View {
+        modifier(SessionContextMenu(id: id))
     }
 }
 
 private struct SessionContextMenu: ViewModifier {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
-    let record: SessionRecord
+    let id: String
 
     func body(content: Content) -> some View {
-        content.contextMenu {
+        if let record = model.sessions.first(where: { $0.id == id }) {
+            content.contextMenu { menu(for: record) }
+        } else {
+            content
+        }
+    }
+
+    @ViewBuilder
+    private func menu(for record: SessionRecord) -> some View {
+        Group {
             Button("Open in New Window") {
                 openWindow(id: "session", value: record.id)
             }
@@ -275,15 +284,18 @@ private struct SessionContextMenu: ViewModifier {
 }
 
 private struct SessionRow: View {
-    let record: SessionRecord
+    let row: SidebarRow
     let activity: SessionActivity?
     let placement: Placement?
     var ask: String?
     var changed: Date?
     var isUnseen = false
 
+    @Environment(AppModel.self) private var model
+
     private var liveness: AgentCard.Liveness {
-        Mission.liveness(session: record, activity: activity)
+        guard let record = model.sessions.first(where: { $0.id == row.id }) else { return .off }
+        return Mission.liveness(session: record, activity: activity)
     }
 
     /// What the row should say first: the question if it has one, or else the
@@ -292,8 +304,13 @@ private struct SessionRow: View {
         if let ask {
             return (ask, true)
         }
-        guard let line = activity?.lastMessage ?? record.subtitle, line != record.title else { return nil }
+        guard let line = activity?.lastMessage, line != row.title else { return nil }
         return (Markdown.plainPreview(line), false)
+    }
+
+    /// The quiet line: where the session stands, how old it is, and the worktree.
+    private var quiet: String {
+        [row.worktree, row.standing, row.created].compactMap { $0 }.joined(separator: " · ")
     }
 
     var body: some View {
@@ -302,7 +319,7 @@ private struct SessionRow: View {
                 .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(record.title)
+                    Text(row.title)
                         .lineLimit(1)
                         .fontWeight(isUnseen ? .semibold : .regular)
                     Spacer(minLength: 2)
@@ -320,6 +337,11 @@ private struct SessionRow: View {
                             .foregroundStyle(preview.isAsk ? AnyShapeStyle(Theme.attention) : AnyShapeStyle(.secondary))
                             .lineLimit(1)
                             .truncationMode(preview.isAsk ? .middle : .tail)
+                    } else if let subtitle = row.subtitle {
+                        Text(subtitle)
+                            .font(Theme.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
                     Spacer(minLength: 0)
                     if let placement, placement.isSplit {
@@ -330,9 +352,12 @@ private struct SessionRow: View {
                             .fixedSize()
                     }
                 }
-                if let movingTo = record.movingTo {
-                    Text("Moving to \(movingTo)").font(Theme.caption).foregroundStyle(Theme.attention)
-                }
+                Text(quiet)
+                    .font(Theme.caption)
+                    .foregroundStyle(row.standing.hasPrefix("moving") || row.standing.hasPrefix("failed") || row.standing == "needs attention"
+                        ? AnyShapeStyle(row.standing.hasPrefix("failed") ? Theme.failure : Theme.attention)
+                        : AnyShapeStyle(.tertiary))
+                    .lineLimit(1)
             }
         }
         .padding(.vertical, 2)

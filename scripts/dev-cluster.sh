@@ -27,6 +27,13 @@ mkdir -p "$base/proj" "$base/logs"
 git -C "$base/proj" init -q
 echo "hello from the executor's checkout" > "$base/proj/README.md"
 
+# A second repository with a linked worktree, so a row can show a worktree's name.
+git -C "$base" init -q wtrepo
+echo "tree" > "$base/wtrepo/README.md"
+git -C "$base/wtrepo" add README.md
+git -C "$base/wtrepo" -c user.name=loom -c user.email=loom@example.com commit -q -m start
+git -C "$base/wtrepo" worktree add -q "$base/wtrepo-feature"
+
 cat > "$base/plan.toml" <<EOF
 [[node]]
 name = "orch"

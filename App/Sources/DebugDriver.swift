@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import LoomKit
+import MissionKit
 import QuartzCore
 import SwiftUI
 
@@ -204,6 +205,9 @@ enum DebugDriver {
             // Ends the session's socket so the daemon connection attaches a fresh
             // lane, which opens on the recent window and not on everything held.
             model.controller(for: parts[1])?.detach()
+        case "select" where parts.count > 1:
+            // Selects a sidebar row, which sets the destination as a click on it does.
+            model.destination = .session(parts[1])
         case "strand" where parts.count > 1:
             model.currentSession?.focusedStrand = parts[1]
         case "lanedelay" where parts.count > 1:
@@ -486,8 +490,40 @@ enum Snapshot {
                 "models": session.catalogue.models,
             ]
         }
+        body["sidebar"] = SidebarSnapshot.encode(model)
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+/// The sidebar's rows, which the accessibility tree does not list, in each grouping.
+/// The view draws these same values.
+enum SidebarSnapshot {
+    @MainActor
+    static func encode(_ model: AppModel) -> [String: Any] {
+        func rows(_ rows: [SidebarRow]) -> [[String: Any]] {
+            rows.map { row -> [String: Any] in
+                var entry: [String: Any] = ["id": row.id, "title": row.title, "subtitle": row.subtitle ?? ""]
+                entry["standing"] = row.standing
+                entry["created"] = row.created
+                entry["worktree"] = row.worktree ?? ""
+                entry["machine"] = row.machine
+                entry["project"] = row.project
+                return entry
+            }
+        }
+        let defaults = UserDefaults.standard
+        let filter = defaults.string(forKey: "sidebarMachine") ?? ""
+        var out: [String: Any] = [:]
+        for grouping in SidebarGrouping.allCases {
+            out[grouping.rawValue] = model.sidebarSections(grouping: grouping, machineFilter: filter.isEmpty ? nil : filter)
+                .map { ["title": $0.title, "count": $0.count, "rows": rows($0.rows)] as [String: Any] }
+        }
+        out["saved"] = rows(model.sidebarSaved(machineFilter: filter.isEmpty ? nil : filter))
+        out["savedOpen"] = defaults.bool(forKey: "sidebarSavedOpen")
+        out["filter"] = filter
+        out["machines"] = model.machineCounts.map { ["name": $0.name, "count": $0.count] as [String: Any] }
+        return out
     }
 }
 
