@@ -89,13 +89,12 @@ struct ContextPanel: View {
     private func compact() {
         compactMessage = nil
         let strand = controller.focusedStrand
-        controller.run("compact", body: ["strand": .string(strand)])
         Task {
-            try? await Task.sleep(for: .milliseconds(700))
-            if let error = controller.lastError {
-                compactMessage = error.localizedCaseInsensitiveContains("nothing") ? "Nothing to compact yet." : error
-            } else {
+            do {
+                _ = try await controller.exchange("compact", body: ["strand": .string(strand)])
                 compactMessage = "Compacting. The figure updates when it finishes."
+            } catch {
+                compactMessage = error.localizedDescription
             }
         }
     }

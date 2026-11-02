@@ -163,6 +163,7 @@ final class RefusalWordsTests: XCTestCase {
             XCTAssertNotNil(Refusal.words(code: code), code)
         }
         XCTAssertNil(Refusal.words(code: "something_new"))
+        XCTAssertEqual(Refusal.words(code: "conflict", message: "there is nothing to compact"), "Nothing to compact yet.")
     }
 }
 

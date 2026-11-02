@@ -116,7 +116,12 @@ public enum FolderCheck: Sendable, Equatable {
 /// Plain sentences for the refusal codes of the owner commands. A code a client
 /// does not know keeps the daemon's own message.
 public enum Refusal {
-    public static func words(code: String) -> String? {
+    public static func words(code: String, message: String? = nil) -> String? {
+        // The daemon also answers  for a strand too short to compact,
+        // which has nothing to do with the session being busy.
+        if code == "conflict", message == "there is nothing to compact" {
+            return "Nothing to compact yet."
+        }
         switch code {
         case "busy": return "That session is running or still has a runtime. Stop it first."
         case "not_found": return "The daemon has no such session."

@@ -26,7 +26,13 @@ struct NotesPane: View {
             }
         }
         .task(id: controller.focusedStrand) { refresh() }
-        .onExitCommand { open = nil }
+        // Escape leaves the page wherever the focus is. An exit command would reach
+        // here only with the focus inside this pane, and it is usually in the composer.
+        .background {
+            if open != nil {
+                Button("Back") { open = nil }.keyboardShortcut(.cancelAction).hidden()
+            }
+        }
     }
 
     private func refresh() {

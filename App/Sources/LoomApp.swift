@@ -82,7 +82,7 @@ private struct LoomCommands: Commands {
                 model.sidebarVisibility = model.sidebarVisibility == .detailOnly ? .all : .detailOnly
             }
             .keyboardShortcut("b")
-            Button(model.showsInspector ? "Hide Inspector" : "Show Inspector") {
+            Button("Toggle Inspector") {
                 model.showsInspector.toggle()
             }
             .keyboardShortcut("i", modifiers: [.command, .option])
@@ -101,7 +101,7 @@ private struct LoomCommands: Commands {
             Button("Next Session Needing You") { model.goToNextNeedingYou() }
                 .keyboardShortcut("j")
             Button("People…") { model.actions.showsPeople = true }
-            Button(UserDefaults.standard.bool(forKey: "sidebarSavedOpen") ? "Hide Saved Sessions" : "Show Saved Sessions") {
+            Button("Toggle Saved Sessions") {
                 UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: "sidebarSavedOpen"), forKey: "sidebarSavedOpen")
             }
         }

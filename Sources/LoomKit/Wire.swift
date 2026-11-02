@@ -19,7 +19,7 @@ public enum LoomError: Error, Sendable, Equatable, LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .discovery(let text): return text
-        case .server(let code, let message, _): return Refusal.words(code: code) ?? "\(code): \(message)"
+        case .server(let code, let message, _): return Refusal.words(code: code, message: message) ?? "\(code): \(message)"
         case .upgradeRefused(let status): return "The daemon refused the connection (HTTP \(status))."
         case .protocolViolation(let text): return "Protocol violation: \(text)"
         case .outcomeUnknown(let command): return "No reply to \(command); its outcome is unknown."

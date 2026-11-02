@@ -25,8 +25,13 @@ struct StrandsPane: View {
                 list
             }
         }
-        // Escape leaves a strand's page for the list, as the breadcrumb does.
-        .onExitCommand { detail = nil }
+        // Escape leaves the page wherever the focus is. An exit command would reach
+        // here only with the focus inside this pane, and it is usually in the composer.
+        .background {
+            if detail != nil {
+                Button("Back") { detail = nil }.keyboardShortcut(.cancelAction).hidden()
+            }
+        }
     }
 
     private var list: some View {
