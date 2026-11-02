@@ -538,6 +538,7 @@ final class SessionController {
     private(set) var remoteChildren: [RemoteChild] = []
     private(set) var peek: ChildPeek?
     private(set) var peers: [Peer] = []
+    private(set) var surfaces: [String: JSONValue] = [:]
     private(set) var pendingInputs: [PendingInput] = []
     private(set) var worktree: JSONValue?
     private(set) var branch: String?
@@ -638,6 +639,7 @@ final class SessionController {
 
     private func syncPushed() {
         assign(\.peers, conversation.peers)
+        assign(\.surfaces, conversation.surfaces)
         assign(\.toolTails, conversation.toolTails)
         assign(\.worktree, conversation.worktree)
         assign(\.remoteChildren, conversation.remoteChildren)
@@ -705,6 +707,24 @@ final class SessionController {
 
     /// Asks for a fresh board. A refusal because a read is already running is not
     /// worth saying: that read's answer is on its way.
+    /// Runs any session command. A snapshot reply lands in `surfaces` by its mode,
+    /// and a refusal lands in `lastError`.
+    func run(_ command: String, body: JSONValue = .object([:])) {
+        guard let lane else { return }
+        lastError = nil
+        Task {
+            do {
+                let reply = try await lane.request(command, body: body)
+                if reply.event == "snapshot" {
+                    conversation.apply(push: reply)
+                    syncPushed()
+                }
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
     func requestDiff() {
         guard let lane else { return }
         Task {

@@ -142,6 +142,22 @@ public actor SessionLane {
         }
     }
 
+    /// Sends any session command and returns its reply. New surfaces use this, so a
+    /// command needs no method of its own to keep the credit's order. A reply that is
+    /// a `snapshot` should go to `Conversation.apply(push:)`, the same as a push.
+    public func request(_ cmd: String, body: JSONValue = .object([:])) async throws -> EventEnvelope {
+        await credit.acquire()
+        do {
+            let reply = try await exchange(cmd, body: body)
+            await credit.release()
+            dirty = true
+            return reply
+        } catch {
+            await credit.release()
+            throw error
+        }
+    }
+
     private func mutate(_ cmd: String, body: JSONValue) async throws -> String {
         await credit.acquire()
         do {

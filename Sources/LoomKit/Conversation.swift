@@ -246,6 +246,9 @@ public struct Conversation: Sendable, Equatable {
     public private(set) var worktree: JSONValue?
     public private(set) var notices: [String] = []
     public private(set) var remoteChildren: [RemoteChild] = []
+    /// The latest `snapshot` of each mode, as the daemon sent it, for surfaces such as
+    /// `notes`, `schedules`, `context` and `live_jobs`.
+    public private(set) var surfaces: [String: JSONValue] = [:]
     public private(set) var peek: ChildPeek?
     public private(set) var hasAdoptedCut = false
 
@@ -321,6 +324,7 @@ public struct Conversation: Sendable, Equatable {
                 toolTails[call] = tail
             }
         case "snapshot":
+            if let mode = frame.body["mode"]?.string { surfaces[mode] = frame.body }
             switch frame.body["mode"]?.string {
             case "worktree_diff":
                 worktree = frame.body["board"]
