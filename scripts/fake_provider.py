@@ -11,6 +11,11 @@ keyword in the last user turn selects a script:
   slow       like the default reply, but slow enough to catch mid-stream
   hang       streams one word, then waits long enough to be stopped
   explode    answers HTTP 400, for a run that fails without retries
+  todoboard  builds a phased todo board with the `todo` tool, then finishes one task
+  writenote  writes a typed note with the `remember` tool
+  proposerule queues a standing rule with the `propose` tool
+  heartbeat  creates a recurring schedule with `schedule_create`
+  backgroundjob starts a background shell job that outlives the run
 
 Anything else streams a short markdown reply. A tool result continues whichever
 script produced the call.
@@ -110,6 +115,12 @@ def script(messages):
     prompt = last_user_text(messages)
     steps = steps_taken(messages)
 
+    # The advisor is fed a digest of the primary's turn, which repeats the
+    # primary's own words. It must not act them out a second time.
+    if "[advisor feed" in prompt:
+        yield from text_stream("Nothing to add.")
+        return
+
     if "demo" in prompt:
         if steps == 0:
             yield chunk({"content": "I'll look at how the fetcher handles failures, then add a bounded retry."})
@@ -124,6 +135,66 @@ def script(messages):
             yield chunk({}, "tool_calls")
         else:
             yield from text_stream(REPORT)
+        return
+
+    if "todoboard" in prompt:
+        if steps == 0:
+            yield chunk({"content": "I will plan this first."})
+            yield call(0, "todo", {"op": "init", "phases": [
+                {"name": "Build", "items": ["Write the parser", "Add the tests", "Wire the metrics"]},
+                {"name": "Review", "items": ["Read the diff"]},
+            ]})
+            yield chunk({}, "tool_calls")
+        elif steps == 1:
+            yield call(0, "todo", {"op": "done", "task": "Write the parser"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The plan is recorded and the first task is finished.")
+        return
+
+    if "writenote" in prompt:
+        if steps == 0:
+            yield call(0, "remember", {
+                "title": "Retry budget lives in fetch",
+                "description": "the per-host budget is enforced in fetch.py",
+                "kind": "decision",
+                "note": "The retry budget is enforced in fetch.py, not in the callers, so every host shares one rule.",
+            })
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("I wrote that down for later sessions.")
+        return
+
+    if "proposerule" in prompt:
+        if steps == 0:
+            yield call(0, "propose", {
+                "new": "Run make check before pushing.",
+                "rationale": "the last two pushes failed CI on formatting",
+            })
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("I queued a standing rule for you to review.")
+        return
+
+    if "heartbeat" in prompt:
+        if steps == 0:
+            yield call(0, "schedule_create", {
+                "name": "heartbeat",
+                "body": "report where the work has got to",
+                "every_seconds": 3600,
+                "max_fires": 24,
+            })
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The heartbeat is scheduled.")
+        return
+
+    if "backgroundjob" in prompt:
+        if steps == 0:
+            yield call(0, "bash", {"command": "sleep 300", "mode": "background"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("A background job is running.")
         return
 
     if "escalate" in prompt:
@@ -179,6 +250,12 @@ class Handler(BaseHTTPRequestHandler):
             # The client stopped the run, which is a normal end to a stream.
             self.close_connection = True
             return
+        # A usage chunk, as a provider sends with stream options, so the session
+        # has token counts and the configured price turns them into an estimate.
+        usage = {"id": "chatcmpl-fake", "object": "chat.completion.chunk", "created": int(time.time()),
+                 "model": "fake", "choices": [],
+                 "usage": {"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500}}
+        self.wfile.write(f"data: {json.dumps(usage)}\n\n".encode())
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
         self.close_connection = True

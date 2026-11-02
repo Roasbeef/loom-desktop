@@ -104,6 +104,12 @@ enum DebugDriver {
             let session = NSApp.keyWindow?.firstResponder.map { "\(type(of: $0))" } ?? "none"
             let text = "destination=\(String(describing: model.destination)) responder=\(session) modal=\(NSApp.modalWindow != nil) sheets=\(NSApp.keyWindow?.sheets.count ?? -1) inspector=\(model.showsInspector) palette=\(model.isPaletteOpen) dispatching=\(model.isDispatching) adding=\(model.isAddingDaemon) current=\(model.currentSession != nil) escalations=\(model.currentSession?.escalations.count ?? -1) canApprove=\(model.currentSession?.escalations.first?.canApprove ?? false) grants=\(model.currentSession?.escalations.first?.grants.count ?? -1) live=\(model.currentSession?.isLive ?? false)\n"
             try? text.write(to: directory.appendingPathComponent("state.txt"), atomically: true, encoding: .utf8)
+        case "run" where parts.count > 1:
+            // Sends one session command from the current session with a JSON body,
+            // for set-up a scenario does not itself test: `run goal_set {...}`.
+            let json = rest.dropFirst(parts[1].count).trimmingCharacters(in: .whitespaces)
+            let body = (try? JSONValue.parse(Data((json.isEmpty ? "{}" : json).utf8))) ?? .object([:])
+            model.currentSession?.run(String(parts[1]), body: body)
         case "stopall":
             // Frees every daemon slot, so one scenario cannot starve the next.
             for daemon in model.daemons {
@@ -334,6 +340,14 @@ enum Snapshot {
                 "escalations": session.escalations.map(\.id),
                 "lastError": session.lastError ?? "",
                 "hasStream": session.stream != nil,
+                "context": session.context?.footer ?? "",
+                "todo": session.todo?.progress ?? "",
+                "strandLines": session.strandLines.map { "\($0.name): \($0.statusLine(elapsed: nil))" },
+                "goal": GoalBoard(session.surfaces["goal"]?["board"])?.statusWord ?? "",
+                "readFailures": session.readFailures,
+                "endedWords": session.ended?.headline ?? "",
+                "side": session.showsSideQuestion,
+                "focused": session.focusedStrand,
                 "strands": session.strands.map(\.id),
                 "transcript": session.blocks.map { block -> String in
                     switch block {
@@ -427,7 +441,7 @@ enum AccessibilityAudit {
     static func tree() -> String {
         guard let window = mainWindow else { return "[]" }
         var rows: [[String: Any]] = []
-        let roots: [Any] = [window] + (window.attachedSheet.map { [$0] } ?? [])
+        let roots = searchRoots(window)
         for root in roots {
             visit(root) { node, depth in
                 let frame = (read(node, "accessibilityFrame") as? NSValue)?.rectValue ?? .zero
@@ -447,13 +461,28 @@ enum AccessibilityAudit {
         return String(decoding: data, as: UTF8.self)
     }
 
+    /// The window, its sheet and its child windows. A popover is a child window,
+    /// so its controls are part of what a person sees.
+    private static func searchRoots(_ window: NSWindow) -> [Any] {
+        var roots: [Any] = [window]
+        if let sheet = window.attachedSheet { roots.append(sheet) }
+        roots.append(contentsOf: (window.childWindows ?? []) as [Any])
+        return roots
+    }
+
+    /// Whether a control accepts a press. A disabled control reports false, so a
+    /// scenario that presses it waits for it to arm instead of pressing nothing.
+    private static func isEnabled(_ node: NSObject) -> Bool {
+        guard node.responds(to: Selector(("isAccessibilityEnabled"))) else { return true }
+        return (node.value(forKey: "accessibilityEnabled") as? Bool) ?? true
+    }
+
     static func press(label: String) -> Bool {
         guard let window = mainWindow else { return false }
         var target: NSObject?
-        let roots: [Any] = [window] + (window.attachedSheet.map { [$0] } ?? [])
-        for root in roots {
+        for root in searchRoots(window) {
             visit(root) { node, _ in
-                guard target == nil, name(node) == label else { return }
+                guard target == nil, name(node) == label, isEnabled(node) else { return }
                 if ["AXButton", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXRow", "AXCell"].contains(role(node)) {
                     target = node
                 }

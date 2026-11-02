@@ -618,10 +618,15 @@ private struct ComposerStack: View {
         GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
                 if !controller.isLive {
-                    HStack(spacing: 8) {
+                    HStack(alignment: .top, spacing: 8) {
                         ProgressView().controlSize(.mini)
-                        Text("Reconnecting. What you see may be out of date.")
-                            .font(Theme.caption)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Disconnected. Reconnecting. What you see may be out of date.")
+                            if let ended = controller.ended {
+                                Text(ended.headline + " " + ended.advice).foregroundStyle(.secondary)
+                            }
+                        }
+                        .font(Theme.caption)
                         Spacer()
                     }
                     .padding(.horizontal, 12)
@@ -637,6 +642,7 @@ private struct ComposerStack: View {
                 if !controller.remoteChildren.isEmpty {
                     RemoteAgentsStrip(controller: controller)
                 }
+                PanelDock(controller: controller)
                 ForEach(controller.pendingInputs.filter { $0.strand == controller.focusedStrand }) { input in
                     HStack(spacing: 8) {
                         Image(systemName: "clock").foregroundStyle(.secondary)
@@ -703,9 +709,7 @@ private struct Composer: View {
                     if let tokens = controller.totalTokens, tokens > 0 {
                         Text("\(tokens.formatted(.number.notation(.compactName))) tokens")
                     }
-                    if let cost = controller.totalCost, cost > 0 {
-                        Text(cost, format: .currency(code: "USD").precision(.fractionLength(2)))
-                    }
+                    ComposerFigures(controller: controller)
                     if controller.peers.count > 1 {
                         Label("\(controller.peers.count)", systemImage: "person.2")
                             .help(controller.peers.map { "\($0.name) (\($0.role))" }.joined(separator: ", "))
@@ -770,9 +774,14 @@ private struct Composer: View {
 struct ApprovalCard: View {
     let record: Escalation
     let controller: SessionController
+    @State private var isArmed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
+            // Who is asking and what for, in a sentence, before the authority.
+            Text(record.sentence(asker: StrandName.display(record.strand.isEmpty ? "A strand" : record.strand)))
+                .font(.system(size: 13))
+                .accessibilityLabel(record.sentence(asker: StrandName.display(record.strand.isEmpty ? "A strand" : record.strand)))
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "hand.raised.fill")
                     .font(.system(size: 12))
@@ -784,7 +793,7 @@ struct ApprovalCard: View {
                             .textSelection(.enabled)
                     }
                     if record.authorityLines.isEmpty {
-                        Text("Allow this call?").font(.system(size: 13, weight: .semibold))
+                        Text(record.question).font(.system(size: 13, weight: .semibold))
                     }
                     HStack(spacing: 6) {
                         Text(record.tool.isEmpty ? "unnamed tool" : record.tool).font(Theme.meta)
@@ -834,8 +843,18 @@ struct ApprovalCard: View {
                     .font(Theme.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
-                ApprovalButtons(record: record, controller: controller)
+                if !isArmed {
+                    Text("Arming…").font(Theme.caption).foregroundStyle(.tertiary)
+                }
+                ApprovalButtons(record: record, controller: controller, isArmed: isArmed)
             }
+        }
+        // A card that appears under a person's hands must not take the Return or
+        // click they meant for something else, so its buttons wait 600 ms.
+        .task(id: record.id) {
+            isArmed = false
+            try? await Task.sleep(for: .milliseconds(600))
+            isArmed = true
         }
         .padding(13)
         .background(Theme.attention.opacity(0.09), in: .rect(cornerRadius: Theme.radiusFloating))
@@ -849,17 +868,19 @@ struct ApprovalCard: View {
 struct ApprovalButtons: View {
     let record: Escalation
     let controller: SessionController
+    var isArmed = true
 
     var body: some View {
         Button("Deny") { controller.deny(record) }
             .buttonStyle(.bordered)
+            .disabled(!isArmed)
             .help("Deny (⇧⌘D)")
         Button("Allow") { controller.approve(record) }
             .buttonStyle(.borderedProminent)
             .tint(Theme.grant)
-            .disabled(!record.canApprove)
+            .disabled(!record.canApprove || !isArmed)
             .help("Allow once (⇧⌘A)")
-        if record.canRemember {
+        if record.canRemember, controller.role == "owner" {
             Menu {
                 Button("Allow for This Session") { controller.approve(record, remember: true) }
                     .help("Keeps this authority for the session, across restarts.")
@@ -966,8 +987,11 @@ private struct SessionInspector: View {
 
     enum Tab: String, CaseIterable, Identifiable {
         case changes = "Changes"
-        case agents = "Agents"
-        case details = "Details"
+        case agents = "Strands"
+        case details = "Session"
+        case trace = "Trace"
+        case notes = "Notes"
+        case evolution = "Evolution"
         var id: Self { self }
     }
 
@@ -976,7 +1000,7 @@ private struct SessionInspector: View {
     var body: some View {
         VStack(spacing: 0) {
             Picker("Inspector", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(Tab.allCases) { Text($0 == .agents ? controller.strandsTabTitle : $0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -987,8 +1011,11 @@ private struct SessionInspector: View {
                 Group {
                     switch tab {
                     case .changes: ChangesPane(controller: controller)
-                    case .agents: AgentsPane(controller: controller)
+                    case .agents: StrandsPane(controller: controller)
                     case .details: DetailsPane(record: record, controller: controller, placement: placement)
+                    case .trace: TracePane(controller: controller)
+                    case .notes: NotesPane(controller: controller)
+                    case .evolution: EvolutionPane(controller: controller)
                     }
                 }
                 .padding(14)
@@ -1098,53 +1125,6 @@ private struct FileChange: View {
     }
 }
 
-/// Every agent in this session, on this orchestrator or another.
-private struct AgentsPane: View {
-    let controller: SessionController
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(controller.strands) { strand in
-                Button {
-                    controller.focusedStrand = strand.id
-                } label: {
-                    HStack(spacing: 8) {
-                        StatusDot(liveness: strand.isBusy ? .working : .idle)
-                        Text(StrandName.display(strand.id))
-                            .font(.system(size: 13, weight: strand.id == controller.focusedStrand ? .semibold : .regular))
-                        Spacer()
-                        if let model = strand.model {
-                            Text(model).font(Theme.meta).foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(strand.id == controller.focusedStrand ? Theme.tintStrong : .clear, in: .rect(cornerRadius: Theme.radiusInner))
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-            }
-            if !controller.remoteChildren.isEmpty {
-                Text("On other machines")
-                    .font(Theme.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 10)
-                ForEach(controller.remoteChildren) { child in
-                    Button {
-                        controller.peek(child: child)
-                    } label: {
-                        RemoteChildRow(child: child)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 6)
-                            .contentShape(.rect)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-    }
-}
-
 private struct DetailsPane: View {
     let record: SessionRecord
     let controller: SessionController
@@ -1165,12 +1145,9 @@ private struct DetailsPane: View {
                 row("Input", (controller.usage["input"]?.int ?? 0).formatted())
                 row("Output", (controller.usage["output"]?.int ?? 0).formatted())
                 row("Cache read", (controller.usage["cacheRead"]?.int ?? 0).formatted())
-                if let cost = controller.totalCost, cost > 0 {
-                    row("Cost", cost.formatted(.currency(code: "USD").precision(.fractionLength(4))))
-                } else {
-                    row("Cost", "Not priced")
-                }
+                row("Estimated cost", UsageWords.figure(usage: controller.usage))
             }
+            SessionExtras(controller: controller)
             if !controller.peers.isEmpty {
                 group("Attached") {
                     ForEach(controller.peers) { peer in

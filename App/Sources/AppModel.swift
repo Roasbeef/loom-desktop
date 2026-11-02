@@ -552,6 +552,23 @@ final class SessionController {
     private(set) var busySince: Date?
     var isSearching = false
 
+    // What the panels draw, each set only when it changes so the transcript is
+    // not invalidated by a figure moving.
+    private(set) var context: ContextBoard?
+    private(set) var contextNotice: String?
+    private(set) var strandLines: [StrandLine] = []
+    private(set) var todo: TodoBoard?
+    private(set) var signals: [String: Int] = [:]
+    private(set) var remoteUsage: [RemoteUsage] = []
+    private(set) var role = ""
+    private(set) var trace = TraceBoard(programs: [], omitted: 0)
+    /// Why the connection ended, in words, once a lane has closed.
+    private(set) var ended: EndingWords?
+    /// Whether the side question panel is open above the composer.
+    var showsSideQuestion = false
+    /// Why a background read was refused, by command, for a panel to say.
+    private(set) var readFailures: [String: String] = [:]
+
     var focusedStrand = "main" {
         didSet {
             if focusedStrand != oldValue { syncAll(force: true) }
@@ -565,6 +582,7 @@ final class SessionController {
     @ObservationIgnored private let endpoint: DaemonEndpoint
     @ObservationIgnored private var lane: SessionLane?
     @ObservationIgnored private var pump: Task<Void, Never>?
+    @ObservationIgnored private var notesAsked: Set<String> = []
 
     init(sessionID: String, endpoint: DaemonEndpoint) {
         self.sessionID = sessionID
@@ -606,6 +624,7 @@ final class SessionController {
                     }
                 case .closed(let error):
                     isLive = false
+                    ended = EndingWords.notice(for: error)
                     if let error { lastError = error.localizedDescription }
                 }
             }
@@ -644,6 +663,12 @@ final class SessionController {
         assign(\.worktree, conversation.worktree)
         assign(\.remoteChildren, conversation.remoteChildren)
         assign(\.peek, conversation.peek)
+        assign(\.context, conversation.context)
+        assign(\.contextNotice, conversation.contextNotice)
+        assign(\.signals, conversation.signals)
+        assign(\.remoteUsage, conversation.remoteUsage)
+        assign(\.role, conversation.role)
+        if todo == nil, let seeded = notesTodo() { todo = seeded }
         setStream()
     }
 
@@ -652,6 +677,10 @@ final class SessionController {
             projectedRevision = conversation.revision
             assign(\.blocks, TranscriptBlock.group(conversation.rows(strand: focusedStrand)))
             assign(\.hasOlder, conversation.hasOlder(strand: focusedStrand))
+            assign(\.strandLines, conversation.strandLines())
+            assign(\.trace, conversation.traceBoard(strand: focusedStrand))
+            assign(\.todo, conversation.todoBoard(strand: focusedStrand) ?? notesTodo())
+            askForNotesIfNoBoard()
         }
         assign(\.strands, conversation.strands)
         assign(\.escalations, conversation.escalations)
@@ -698,11 +727,22 @@ final class SessionController {
     /// Answers with the record the person is looking at, captured by the view.
     /// A stale answer is refused by sequence, and the next cut redraws it.
     func approve(_ record: Escalation, remember: Bool = false) {
+        guard isCurrent(record) else { return }
         perform { lane in _ = try await lane.approve(record, remember: remember) }
     }
 
     func deny(_ record: Escalation) {
+        guard isCurrent(record) else { return }
         perform { lane in _ = try await lane.deny(record) }
+    }
+
+    /// Whether the record a person answered is the one the session holds now. A
+    /// record that changed under them is refused here with words, instead of
+    /// being sent for the daemon to refuse by sequence.
+    private func isCurrent(_ record: Escalation) -> Bool {
+        if escalations.contains(record) { return true }
+        lastError = Escalation.staleWords
+        return false
     }
 
     /// Asks for a fresh board. A refusal because a read is already running is not
@@ -723,6 +763,37 @@ final class SessionController {
                 lastError = error.localizedDescription
             }
         }
+    }
+
+    /// Reads a surface without disturbing `lastError`, for a panel that polls. A
+    /// refusal is kept per command in `readFailures`, so the panel can say why it
+    /// has nothing to show, and a later success clears it.
+    func read(_ command: String, body: JSONValue = .object([:])) {
+        guard let lane else { return }
+        Task {
+            do {
+                let reply = try await lane.request(command, body: body)
+                if reply.event == "snapshot" {
+                    conversation.apply(push: reply)
+                    syncPushed()
+                }
+                if readFailures[command] != nil { readFailures[command] = nil }
+            } catch {
+                readFailures[command] = error.localizedDescription
+            }
+        }
+    }
+
+    /// A strand whose chain holds no `todo` result may still have a board in its
+    /// notes, which is how a client attaching after the last call recovers it.
+    private func askForNotesIfNoBoard() {
+        guard todo == nil, notesAsked.insert(focusedStrand).inserted else { return }
+        read("notes", body: ["strand": .string(focusedStrand)])
+    }
+
+    private func notesTodo() -> TodoBoard? {
+        guard let notes = NotesBoard(surfaces["notes"]?["board"]), notes.strand == focusedStrand else { return nil }
+        return notes.todo
     }
 
     func requestDiff() {
