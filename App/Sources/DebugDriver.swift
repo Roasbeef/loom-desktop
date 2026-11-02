@@ -481,7 +481,7 @@ enum Snapshot {
                 "noticeIsWarning": session.composer.notice?.tone == .warning,
                 "slashRows": session.composer.suggestions(catalogue: session.catalogue).map(\.command),
                 "slashSelected": session.composer.selection,
-                "btwStatus": session.composer.btw?["status"]?.string ?? "",
+                "btwStatus": session.showsSideQuestion ? session.surfaces["btw"]?["board"]?["status"]?.string ?? "" : "",
                 "editing": session.composer.editing?.text ?? "",
                 "models": session.catalogue.models,
             ]

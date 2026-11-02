@@ -17,11 +17,14 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from loomui import App, BASE, Cluster, ROOT  # noqa: E402
+from loomui import App, BASE, Cluster, ROOT, screen_locked  # noqa: E402
 import scenarios  # noqa: E402
 import visual  # noqa: E402
 
 OUT = ROOT / "build/uitest"
+
+
+BLOCKED = "Not run: the screen was locked, so a pixel check could prove nothing."
 
 
 def main():
@@ -47,6 +50,12 @@ def main():
     try:
         for scenario in selected:
             started = time.monotonic()
+            # A pixel check on a locked screen says nothing either way, so it is
+            # counted as unproven, and the run does not report green.
+            if scenario.needs_display and screen_locked():
+                results.append((scenario, BLOCKED, 0.0, None))
+                print(f"blocked {scenario.name}: the screen is locked", flush=True)
+                continue
             # A scenario that takes the app down must not fail all that follow.
             if not app.alive():
                 app.launch()
@@ -74,10 +83,11 @@ def main():
         app.quit()
         cluster.stop()
 
-    failed = sum(1 for _, e, _, _ in results if e)
+    blocked = sum(1 for _, e, _, _ in results if e == BLOCKED)
+    failed = sum(1 for _, e, _, _ in results if e) - blocked
     report(results, context)
-    print(f"\n{len(results) - failed} passed, {failed} failed. Report: {OUT / 'report.html'}")
-    return failed
+    print(f"\n{len(results) - failed - blocked} passed, {failed} failed, {blocked} blocked. Report: {OUT / 'report.html'}")
+    return failed + blocked
 
 
 def report(results, context):

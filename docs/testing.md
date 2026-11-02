@@ -60,7 +60,7 @@ Then change the row in `docs/parity.md` to `yes`. Every scenario starts with all
 
 - The sidebar's rows are not in the accessibility tree, so a scenario cannot press a row, a project heading or a row's context menu. Each row action is also in the Session menu, which acts on the session in the window, and scenarios use that.
 - A pop-up menu opens as its own tracking menu, which neither the tree nor `press` can reach. A choice among a few options is drawn as segments, which `press` can select.
-
+- A locked screen composites nothing: captures come back blank, frames stop, and the inspector's column is not laid out, so its tabs never reach the accessibility tree. Scenarios marked `needs_display` report `blocked` on a locked screen, and a run with any blocked scenario does not exit zero.
 - Windows are captured without being frontmost, so controls render in their inactive state. `LOOM_FORCE_ACTIVE=1` approximates active controls. Only `open -b com.roasbeef.loom-desktop` gives the true state, and that takes focus.
 - A scripted model cannot show how a real model behaves over a long session.
 - The checks read the accessibility tree in process, which is not the same as listening to VoiceOver.

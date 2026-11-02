@@ -20,6 +20,7 @@ class Scenario:
     doc: str
     covers: tuple
     foreground: bool
+    needs_display: bool
     run: object
 
 
@@ -32,9 +33,9 @@ class Context:
         self.notes = []
 
 
-def scenario(*covers, foreground=False):
+def scenario(*covers, foreground=False, needs_display=False):
     def wrap(fn):
-        ALL.append(Scenario(fn.__name__, (fn.__doc__ or "").strip(), covers, foreground, fn))
+        ALL.append(Scenario(fn.__name__, (fn.__doc__ or "").strip(), covers, foreground, needs_display, fn))
         return fn
     return wrap
 
@@ -59,7 +60,7 @@ def daemon_state(c):
 # Connection and discovery.
 
 
-@scenario()
+@scenario(needs_display=True)
 def appearance_and_size_matrix(c):
     """Each main screen renders in both appearances, at minimum and default size."""
     # Fixed content on a fresh daemon, first in the run, so differences mean the
@@ -254,7 +255,7 @@ def the_command_list_follows_the_draft(c):
 
     # The model names come from the daemon's catalogue.
     c.app.type("/model ")
-    wait_for(lambda: c.app.session()["slashRows"] == ["/model fake"], 10, "the model rows")
+    wait_for(lambda: c.app.session()["slashRows"] == ["/model fake", "/model fake2"], 10, "the model rows")
     c.app.key("return")
     wait_for(lambda: "now uses fake" in c.app.session()["notice"], 10, "/model to answer")
     check(not c.app.session()["noticeIsWarning"], c.app.session()["notice"])
@@ -405,7 +406,7 @@ def compact_runs_and_leaves_a_notice(c):
 
 @scenario("CO-36", "CO-37")
 def a_side_question_is_answered_apart(c):
-    """/btw asks a question beside the conversation, and closes."""
+    """/btw asks a question beside the conversation, then clears and closes."""
     c.app.dispatch("Side question", WORKSPACE)
     c.app.open_session("Side question")
     settle(c)
@@ -416,7 +417,10 @@ def a_side_question_is_answered_apart(c):
     c.app.see("Side question")
     wait_for(lambda: c.app.session()["btwStatus"] != "running", 30, "the answer")
     c.app.see("scripted")
-    c.app.press("Close side question")
+    c.app.press("Clear")
+    wait_for(lambda: not any("scripted" in t for t in c.app.texts()), 10, "Clear to empty the panel")
+    c.app.press("Refresh")
+    c.app.press("Close Side Question")
     wait_for(lambda: not c.app.session()["btwStatus"], 5, "the panel to close")
 
 
@@ -652,7 +656,7 @@ def run_session(c, title, prompt, wait="scripted"):
     wait_for(lambda: not c.app.session()["isBusy"], 40, "the run to end")
 
 
-@scenario("PA-01", "PA-07", "PA-08")
+@scenario("PA-01", "PA-07", "PA-08", needs_display=True)
 def bar_figures_and_tabs(c):
     """The composer shows the connection and an estimated cost, and the inspector has six tabs."""
     run_session(c, "Figures", "check", "scripted")
@@ -669,7 +673,7 @@ def bar_figures_and_tabs(c):
     c.app.see(r"Estimated cost", 10)
 
 
-@scenario("CX-01", "CX-02", "CX-03", "CX-04", "CX-05", "CX-07")
+@scenario("CX-01", "CX-02", "CX-03", "CX-04", "CX-05", "CX-07", needs_display=True)
 def context_figure_and_breakdown(c):
     """The bar says how full the window is, and its breakdown explains it and can compact."""
     run_session(c, "Context", "demo please", "Retry budget is now per host")
@@ -705,7 +709,7 @@ def todo_board_follows_the_agent(c):
     c.app.shot(c.out / "panels" / "todo-board.png")
 
 
-@scenario("ST-01", "ST-02", "ST-06", "ST-05", "ST-16")
+@scenario("ST-01", "ST-02", "ST-06", "ST-05", "ST-16", needs_display=True)
 def strands_say_what_they_do(c):
     """Each strand has a card with one status line, a page of detail, and takes the composer."""
     sid = c.app.dispatch("Cards check", WORKSPACE)
@@ -754,7 +758,7 @@ def approval_says_who_and_waits(c):
     wait_for(lambda: not c.app.session()["escalations"], 15, "the approval to clear")
 
 
-@scenario("GO-01", "GO-02", "GO-03", "GO-04", "GO-05", "GO-06")
+@scenario("GO-01", "GO-02", "GO-03", "GO-04", "GO-05", "GO-06", needs_display=True)
 def goal_pauses_resumes_and_clears(c):
     """A pinned goal shows its status and spend, and Pause, Resume and Clear change it."""
     c.app.dispatch("Goal check", WORKSPACE)
@@ -776,7 +780,7 @@ def goal_pauses_resumes_and_clears(c):
     c.app.see(r"No goal is pinned", 10)
 
 
-@scenario("PV-01", "PV-02", "PV-03", "PV-04", "PV-05")
+@scenario("PV-01", "PV-02", "PV-03", "PV-04", "PV-05", needs_display=True)
 def proposals_are_reviewed(c):
     """A proposed rule is shown whole, and can be rejected, or approved after a question."""
     c.app.dispatch("Rule one proposerule", WORKSPACE)
@@ -798,7 +802,7 @@ def proposals_are_reviewed(c):
     c.app.see(r"Decided \(2\)", 15)
 
 
-@scenario("NO-01", "NO-02", "NO-03", "NO-04", "NO-05")
+@scenario("NO-01", "NO-02", "NO-03", "NO-04", "NO-05", needs_display=True)
 def notes_are_searched_and_opened(c):
     """The Notes tab lists the strand's notes, searches them and shows one readable or raw."""
     run_session(c, "Notes", "todoboard", "first task is finished")
@@ -814,7 +818,7 @@ def notes_are_searched_and_opened(c):
     c.app.see(r"Search notes", 5)
 
 
-@scenario("PE-01", "PE-02")
+@scenario("PE-01", "PE-02", needs_display=True)
 def remembered_permissions_can_be_forgotten(c):
     """What Allow for This Session left behind is listed with who approved it, and Forget removes it."""
     pending_approval(c, "Forgetting")
@@ -832,7 +836,7 @@ def remembered_permissions_can_be_forgotten(c):
     c.app.see(r"Nothing is remembered", 10)
 
 
-@scenario("SC-01", "SC-02")
+@scenario("SC-01", "SC-02", needs_display=True)
 def schedules_are_listed_and_retired(c):
     """A schedule a strand created is listed with its timing and can be retired."""
     run_session(c, "Beats", "heartbeat", "heartbeat is scheduled")
@@ -845,7 +849,7 @@ def schedules_are_listed_and_retired(c):
     c.app.see(r"Nothing is scheduled", 15)
 
 
-@scenario("JO-01", "JO-02")
+@scenario("JO-01", "JO-02", needs_display=True)
 def live_jobs_are_listed(c):
     """A background job is listed with its age and deadline, as of the last refresh."""
     run_session(c, "Jobs", "backgroundjob", "background job is running")
@@ -874,7 +878,7 @@ def side_question_panel(c):
     wait_for(lambda: not c.app.session()["side"], 5, "the panel to close")
 
 
-@scenario("ME-01")
+@scenario("ME-01", needs_display=True)
 def memory_overview_lists_notes(c):
     """The memory overview names what each run receives and the notes the agent wrote."""
     run_session(c, "Memory", "writenote", "wrote that down")
@@ -884,7 +888,7 @@ def memory_overview_lists_notes(c):
     c.app.see(r"loom-memory.notes", 5)
 
 
-@scenario("WT-04", "WT-05")
+@scenario("WT-04", "WT-05", needs_display=True)
 def changes_say_how_each_file_changed(c):
     """A new file reads as new, and a commit the session made is listed with its patch."""
     c.app.dispatch("Status commitwork", "proj", executor="box")
@@ -901,7 +905,7 @@ def changes_say_how_each_file_changed(c):
     c.app.see(r"fetch\.py, \d+ added, \d+ removed, (new|added|modified)", 20)
 
 
-@scenario("ST-15")
+@scenario("ST-15", needs_display=True)
 def a_strand_is_forked_from_a_form(c):
     """Fork opens a form, and the new strand appears with the name it was given."""
     run_session(c, "Forking", "check", "scripted")
@@ -924,7 +928,7 @@ def home_and_sidebar_controls(c):
     wait_for(lambda: c.app.snap()["destination"] == "mission", 5, "Mission Control")
 
 
-@scenario("PV-06", "PV-13")
+@scenario("PV-06", "PV-13", needs_display=True)
 def evolution_tab_reads_the_board_and_core(c):
     """The Evolution tab reads the catalogue again on request, and reads the core's status."""
     run_session(c, "Evolving", "check", "scripted")
@@ -975,7 +979,7 @@ def palette_escape_closes(c):
     check(c.app.snap()["destination"] == "mission", "escape should not navigate")
 
 
-@scenario("PA-02", "WT-01", "WT-02", "WT-03", "KB-04")
+@scenario("PA-02", "WT-01", "WT-02", "WT-03", "KB-04", needs_display=True)
 def inspector_toggles_and_shows_changes(c):
     """The inspector opens and reads the worktree from the machine with the checkout."""
     c.app.dispatch("Inspector demo run please", "proj", executor="box")
@@ -1048,7 +1052,7 @@ def monkey_keeps_the_app_alive(c):
     c.notes.append(f"Monkey seed {c.args.seed}: {len(trail)} actions.")
 
 
-@scenario()
+@scenario(needs_display=True)
 def frames_hold_while_streaming(c):
     """Streaming at about 250 words a second stays under a frame budget."""
     sid = c.app.dispatch("Frame budget, long report", WORKSPACE)
@@ -1062,7 +1066,7 @@ def frames_hold_while_streaming(c):
     check(share < 0.05, f"{share:.1%} of frames over 25 ms: {stats}")
 
 
-@scenario()
+@scenario(needs_display=True)
 def idle_is_quiet(c):
     """An idle app with sessions attached uses little CPU and drops no frames."""
     c.app.go("mission")

@@ -263,16 +263,13 @@ private struct AttachmentChip: View {
 // MARK: Above the editor
 
 /// Lines for what was sent and not yet taken, held inputs the daemon will run,
-/// the notice after a command and the side-question panel.
+/// and the notice after a command.
 struct ComposerStatus: View {
     let controller: SessionController
 
     var body: some View {
         let composer = controller.composer
         VStack(spacing: 6) {
-            if let board = composer.btw {
-                BtwPanel(board: board) { composer.closeBtw() }
-            }
             ForEach(composer.ledger.lines) { line in
                 PendingLine(line: line)
             }
@@ -400,38 +397,5 @@ private struct NoticeLine: View {
         .padding(.horizontal, 12)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(notice.text)
-    }
-}
-
-/// The attachment-private side question and its answers.
-private struct BtwPanel: View {
-    let board: JSONValue
-    let close: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Side question").font(Theme.label)
-                if let status = board["status"]?.string {
-                    Text(status).font(Theme.meta).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button(action: close) {
-                    Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close side question")
-            }
-            ForEach(Array((board["exchanges"]?.array ?? []).enumerated()), id: \.offset) { _, exchange in
-                Text(exchange["question"]?.string ?? "").font(Theme.caption).foregroundStyle(.secondary)
-                Text(exchange["answer"]?.string ?? "").font(Theme.body).textSelection(.enabled)
-            }
-            if let notice = board["notice"]?.string, !notice.isEmpty {
-                Text(notice).font(Theme.caption).foregroundStyle(.secondary)
-            }
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: .rect(cornerRadius: Theme.radius))
     }
 }

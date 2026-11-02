@@ -39,6 +39,14 @@ def wait_for(condition, timeout=DEFAULT_TIMEOUT, what="condition", every=0.1):
     raise Failure(f"timed out after {timeout}s waiting for {what} (last: {last!r})")
 
 
+def screen_locked():
+    """Whether the session's screen is locked. A locked screen composites nothing,
+    so a capture is blank and frames stop, and pixel checks prove nothing."""
+    out = subprocess.run(["ioreg", "-n", "Root", "-d1", "-a"], capture_output=True, text=True).stdout
+    key = "<key>CGSSessionScreenIsLocked</key>"
+    return key in out and out.split(key, 1)[1].lstrip().startswith("<true/>")
+
+
 class Cluster:
     """A real orchestrator and executor with the scripted model, on throwaway paths."""
 
@@ -46,7 +54,14 @@ class Cluster:
         self.base = Path(base)
         self.state = self.base / "orch/.loom"
 
+    def _stop_daemons(self):
+        # The pid files name the wrapper, and the VM it starts can outlive a signal
+        # to it, or a killed run, and hold the slot's ports. The base path is unique
+        # to the slot, so this matches only this cluster's processes.
+        subprocess.run(["pkill", "-f", f"{self.base}/(orch|exec)/.loom/loom.toml"], check=False)
+
     def start(self):
+        self._stop_daemons()
         if self.base.exists():
             shutil.rmtree(self.base)
         env = dict(os.environ)
@@ -74,6 +89,7 @@ class Cluster:
     def stop(self):
         for name in ("orch", "exec"):
             self.kill(name, signal.SIGTERM)
+        self._stop_daemons()
         subprocess.run(["pkill", "-f", f"fake_provider.py {18999 + SLOT}"], check=False)
 
 

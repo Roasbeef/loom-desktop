@@ -41,10 +41,7 @@ final class ComposerModel {
     private(set) var images: [ImageAttachment] = []
     private(set) var ledger = DraftLedger()
     private(set) var notice: Notice?
-    /// The side-question panel's board, shown until the person closes it.
-    private(set) var btw: JSONValue?
     @ObservationIgnored private var catalogueRequested = false
-    @ObservationIgnored private var btwPoll: Task<Void, Never>?
 
     #if DEBUG
     /// A delay before a send reaches the lane, which lets a test see the pending
@@ -280,10 +277,10 @@ final class ComposerModel {
                 case .btw(let action):
                     var body: [String: JSONValue] = ["strand": .string(strand), "action": .string(action.wire)]
                     if case .ask(let question) = action { body["text"] = .string(question) } else { body["text"] = "" }
-                    let reply = try await controller.request("btw", body: .object(body))
-                    showBtw(reply.body["board"], controller: controller)
+                    controller.showsSideQuestion = true
+                    controller.run("btw", body: .object(body))
                 case .btwClose:
-                    closeBtw()
+                    controller.showsSideQuestion = false
                 case .schedules:
                     let reply = try await controller.request("schedules")
                     let rows = (reply.body["schedules"]?.array ?? []).map {
@@ -338,24 +335,6 @@ final class ComposerModel {
         return words
     }
 
-    // MARK: Side questions
-
-    private func showBtw(_ board: JSONValue?, controller: SessionController) {
-        btw = board
-        btwPoll?.cancel()
-        guard board?["status"]?.string == "running" else { return }
-
-        // The answer arrives by polling the read, while the status says it runs.
-        btwPoll = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(1200))
-                guard let reply = try? await controller.request("btw", body: ["strand": .string(controller.focusedStrand), "action": "read", "text": ""]) else { return }
-                btw = reply.body["board"]
-                if btw?["status"]?.string != "running" { return }
-            }
-        }
-    }
-
     // MARK: Held inputs
 
     /// Opens a held input for editing. The list row carries only an excerpt, so the
@@ -406,11 +385,6 @@ final class ComposerModel {
                 notice = Notice(text: Self.words(error), tone: .warning)
             }
         }
-    }
-
-    func closeBtw() {
-        btw = nil
-        btwPoll?.cancel()
     }
 
     func dismissNotice() {
