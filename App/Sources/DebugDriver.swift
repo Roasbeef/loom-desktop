@@ -411,6 +411,7 @@ enum Snapshot {
         var body: [String: Any] = [
             "destination": destination,
             "isDispatching": model.isDispatching,
+            "isAddingDaemon": model.isAddingDaemon,
             "pendingAction": model.actions.summary,
             "actionError": model.actions.error ?? "",
             "isPaletteOpen": model.isPaletteOpen,

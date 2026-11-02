@@ -63,7 +63,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | NS-17 | Optional session name with its default stated | view/create.gleam:380 | `sessions.create` | yes (NewSessionSheet.swift) | 3 |
 | NS-18 | New session under a project heading | view/create.gleam:278 | `sessions.create` | code (a project heading's plus in RootView.swift; the Session menu's New Session in This Folder is proven, but the sidebar list is not in the accessibility tree) | 2 |
 | NS-19 | Remembered folders with "Forget this folder" | view/folders.gleam:136 | in-process (`manager.forget_folder`) | yes (NewSessionSheet.swift; a per-app list, since the daemon's forget is in-process) | 3 |
-| NS-20 | Refusal words for each reason | creations.gleam:251 | `error` reply | partial (RootView.swift:451 draws the daemon's message) | 2 |
+| NS-20 | Refusal words for each reason | creations.gleam:251 | `error` reply | yes (Refusal.unopened and Refusal.words give plain words for each code, unit tested; a_refused_creation_is_worded drives one refusal, an unregistered workspace, and finds no protocol text) | 2 |
 | NS-21 | Created but message unsent: "Open the session" | view/new_session.gleam:1141 | local | yes (CreatedButUnsent keeps the form open with Open the session when a created session cannot open; Dispatch stays off so no second session is made) | 3 |
 | NS-22 | Start on another orchestrator | view/new_session.gleam:617 | in-process (`ui_top.found`) | yes (through a direct connection to a second daemon, which the test points at the executor's daemon since the cluster has one orchestrator; the web's relayed start is not reproduced) | 3 |
 
@@ -314,7 +314,7 @@ The web page has no schedule surface beyond these two commands.
 | SH-04 | Hide the token | view/share.gleam:360 | local | yes (SharingSheet.swift HandoverView) | 3 |
 | SH-05 | Make a private session shareable, with a question | view/share.gleam:164; view/share.gleam:179 | `sessions.isolate` | yes (SharingSheet.swift; stops, isolates and reopens a running session, because the daemon refuses to isolate a live runtime) | 3 |
 | SH-06 | Rename the session from its page | view/rename.gleam:147 | `sessions.rename`† | yes (SessionActions.swift RenameSheet, Session menu) | 2 |
-| SH-07 | Accept an invitation with a claim form | page.gleam:761 | `credentials.claim` | no (Discovery.swift:31 refuses a claim token) | 3 |
+| SH-07 | Accept an invitation with a claim form | page.gleam:761 | `credentials.claim` | yes (the Connect a Daemon sheet takes a claim token: Claim draws a credential, keeps it, binds its digest on `/v2/claim`, and connects as the invited person; an_invitation_is_accepted_with_its_claim) | 3 |
 
 ## Credentials and sign-ins
 
@@ -376,9 +376,9 @@ The web page has no schedule surface beyond these two commands.
 |---|---|---|---|---|---|
 | EL-01 | Sessions grouped by other orchestrators | view/elsewhere.gleam:154 | `sessions.elsewhere` | code (MachinesView.swift:196) | 3 |
 | EL-02 | "No answer in time", distinct from no sessions | view/elsewhere.gleam:186 | `sessions.elsewhere` | code (MachinesView.swift:217) | 3 |
-| EL-03 | Where: launch command with a copy box | view/elsewhere.gleam:232; sv:launch_words.gleam:36 | local | no (MachinesView.swift:209 offers Connect instead) | 3 |
+| EL-03 | Where: launch command with a copy box | view/elsewhere.gleam:232; sv:launch_words.gleam:36 | local | code (MachinesView draws LaunchWords.line with a copy button for each session another orchestrator holds, unit tested; the cluster has no second orchestrator, which needs a ledger deployment to link) | 3 |
 | EL-04 | Show more | view/elsewhere.gleam:296 | `sessions.elsewhere` `after` | partial (MachinesView.swift:234 says more exist) | 3 |
-| EL-05 | Strip on the owner's home | view/elsewhere.gleam:111 | `sessions.elsewhere` | no | 3 |
+| EL-05 | Strip on the owner's home | view/elsewhere.gleam:111 | `sessions.elsewhere` | code (Mission Control states how many sessions other orchestrators hold and links to Machines; same limit) | 3 |
 | EL-06 | Sidebar section "On <orchestrator>", opening a relayed page | view/sidebar.gleam:424; view/sidebar.gleam:472 | in-process (`ui_top`) | partial (AppModel.swift:323 merges sessions from daemons connected directly) | 3 |
 | EL-07 | Relayed page: read a session on another orchestrator | view/relayed_session.gleam:140; cd:ui_top.gleam:109 | in-process (`ui_top.read`) | partial (only by a direct daemon connection, AppModel.swift:495) | 3 |
 | EL-08 | Relayed page: reply | view/relayed_session.gleam:530; cd:ui_top.gleam:334 | in-process (`ui_top.send`) | partial (only by a direct daemon connection) | 3 |

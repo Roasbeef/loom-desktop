@@ -22,14 +22,14 @@ def a_down_machine_is_named_and_may_still_be_chosen(c):
         open_form(c)
         try:
             c.app.see(r"other · unavailable")
-            c.app.press(find_box_label(c))
+            c.app.press(find_box_label(c, "box ·"))
             c.app.see(r"box is down\. The session will wait")
             c.app.focus("Prompt")
             c.app.type("Down executor check demo")
             c.app.fill("Folder", "proj")
             wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
             c.app.press("Dispatch")
-            c.app.see("The session was created, but its message was not sent", 90)
+            c.app.see("The session was created but did not open", 90)
             c.app.press("Open the session")
             wait_for(lambda: not c.app.snap()["isDispatching"], what="the form to close")
         finally:

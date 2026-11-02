@@ -35,6 +35,17 @@ struct MissionControlView: View {
                     }
                 }
 
+                // Sessions another orchestrator holds are not on this board, so a strip
+                // says they exist and where to read them.
+                let elsewhere = model.elsewhere.reduce(0) { $0 + $1.sessions.count }
+                if elsewhere > 0 {
+                    HStack(spacing: 8) {
+                        Text("\(elsewhere) on other orchestrators").font(.callout).foregroundStyle(.secondary)
+                        Button("Machines") { model.destination = .machines }
+                            .buttonStyle(.link)
+                    }
+                }
+
                 if allCards.isEmpty {
                     ContentUnavailableView {
                         Label("No agents yet", systemImage: "sparkles")

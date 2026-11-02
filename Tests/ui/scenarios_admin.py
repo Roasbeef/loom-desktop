@@ -198,3 +198,63 @@ def the_inspector_stays_open_across_launches(c):
     finally:
         if c.app.snap()["showsInspector"]:
             c.app.menu("Hide Inspector")
+
+
+# Accepting an invitation.
+
+
+@scenario("SH-07")
+def an_invitation_is_accepted_with_its_claim(c):
+    """Pasting an invitation's claim token and address connects as the invited person, who sees the shared session."""
+    import re
+    from scenarios_lifecycle import invite, make_shareable
+    sid = c.app.dispatch("Claim subject please demo", WORKSPACE)
+    wait_for(lambda: next(s for s in c.app.sessions() if s["id"] == sid)["activity"] == "idle", 60, "the run to finish")
+    make_shareable(c, sid)
+    invite(c, "Claire", "Observer")
+    claim = address = None
+    def read():
+        nonlocal claim, address
+        for text in c.app.texts():
+            if m := re.search(r"(loomclaim_[0-9a-f]{64})", text):
+                claim = m.group(1)
+            if m := re.search(r"(ws://127\.0\.0\.1:\d+)/v2/claim", text):
+                address = m.group(1)
+        return claim and address
+    wait_for(read, what="the claim token and address")
+    c.app.press("I've Sent It")
+    c.app.press("Done")
+    try:
+        c.app.menu("Connect a Daemon…")
+        wait_for(lambda: c.app.snap()["isAddingDaemon"], what="the sheet")
+        c.app.fill("Daemon name", "claimed")
+        c.app.fill("Daemon address", address)
+        c.app.fill("Credential", claim)
+        c.app.press("Connect")
+        wait_for(lambda: not c.app.snap()["isAddingDaemon"], 30, "the sheet to close")
+        wait_for(
+            lambda: any(d["label"] == "claimed" and d["state"] == "connected" and any("Claim subject" in s["title"] for s in d["sessions"]) for d in c.app.snap()["daemons"]),
+            40, "the invited person to see the shared session",
+        )
+    finally:
+        c.app.cmd("unattach claimed")
+        if c.app.snap()["isAddingDaemon"]:
+            c.app.key("escape")
+
+
+@scenario("NS-20")
+def a_refused_creation_is_worded(c):
+    """A workspace name the executor has not registered is refused in plain words, and no session is made."""
+    open_form(c)
+    try:
+        from scenarios_lifecycle import find_box_label
+        c.app.press(find_box_label(c, "box ·"))
+        c.app.focus("Prompt")
+        c.app.type("Refusal check demo")
+        c.app.fill("Folder", "unregistered")
+        wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
+        c.app.press("Dispatch")
+        c.app.see(r"The session was created but did not open.*serves no workspace named", 30)
+        c.app.not_see(r"start_failed|executor_unavailable")
+    finally:
+        close_form(c)

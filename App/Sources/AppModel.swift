@@ -18,9 +18,7 @@ struct CreatedButUnsent: LocalizedError {
     let sessionID: String
     let reason: String
 
-    var errorDescription: String? {
-        "The session was created, but its message was not sent: \(reason)"
-    }
+    var errorDescription: String? { Refusal.unopened(reason: reason) }
 }
 
 /// A saved way to reach a daemon on another machine.
@@ -537,10 +535,16 @@ final class AppModel {
         }
         let saved = SavedDaemon(id: UUID(), name: name, address: address)
         try CredentialStore.save(token, for: saved.id)
+        keep(saved, token: token)
+    }
+
+    /// Records a daemon whose credential is already in the keychain, and connects.
+    private func keep(_ saved: SavedDaemon, token: String) {
         var all = Self.loadSaved()
         all.append(saved)
-        UserDefaults.standard.set(try JSONEncoder().encode(all), forKey: Self.savedKey)
-
+        if let data = try? JSONEncoder().encode(all) {
+            UserDefaults.standard.set(data, forKey: Self.savedKey)
+        }
         let connection = DaemonConnection(id: saved.id.uuidString, source: .remote(saved, token: token))
         daemons.append(connection)
         connection.start()
@@ -562,6 +566,22 @@ final class AppModel {
         removeDaemon(connection)
     }
     #endif
+
+    /// Exchanges a claim token for a credential this app drew, then connects with it.
+    /// The credential is in the keychain before the daemon hears its digest, so a
+    /// lost reply is recovered by claiming again. A refused claim removes it.
+    func claimDaemon(name: String, address: String, claim: String, credential: String) async throws {
+        _ = try DaemonEndpoint(address: address, token: credential)
+        let saved = SavedDaemon(id: UUID(), name: name, address: address)
+        try CredentialStore.save(credential, for: saved.id)
+        do {
+            _ = try await Claim.redeem(address: address, claim: claim, credential: credential)
+        } catch {
+            CredentialStore.delete(for: saved.id)
+            throw error
+        }
+        keep(saved, token: credential)
+    }
 
     func removeDaemon(_ connection: DaemonConnection) {
         guard case .remote(let saved, _) = connection.source else { return }

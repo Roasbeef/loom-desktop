@@ -117,3 +117,59 @@ final class AdministrationTests: XCTestCase {
         )
     }
 }
+
+final class ClaimTests: XCTestCase {
+    func testTheDigestIsSHA256InLowercaseHexadecimal() {
+        XCTAssertEqual(Claim.digest(of: "abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+    }
+
+    func testACredentialIs64HexadecimalCharactersAndDiffers() {
+        let first = Claim.newCredential()
+        XCTAssertEqual(first.count, 64)
+        XCTAssertTrue(first.allSatisfy { $0.isHexDigit })
+        XCTAssertNotEqual(first, Claim.newCredential())
+    }
+
+    func testOnlyAWellFormedClaimTokenIsOne() {
+        XCTAssertTrue(Claim.isClaimToken("loomclaim_" + String(repeating: "a", count: 64)))
+        XCTAssertFalse(Claim.isClaimToken(String(repeating: "a", count: 64)))
+        XCTAssertFalse(Claim.isClaimToken("loomclaim_abc"))
+    }
+
+    func testTheClaimRouteDropsAPastedPathAndRefusesCleartextAway() throws {
+        XCTAssertEqual(try Claim.claimURL(address: "ws://127.0.0.1:7441/v2/claim").absoluteString, "ws://127.0.0.1:7441/v2/claim")
+        XCTAssertEqual(try Claim.claimURL(address: "wss://box.example.ts.net/v2/control").absoluteString, "wss://box.example.ts.net/v2/claim")
+        XCTAssertThrowsError(try Claim.claimURL(address: "ws://box.example.com:7441"))
+    }
+}
+
+final class LaunchWordsTests: XCTestCase {
+    func testTheLineNamesTheAddressAndTheSession() {
+        XCTAssertEqual(
+            LaunchWords.line(address: "ws://10.0.0.4:7000", session: "0198c1aa"),
+            "loom --addr ws://10.0.0.4:7000 --session 0198c1aa --token-file <owner token file on that host>"
+        )
+    }
+
+    func testAMissingAddressIsAPlaceholder() {
+        XCTAssertTrue(LaunchWords.line(address: nil, session: "s").hasPrefix("loom --addr <its control address> --session s"))
+    }
+}
+
+final class RefusalWordsTests: XCTestCase {
+    func testEveryCreationRefusalHasPlainWords() {
+        for code in ["invalid_workspace", "invalid_configuration", "invalid_name", "unknown_profile", "unknown_model",
+                     "executor_unknown", "pool_unknown", "not_initialized", "forbidden", "unavailable"] {
+            XCTAssertNotNil(Refusal.words(code: code), code)
+        }
+        XCTAssertNil(Refusal.words(code: "something_new"))
+    }
+}
+
+final class UnopenedWordsTests: XCTestCase {
+    func testTheDaemonsReasonLosesItsProtocolCodes() {
+        let words = Refusal.unopened(reason: "start_failed: executor_unavailable: no workspace named `x`")
+        XCTAssertTrue(words.hasSuffix("The daemon said: no workspace named `x`"))
+        XCTAssertFalse(words.contains("start_failed"))
+    }
+}
