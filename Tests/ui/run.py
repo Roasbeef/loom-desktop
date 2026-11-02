@@ -11,6 +11,7 @@ The exit code is the number of failures.
 """
 import argparse
 import html
+import json
 import sys
 import time
 import traceback
@@ -25,6 +26,18 @@ OUT = ROOT / "build/uitest"
 
 
 BLOCKED = "Not run: the screen was locked, so a pixel check could prove nothing."
+
+
+def dump_failure(app, name):
+    """Keeps what the app showed when a scenario failed, so a failure can be read without a rerun."""
+    path = OUT / "failures" / f"{name}.txt"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        app.cmd("state")
+        session = json.dumps(app.session(), indent=1, default=str)
+        path.write_text("\n".join(app.texts()) + "\n\n--- session\n" + session + "\n")
+    except Exception as error:
+        path.write_text(f"the dump itself failed: {error}\n")
 
 
 def main():
@@ -75,6 +88,8 @@ def main():
                     shot = app.shot(OUT / "shots" / f"{scenario.name}.png")
                 except Exception:
                     pass
+                if error:
+                    dump_failure(app, scenario.name)
             results.append((scenario, error, elapsed, shot))
             print(f"{'FAIL' if error else 'ok  '} {scenario.name} ({elapsed:.1f}s)", flush=True)
             if error:

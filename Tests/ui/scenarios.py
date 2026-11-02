@@ -742,7 +742,7 @@ def approval_appears_in_mission_and_inbox(c):
 def open_tab(c, name):
     """Opens the inspector on a tab, whatever the inspector showed before."""
     if not c.app.snap()["showsInspector"]:
-        c.app.menu("Show Inspector")
+        c.app.menu("Toggle Inspector")
         wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
     c.app.press(name)
 
@@ -777,6 +777,8 @@ def context_figure_and_breakdown(c):
     """The bar says how full the window is, and its breakdown explains it and can compact."""
     # One reply leaves nothing to cut, since the newest reply always stays, so the refusal below holds.
     run_session(c, "Context", "check", "scripted")
+    # Compaction is refused while any strand runs, and the advisor outlasts main's reply.
+    wait_for(lambda: all("Finished" in l for l in c.app.session()["strandLines"]), 40, "every strand to finish")
     wait_for(lambda: c.app.session().get("context", "").startswith("ctx ~"), 20, "the context figure")
     c.app.press("Context window")
     c.app.see(r"Context window ~", 10)
@@ -940,7 +942,8 @@ def remembered_permissions_can_be_forgotten(c):
     label = wait_for(lambda: next((t for t in c.app.texts() if t.startswith("Forget Write to")), None), 10, "a Forget button")
     c.app.press(label)
     c.app.press("Forget")
-    wait_for(lambda: not any("Write to /Users/Shared" in t for t in c.app.texts()), 15, "the permission to go")
+    # The transcript keeps its record of the approval, so only the listing's own button can say it went.
+    wait_for(lambda: not any(t.startswith("Forget Write to") for t in c.app.texts()), 15, "the permission to go")
     c.app.see(r"Nothing is remembered", 10)
 
 
@@ -1094,13 +1097,16 @@ def inspector_toggles_and_shows_changes(c):
     c.app.dispatch("Inspector demo run please", "proj", executor="box")
     c.app.open_session("Inspector demo")
     c.app.transcript_has("Retry budget is now per host", 40)
-    c.app.menu("Show Inspector")
+    c.app.menu("Toggle Inspector")
     wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
     # The inspector reopens on the tab it was left on, which an earlier scenario chose.
     c.app.press("Changes")
     c.app.see(r"\d+ changed files?", 20)
     c.app.see(r"fetch\.py, [1-9]\d* added", 10)
-    c.app.menu("Hide Inspector")
+    c.app.menu("Toggle Inspector")
+    wait_for(lambda: not c.app.snap()["showsInspector"], 3, "the inspector to hide")
+    # The menu item is rebuilt after the state changes, and a key sent before that finds nothing.
+    time.sleep(0.5)
     c.app.key("i", "cmd,opt")
     wait_for(lambda: c.app.snap()["showsInspector"], 3, "the key to show the inspector")
 

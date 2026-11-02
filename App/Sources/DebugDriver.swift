@@ -163,6 +163,8 @@ enum DebugDriver {
             }
             if let main = NSApp.mainMenu, let (menu, index) = find(main) {
                 menu.performActionForItem(at: index)
+            } else {
+                reply = "not-found"
             }
         case "menus":
             // Lists every key equivalent the menu bar claims, to find collisions.
@@ -198,14 +200,15 @@ enum DebugDriver {
             let text = parts.dropFirst(2).joined(separator: " ")
             model.daemon(holding: parts[1])?.attach(parts[1])?.send(text: text)
         case "scrollup":
-            // Scrolls the widest scroll view to its top, as a reader dragging up would.
-            func scrollViews(_ view: NSView) -> [NSScrollView] {
-                ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews)
-            }
-            if let content = window?.contentView,
-               let scroll = scrollViews(content).max(by: { $0.frame.width < $1.frame.width }) {
-                scroll.contentView.scroll(to: .zero)
-                scroll.reflectScrolledClipView(scroll.contentView)
+            // A wheel turn over the middle of the transcript, as a reader's would be,
+            // so it reaches the scroll view a person reaches, whichever view that is.
+            if let window, let content = window.contentView,
+               let wheel = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: 30000, wheel2: 0, wheel3: 0) {
+                let middle = NSPoint(x: content.bounds.width * 0.6, y: content.bounds.height * 0.5)
+                let onScreen = window.convertPoint(toScreen: middle)
+                let primary = NSScreen.screens.first?.frame.height ?? 0
+                wheel.location = CGPoint(x: onScreen.x, y: primary - onScreen.y)
+                if let event = NSEvent(cgEvent: wheel) { window.sendEvent(event) }
             }
         case "detach" where parts.count > 1:
             // Ends the session's socket so the daemon connection attaches a fresh

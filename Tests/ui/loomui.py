@@ -263,7 +263,9 @@ class App:
         return bool(nodes) and all(n["enabled"] for n in nodes)
 
     def menu(self, title):
-        self.cmd(f"menu {title}")
+        # A title that matches nothing must fail here, or the scenario goes on as if it had acted.
+        if self.cmd(f"menu {title}") != "ok":
+            raise Failure(f"no menu item titled {title!r}")
 
     def dispatch(self, prompt, workspace, executor="local"):
         reply = self.cmd(f"dispatch {executor} {workspace} {prompt}", timeout=70)

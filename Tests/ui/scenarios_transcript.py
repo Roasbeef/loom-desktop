@@ -507,7 +507,7 @@ def the_strands_tab_counts_the_approvals_waiting(c):
     """While a strand waits on a person, the Strands tab's title carries the count."""
     pending_approval(c, "Badge count")
     if not c.app.snap()["showsInspector"]:
-        c.app.menu("Show Inspector")
+        c.app.menu("Toggle Inspector")
         wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
     c.app.see(r"Strands \(1\)", 10)
     c.app.press("Deny")
@@ -523,7 +523,7 @@ def escape_leaves_a_strands_page(c):
     c.app.transcript_has("scripted", 30)
     settle(c)
     if not c.app.snap()["showsInspector"]:
-        c.app.menu("Show Inspector")
+        c.app.menu("Toggle Inspector")
         wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
     c.app.press("Strands")
     c.app.press("Details for main")
@@ -542,7 +542,7 @@ def a_card_names_its_model_where_it_differs_from_main(c):
     wait_for(lambda: any(l.startswith("advisor: Finished") for l in c.app.session()["strandLines"]), 40, "the advisor to finish")
     run_command(c, "/model fake2")
     if not c.app.snap()["showsInspector"]:
-        c.app.menu("Show Inspector")
+        c.app.menu("Toggle Inspector")
         wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
     c.app.press("Strands")
     c.app.press("Settled strands")
@@ -558,7 +558,7 @@ def escape_in_a_note_goes_back_to_the_list(c):
     c.app.transcript_has("first task is finished", 40)
     settle(c)
     if not c.app.snap()["showsInspector"]:
-        c.app.menu("Show Inspector")
+        c.app.menu("Toggle Inspector")
         wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
     c.app.press("Notes")
     c.app.press("Note todo")

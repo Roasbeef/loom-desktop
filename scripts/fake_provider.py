@@ -226,7 +226,7 @@ def script(messages):
             yield call(0, "bash", {"command": "echo first-step"})
             yield chunk({}, "tool_calls")
         else:
-            yield chunk({"content": "Working on it. "})
+            yield from text_stream("Working on it now, one word at a time. ")
             time.sleep(30)
             yield chunk({}, "stop")
         return

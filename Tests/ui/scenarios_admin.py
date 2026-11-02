@@ -84,9 +84,9 @@ def sidebar_opens_running_and_saved_rows(c):
     stop_open_session(c)
     wait_for(lambda: (row_of(c, sid) or {}).get("standing") == "saved", 60, "saved")
     before = sidebar(c)["savedOpen"]
-    c.app.menu("Hide Saved Sessions" if before else "Show Saved Sessions")
+    c.app.menu("Toggle Saved Sessions")
     wait_for(lambda: sidebar(c)["savedOpen"] != before, what="the saved fold to change")
-    c.app.menu("Hide Saved Sessions" if not before else "Show Saved Sessions")
+    c.app.menu("Toggle Saved Sessions")
     c.app.cmd(f"select {sid}")
     c.app.see("The conversation is saved")
     c.app.press("Resume Session")
@@ -194,7 +194,7 @@ def appearance_follows_the_menu_choice(c):
 def the_inspector_stays_open_across_launches(c):
     """The inspector column is open again after the app is quit and started."""
     if not c.app.snap()["showsInspector"]:
-        c.app.menu("Show Inspector")
+        c.app.menu("Toggle Inspector")
     wait_for(lambda: c.app.snap()["showsInspector"], what="the inspector to open")
     try:
         c.app.quit()
@@ -202,7 +202,7 @@ def the_inspector_stays_open_across_launches(c):
         wait_for(lambda: c.app.snap()["showsInspector"], what="the inspector to be open after the start")
     finally:
         if c.app.snap()["showsInspector"]:
-            c.app.menu("Hide Inspector")
+            c.app.menu("Toggle Inspector")
 
 
 # Accepting an invitation.
