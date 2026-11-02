@@ -90,7 +90,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-17 | Program card for `code_mode`: outcome, chips, calls, result | view/program_card.gleam:89 | `entry` | yes (ProgramCardView; the scripted model now runs a valid program, so the card shows its outcome, status, one proc.run call, the program and the result) | 2 |
 | TR-18 | Settled reasoning: preview, line count, time, body | view/lane.gleam:1400 | `entry` | yes (ReasoningRow: preview, line count, time, body) | 1 |
 | TR-19 | Summarizer's label on long reasoning | view/lane.gleam:1467 | `block_summaries`, `block_summary` | no | 2 |
-| TR-20 | A person's message with sender name and role | view/lane.gleam:713 | `entry`, `presence` | partial (SessionScreen.swift:301 names a non-Owner author; no role) | 2 |
+| TR-20 | A person's message with sender name and role | view/lane.gleam:713 | `entry`, `presence` | yes (SessionScreen.swift RowView shows the sender's name and the fixed word operator, as the web page does) | 2 |
 | TR-21 | Long message shortened with a toggle | view/lane.gleam:1341 | local | yes (the whole message is drawn, so no toggle is needed; a_long_message_is_drawn_whole) | 3 |
 | TR-22 | Memory context as a closed row in the fold | sv:turns.gleam:213 | `entry` | yes (MemoryContext.swift, MemoryRow; the notes index the daemon attaches draws closed inside the turn's fold and opens to its text) | 2 |
 | TR-23 | Spawned line for a sub-agent | view/lane.gleam:780 | `entry` | yes (SpawnedLine; the scripted model starts a subagent with agent_spawn) | 2 |
@@ -109,7 +109,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-36 | Frozen historical browsing, with return to latest | component.gleam:6717 | `history` | no | 2 |
 | TR-37 | Follow the tail, keep place when scrolled, Jump to latest | view/lane.gleam:210; wc:follow.gleam:3 | local | yes (SessionScreen.swift:221 and :233) | 1 |
 | TR-38 | Keep the reader's place per strand | wc:follow_rule.gleam:428 | local | no (SessionScreen.swift:171 keeps one scroll position; a strand change redraws it) | 2 |
-| TR-39 | Images in user messages and tool results | view/lane.gleam:1606; image.gleam:77 | `/ui/.../image` route | no | 2 |
+| TR-39 | Images in user messages and tool results | view/lane.gleam:1606; image.gleam:77 | `/ui/.../image` route | yes (PictureStrip draws images from a sent message and from a tool result, only when the bytes match the declared type) | 2 |
 | TR-40 | Large result: View full result, page through, Download | tool_result.gleam:36 | `/ui/.../result` route | no | 3 |
 | TR-41 | Queued and steered inputs under the live region | view/live.gleam:98 | `pending_inputs` in metadata | yes (held inputs under the live region) | 1 |
 | TR-42 | Timeline dots and tags that focus a strand | view/lane.gleam:640; wc:shell_rule.gleam:1035 | local | no | 3 |
@@ -390,9 +390,9 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| FI-01 | Image limits from the daemon: four images, 8 MiB | image.gleam:160; image.gleam:168 | local | no | 3 |
-| FI-02 | Image types checked from their bytes | image.gleam:128 | `prompt_content` | no | 3 |
-| FI-03 | Rich image row: type, pixel size, bytes | sv:image_header.gleam:242 | `entry` | no | 3 |
+| FI-01 | Image limits from the daemon: four images, 8 MiB | image.gleam:160; image.gleam:168 | local | yes (ImageAttachment.vet: four images and 20 MiB in all, the terminal's limits for a session lane; the web page's 8 MiB bound comes from its frame size and does not apply; a fifth image is refused in words) | 3 |
+| FI-02 | Image types checked from their bytes | image.gleam:128 | `prompt_content` | yes (ImageAttachment.mimeType reads the bytes; a text file named .png is refused and a PNG named .dat is accepted) | 3 |
+| FI-03 | Rich image row: type, pixel size, bytes | sv:image_header.gleam:242 | `entry` | yes (ImageBlock.caption under each picture: type, pixel size read from the header, and weight) | 3 |
 | FI-04 | Paged view of a full tool result | tool_result.gleam:62 | `/ui/.../result` route | no | 3 |
 | FI-05 | Download a full tool result as JSON | tool_result.gleam:49; cd:ui_http.gleam:253 | `/ui/.../result/.../download` route | no | 3 |
 

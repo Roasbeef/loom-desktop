@@ -22,6 +22,7 @@ keyword in the last user turn selects a script:
   program    a code_mode call with a small program
   spawnagent starts a subagent with `agent_spawn`, waits for its report, then answers
   stopmid    one finished step, then a reply that hangs, for a turn the person stops
+  readpicture reads pixel.png from the workspace, which returns an image
   slowstep   a shell command that runs for several seconds, for a step still going
   cachehit   an ordinary reply whose usage reports a large cached prefix
   cachemiss  an ordinary reply whose usage reports that prefix billed again
@@ -135,11 +136,24 @@ def last_tool_text(messages):
     return ""
 
 
+def is_prompt(message):
+    """Whether a user message is something a person wrote. The daemon also writes user
+    messages: the notes index at run start, and the image a tool returned. Neither
+    carries the keyword in the prompt it follows."""
+    if message.get("role") != "user":
+        return False
+    content = message.get("content", "")
+    if isinstance(content, list) and not any(part.get("type") == "text" for part in content):
+        return False
+    text = json.dumps(content)
+    return "Notes saved in this repository" not in text and "Images from tool call" not in text
+
+
 def steps_taken(messages):
-    """Counts tool results since the last user turn."""
+    """Counts tool results since the last prompt."""
     count = 0
     for message in reversed(messages):
-        if message.get("role") == "user":
+        if is_prompt(message):
             break
         if message.get("role") == "tool":
             count += 1
@@ -147,14 +161,9 @@ def steps_taken(messages):
 
 
 def last_user_text(messages):
-    """The latest message a person wrote. The daemon's injected notes index is a user
-    message too, and it must not hide the keyword in the prompt it follows."""
     for message in reversed(messages):
-        if message.get("role") == "user":
-            text = json.dumps(message.get("content", ""))
-            if "Notes saved in this repository" in text:
-                continue
-            return text
+        if is_prompt(message):
+            return json.dumps(message.get("content", ""))
     return ""
 
 
@@ -190,6 +199,14 @@ def script(messages):
             yield chunk({"content": "Working on it. "})
             time.sleep(30)
             yield chunk({}, "stop")
+        return
+
+    if "readpicture" in prompt:
+        if steps == 0:
+            yield call(0, "fs_read", {"path": "pixel.png"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("I looked at the picture.")
         return
 
     if "slowstep" in prompt:

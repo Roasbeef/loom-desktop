@@ -324,3 +324,75 @@ def command_b_toggles_the_sidebar(c):
     c.app.key("b", "cmd")
     wait_for(lambda: c.app.snap()["showsSidebar"], 5, "⌘B to show the sidebar again")
     c.app.see(r"Group by", 5)
+
+
+# Images.
+
+
+def png_in_workspace(name):
+    """Writes the 2 by 2 test PNG under a name, in the workspace the scripted model reads."""
+    from pathlib import Path
+    from scenarios import write_png
+    path = Path(WORKSPACE) / name
+    write_png(path)
+    return path
+
+
+@scenario("FI-01", "FI-02")
+def attachments_are_limited_and_typed_by_their_bytes(c):
+    """Four images go in one message, a fifth is refused in words, and a file's type comes from its bytes."""
+    from pathlib import Path
+    from loomui import BASE
+    c.app.dispatch("Attach limits", WORKSPACE)
+    c.app.open_session("Attach limits")
+    settle(c)
+
+    # A text file wearing an image's name is refused, and a real PNG named as text is accepted.
+    liar = Path(BASE) / "not-really.png"
+    liar.write_text("this is text, whatever the name says")
+    c.app.cmd(f"attachfile {liar}")
+    wait_for(lambda: "not a PNG, JPEG, GIF or WebP" in c.app.session()["notice"], 5, "the refusal")
+    check(not c.app.session()["images"], "a text file must not become an attachment")
+    honest = png_in_workspace("picture.dat")
+    for number in range(4):
+        c.app.cmd(f"attachfile {honest}")
+        wait_for(lambda n=number: len(c.app.session()["images"]) == n + 1, 5, f"attachment {number + 1}")
+    c.app.cmd(f"attachfile {honest}")
+    wait_for(lambda: "4 of 4 images" in c.app.session()["notice"], 5, "the fifth to be refused")
+    check(len(c.app.session()["images"]) == 4, c.app.session()["images"])
+    check(c.app.session()["noticeIsWarning"], "the refusal is a warning")
+
+
+@scenario("TR-39", "FI-03")
+def images_are_drawn_with_their_type_size_and_weight(c):
+    """An image in a message and one a tool returned each show a line giving type, pixels and bytes."""
+    png = png_in_workspace("pixel.png")
+    sid = c.app.dispatch("Picture message", WORKSPACE)
+    c.app.open_session("Picture message")
+    settle(c)
+    c.app.cmd(f"attachfile {png}")
+    wait_for(lambda: c.app.session()["images"], 5, "the attached chip")
+    c.app.type("what is this")
+    c.app.key("return")
+    caption = wait_for(lambda: next(iter(c.app.session()["pictures"]), None), 20, "the picture in the sent message")
+    check(re.fullmatch(r"image/png · 2 × 2 pixels · \d+ bytes", caption), caption)
+    c.app.see(r"Image, image/png · 2 × 2 pixels")
+    settle(c)
+    c.app.dispatch("Tool picture readpicture", WORKSPACE)
+    c.app.open_session("Tool picture")
+    c.app.transcript_has("I looked at the picture", 40)
+    settle(c)
+    c.app.press(fold_titles(c)[0])
+    c.app.press(name_starting(c, "Read pixel.png"))
+    wait_for(lambda: c.app.session()["pictures"], 10, "the tool's picture")
+    c.app.see(r"Image, image/png · 2 × 2 pixels")
+
+
+@scenario("TR-20")
+def a_message_names_its_sender_and_role(c):
+    """A person's message carries the sender's name and the fixed word operator on a line of its own."""
+    c.app.dispatch("Who said this", WORKSPACE)
+    c.app.open_session("Who said this")
+    c.app.transcript_has("scripted", 30)
+    settle(c)
+    c.app.see(r"^Owner · operator$", 5)
