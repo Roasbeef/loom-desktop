@@ -112,6 +112,12 @@ private struct SessionMenuItems: View {
             if let session, let record = session.escalations.first, record.canApprove { session.approve(record) }
         }
         .keyboardShortcut("a", modifiers: [.command, .shift])
+        Button("Allow Request for This Session") {
+            if let session, let record = session.escalations.first, record.canRemember {
+                session.approve(record, remember: true)
+            }
+        }
+        .keyboardShortcut("a", modifiers: [.command, .shift, .option])
         Button("Deny Request") {
             if let session, let record = session.escalations.first { session.deny(record) }
         }

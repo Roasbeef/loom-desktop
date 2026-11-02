@@ -123,12 +123,12 @@ struct StatusDot: View {
                     .frame(width: 6.5, height: 6.5)
                     .rotationEffect(.degrees(45))
             case .working:
-                // A symbol effect pulses in place. An animated modifier here would
-                // also animate this dot's position as the stack around it moves.
-                Image(systemName: "circle.fill")
-                    .font(.system(size: 7))
-                    .foregroundStyle(liveness.color)
-                    .symbolEffect(.pulse, isActive: !reduceMotion)
+                // Static on purpose. A continuously animating dot redraws at the
+                // display's rate for every working row, which costs real CPU for
+                // what its shape already says. The heartbeat carries the motion.
+                Circle()
+                    .fill(liveness.color)
+                    .frame(width: 7, height: 7)
             default:
                 Circle()
                     .strokeBorder(liveness.color, lineWidth: 1.2)
@@ -149,7 +149,7 @@ struct HeartbeatTrace: View {
     var body: some View {
         Group {
             if liveness == .working, !reduceMotion {
-                TimelineView(.animation(minimumInterval: 1 / 24)) { context in
+                TimelineView(.animation(minimumInterval: 1 / 12)) { context in
                     trace(phase: context.date.timeIntervalSinceReferenceDate)
                 }
             } else {

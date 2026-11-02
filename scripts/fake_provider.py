@@ -9,6 +9,8 @@ keyword in the last user turn selects a script:
              then a markdown report with headings, a list, a table and code
   long       streams about 4000 words at speed, for measuring frame drops
   slow       like the default reply, but slow enough to catch mid-stream
+  hang       streams one word, then waits long enough to be stopped
+  explode    answers HTTP 400, for a run that fails without retries
 
 Anything else streams a short markdown reply. A tool result continues whichever
 script produced the call.
@@ -134,6 +136,12 @@ def script(messages):
             yield chunk({}, "stop")
         return
 
+    if "hang" in prompt:
+        yield chunk({"content": "Starting. "})
+        time.sleep(30)
+        yield chunk({}, "stop")
+        return
+
     if "long" in prompt:
         yield from text_stream(LONG, delay=0.004)
         return
@@ -152,13 +160,25 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", "0"))
         request = json.loads(self.rfile.read(length) or b"{}")
+        if "explode" in last_user_text(request.get("messages", [])):
+            body = b'{"error": {"message": "scripted provider failure"}}'
+            self.send_response(400)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Connection", "close")
         self.end_headers()
-        for event in script(request.get("messages", [])):
-            self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
-            self.wfile.flush()
+        try:
+            for event in script(request.get("messages", [])):
+                self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            # The client stopped the run, which is a normal end to a stream.
+            self.close_connection = True
+            return
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
         self.close_connection = True

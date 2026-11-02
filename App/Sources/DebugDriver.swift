@@ -28,12 +28,17 @@ import SwiftUI
 ///     connect <name> <address>     with the token in <dir>/token
 ///     dispatch <executor> <workspace> <prompt>
 ///
+/// Prefixing a line with `#<id> ` writes its result to `<dir>/reply-<id>`. `snapshot`
+/// returns the app's state as JSON, `tree` returns the accessibility tree as JSON,
+/// and `press <label>` presses a control by its accessibility name.
+///
 /// Clicks and keys go through `NSApp.sendEvent`, so they take the same hit
 /// testing and responder chain as a person's. A check that sets state directly
 /// would not notice a button that cannot be clicked.
 @MainActor
 enum DebugDriver {
     private static var hitch: HitchMeter?
+    private static var reply = "ok"
 
     static func start(model: AppModel) {
         guard let directory = ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] else { return }
@@ -43,10 +48,23 @@ enum DebugDriver {
                 try? await Task.sleep(for: .milliseconds(100))
                 guard let text = try? String(contentsOf: commands, encoding: .utf8), !text.isEmpty else { continue }
                 try? FileManager.default.removeItem(at: commands)
+                let root = URL(fileURLWithPath: directory)
                 for line in text.split(separator: "\n") {
-                    await run(String(line), model: model, directory: URL(fileURLWithPath: directory))
+                    // A line may start with "#<id> ", which asks for a reply file, so
+                    // a test waits on its own command rather than on a sleep.
+                    var command = String(line)
+                    var id: Substring?
+                    if command.hasPrefix("#"), let space = command.firstIndex(of: " ") {
+                        id = command[command.index(after: command.startIndex)..<space]
+                        command = String(command[command.index(after: space)...])
+                    }
+                    reply = "ok"
+                    await run(command, model: model, directory: root)
+                    if let id {
+                        try? reply.write(to: root.appendingPathComponent("reply-\(id)"), atomically: true, encoding: .utf8)
+                    }
                 }
-                try? "done".write(to: URL(fileURLWithPath: directory).appendingPathComponent("ack"), atomically: true, encoding: .utf8)
+                try? "done".write(to: root.appendingPathComponent("ack"), atomically: true, encoding: .utf8)
             }
         }
     }
@@ -86,6 +104,21 @@ enum DebugDriver {
             let session = NSApp.keyWindow?.firstResponder.map { "\(type(of: $0))" } ?? "none"
             let text = "destination=\(String(describing: model.destination)) responder=\(session) modal=\(NSApp.modalWindow != nil) sheets=\(NSApp.keyWindow?.sheets.count ?? -1) inspector=\(model.showsInspector) palette=\(model.isPaletteOpen) dispatching=\(model.isDispatching) adding=\(model.isAddingDaemon) current=\(model.currentSession != nil) escalations=\(model.currentSession?.escalations.count ?? -1) canApprove=\(model.currentSession?.escalations.first?.canApprove ?? false) grants=\(model.currentSession?.escalations.first?.grants.count ?? -1) live=\(model.currentSession?.isLive ?? false)\n"
             try? text.write(to: directory.appendingPathComponent("state.txt"), atomically: true, encoding: .utf8)
+        case "stopall":
+            // Frees every daemon slot, so one scenario cannot starve the next.
+            for daemon in model.daemons {
+                for record in daemon.sessions where record.state.isResident {
+                    try? await daemon.stop(record.id)
+                }
+            }
+        case "snapshot":
+            reply = Snapshot.encode(model)
+        case "tree":
+            reply = AccessibilityAudit.tree()
+        case "press":
+            // Presses a control by its accessibility label, through the action a
+            // screen reader uses, so it needs neither coordinates nor focus.
+            reply = AccessibilityAudit.press(label: rest) ? "ok" : "not-found"
         case "activate":
             NSApp.activate()
             window?.makeKeyAndOrderFront(nil)
@@ -145,15 +178,19 @@ enum DebugDriver {
             try? model.addDaemon(name: parts[1], address: parts[2], token: token.trimmingCharacters(in: .whitespacesAndNewlines))
         case "dispatch" where parts.count > 3:
             guard let daemon = model.daemons.first else { return }
-            let id = try? await daemon.dispatch(
-                workspace: parts[2],
-                name: parts[3],
-                prompt: parts[3],
-                placement: parts[1] == "local" ? .local : .executor(parts[1]),
-                configuration: daemon.localRoot?.appendingPathComponent("loom.toml").path ?? "",
-                requestKey: UUID().uuidString
-            )
-            if let id { model.destination = .session(id) }
+            do {
+                let id = try await daemon.dispatch(
+                    workspace: parts[2],
+                    name: parts[3],
+                    prompt: parts[3],
+                    placement: parts[1] == "local" ? .local : .executor(parts[1]),
+                    configuration: daemon.localRoot?.appendingPathComponent("loom.toml").path ?? "",
+                    requestKey: UUID().uuidString
+                )
+                model.destination = .session(id)
+            } catch {
+                reply = "error: \(error.localizedDescription)"
+            }
         default:
             break
         }
@@ -251,6 +288,70 @@ enum DebugDriver {
     }
 }
 
+/// The app's state as JSON, for assertions that do not depend on pixels.
+@MainActor
+enum Snapshot {
+    static func encode(_ model: AppModel) -> String {
+        let destination: String
+        switch model.destination {
+        case .inbox: destination = "inbox"
+        case .mission: destination = "mission"
+        case .machines: destination = "machines"
+        case .session(let id): destination = "session:\(id)"
+        case nil: destination = "none"
+        }
+        var body: [String: Any] = [
+            "destination": destination,
+            "isDispatching": model.isDispatching,
+            "isPaletteOpen": model.isPaletteOpen,
+            "showsInspector": model.showsInspector,
+            "isMultiMachine": model.isMultiMachine,
+            "isDaemonMissing": model.isDaemonMissing,
+            "attention": model.attention.map { ["id": $0.id, "kind": $0.kind.title, "agent": $0.agent, "title": $0.title] },
+            "cards": model.cards.map { ["name": $0.name, "liveness": $0.liveness.label, "placement": $0.placement?.label ?? ""] },
+            "daemons": model.daemons.map { daemon -> [String: Any] in
+                let state: String
+                switch daemon.state {
+                case .connecting: state = "connecting"
+                case .connected: state = "connected"
+                case .unavailable: state = "unavailable"
+                }
+                return [
+                    "label": daemon.label,
+                    "state": state,
+                    "deployment": daemon.deployment?.state ?? "",
+                    "nodes": (daemon.deployment?.nodes ?? []).map { ["name": $0.name, "state": $0.state] },
+                    "sessions": daemon.sessions.map { ["id": $0.id, "title": $0.title, "state": $0.state.label] },
+                ]
+            },
+        ]
+        if let session = model.currentSession {
+            body["session"] = [
+                "isLive": session.isLive,
+                "isBusy": session.isBusy,
+                "isAdopted": session.isAdopted,
+                "blocks": session.blocks.count,
+                "escalations": session.escalations.map(\.id),
+                "lastError": session.lastError ?? "",
+                "hasStream": session.stream != nil,
+                "strands": session.strands.map(\.id),
+                "transcript": session.blocks.map { block -> String in
+                    switch block {
+                    case .activity(let rows): return ToolSummary.describe(rows)
+                    case .row(let row):
+                        switch row.kind {
+                        case .user(let text, _), .assistant(let text), .thinking(let text), .notice(let text), .failure(let text): return text
+                        case .tool(let name, _, _, _): return name
+                        }
+                    }
+                },
+            ]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return "{}" }
+        return String(decoding: data, as: UTF8.self)
+    }
+}
+
 /// Records the gap between display refreshes on the main thread. A gap well over
 /// one refresh is a frame the person saw drop.
 @MainActor
@@ -287,6 +388,83 @@ final class HitchMeter: NSObject {
 /// Walks the window's accessibility tree, the way VoiceOver reads it.
 @MainActor
 enum AccessibilityAudit {
+    private static var mainWindow: NSWindow? {
+        NSApp.windows.first { $0.attachedSheet != nil } ?? NSApp.windows.first { $0.isVisible && $0.canBecomeMain }
+    }
+
+    /// Reads an accessibility property only if the object answers it. SwiftUI's nodes
+    /// answer these selectors without declaring the protocol, and a key-value read
+    /// of a key an object lacks raises an exception that ends this task silently.
+    private static func read(_ node: NSObject, _ key: String) -> Any? {
+        node.responds(to: Selector(key)) ? node.value(forKey: key) : nil
+    }
+
+    /// Walks the tree once per node. It can hold cycles through its window and
+    /// toolbar references, so a plain recursion would never finish.
+    private static func visit(_ root: Any, _ body: (NSObject, Int) -> Void) {
+        var seen = Set<ObjectIdentifier>()
+        func walk(_ element: Any, _ depth: Int) {
+            guard depth < 60, seen.count < 6000, let node = element as? NSObject,
+                  seen.insert(ObjectIdentifier(node)).inserted else { return }
+            body(node, depth)
+            for child in read(node, "accessibilityChildren") as? [Any] ?? [] {
+                walk(child, depth + 1)
+            }
+        }
+        walk(root, 0)
+    }
+
+    private static func name(_ node: NSObject) -> String {
+        let label = read(node, "accessibilityLabel") as? String ?? ""
+        return label.isEmpty ? read(node, "accessibilityTitle") as? String ?? "" : label
+    }
+
+    private static func role(_ node: NSObject) -> String {
+        read(node, "accessibilityRole") as? String ?? ""
+    }
+
+    /// Every element as JSON: role, name, value, frame and whether it is enabled.
+    static func tree() -> String {
+        guard let window = mainWindow else { return "[]" }
+        var rows: [[String: Any]] = []
+        let roots: [Any] = [window] + (window.attachedSheet.map { [$0] } ?? [])
+        for root in roots {
+            visit(root) { node, depth in
+                let frame = (read(node, "accessibilityFrame") as? NSValue)?.rectValue ?? .zero
+                rows.append([
+                    "role": role(node),
+                    "name": name(node),
+                    "value": read(node, "accessibilityValue").map { "\($0)" } ?? "",
+                    "enabled": (node as? NSControl)?.isEnabled ?? true,
+                    "depth": depth,
+                    // A detached element reports an infinite frame, which JSON cannot hold.
+                    "frame": [frame.origin.x, frame.origin.y, frame.width, frame.height].map { $0.isFinite ? $0 : 0 },
+                ])
+            }
+        }
+        guard JSONSerialization.isValidJSONObject(rows),
+              let data = try? JSONSerialization.data(withJSONObject: rows) else { return "[]" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func press(label: String) -> Bool {
+        guard let window = mainWindow else { return false }
+        var target: NSObject?
+        let roots: [Any] = [window] + (window.attachedSheet.map { [$0] } ?? [])
+        for root in roots {
+            visit(root) { node, _ in
+                guard target == nil, name(node) == label else { return }
+                if ["AXButton", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXRow", "AXCell"].contains(role(node)) {
+                    target = node
+                }
+            }
+        }
+        let press = Selector(("accessibilityPerformPress"))
+        guard let target, target.responds(to: press) else { return false }
+        _ = target.perform(press)
+        return true
+    }
+
     static func run() -> String {
         guard let window = NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain }) else { return "no window\n" }
         var lines: [String] = []
