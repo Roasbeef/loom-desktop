@@ -34,8 +34,7 @@ def a_session_is_renamed_from_its_menu(c):
     go(c, sid)
     c.app.menu("Rename Session…")
     asked(c, "rename")
-    c.app.key("a", "cmd")
-    c.app.type("Quarterly plan")
+    c.app.fill("Session name", "Quarterly plan")
     c.app.press("Rename")
     wait_for(lambda: record(c, sid)["title"] == "Quarterly plan", what="the new title")
     wait_for(lambda: c.app.snap()["pendingAction"] == "", what="the sheet to close")
@@ -104,3 +103,135 @@ def archive_and_delete_ask_first(c):
     asked(c, "delete")
     c.app.press("Delete Session")
     wait_for(lambda: record(c, doomed) is None, 30, "the deleted session to leave the list")
+
+
+# Creating a session.
+
+SCRATCH = None
+
+
+def scratch_folder(name):
+    from pathlib import Path
+    from loomui import BASE
+    path = Path(BASE) / name
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "README.md").write_text("scratch\n")
+    # The daemon reports canonical paths, and /tmp is a link to /private/tmp.
+    return str(path.resolve())
+
+
+def open_form(c):
+    c.app.menu("New Agent…")
+    wait_for(lambda: c.app.snap()["isDispatching"], what="the new-session form")
+
+
+def close_form(c):
+    if c.app.snap()["isDispatching"]:
+        c.app.key("escape")
+        wait_for(lambda: not c.app.snap()["isDispatching"], what="the form to close")
+
+
+@scenario("NS-03", "NS-06", "NS-07", "NS-19")
+def the_folder_field_searches_recent_places_and_judges_typing(c):
+    """Recent places are listed and filtered by typing, a bad path is named, and a place can be forgotten."""
+    keep = scratch_folder("keep-place")
+    gone = scratch_folder(f"forget-place-{int(time.time())}")
+    c.app.dispatch("Seed keep place demo", keep)
+    c.app.dispatch("Seed forget place demo", gone)
+    open_form(c)
+    try:
+        c.app.focus("Folder")
+        c.app.see(f"Use folder {keep}")
+        c.app.see(f"Use folder {gone}")
+
+        c.app.fill("Folder", "keep-pl")
+        c.app.see(f"Use folder {keep}")
+        c.app.not_see(f"Use folder {gone}")
+
+        c.app.fill("Folder", "/no/such/folder/here")
+        c.app.see("That folder doesn.t exist")
+        check(not c.app.enabled("Dispatch"), "an unusable folder should not allow dispatch")
+
+        c.app.fill("Folder", "")
+        c.app.press(f"Forget folder {gone}")
+        wait_for(lambda: not any(f"Use folder {gone}" in t for t in c.app.texts()), what="the forgotten place to leave the list")
+        c.app.see(f"Use folder {keep}")
+        c.app.press(f"Use folder {keep}")
+        c.app.focus("Prompt")
+        c.app.type("x")
+        wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed for a real folder")
+    finally:
+        close_form(c)
+
+
+@scenario("NS-14", "NS-15", "NS-16", "NS-17")
+def a_session_is_created_with_a_profile_model_name_and_box(c):
+    """The form's profile, model, name and shareable choices reach the daemon, which accepts them."""
+    folder = scratch_folder("options-place")
+    open_form(c)
+    try:
+        c.app.focus("Prompt")
+        c.app.type("Options check demo")
+        c.app.fill("Folder", folder)
+        c.app.fill("Session name", "Named by the form")
+        c.app.press("review")
+        c.app.press("fake2")
+        c.app.press("Shareable")
+        c.app.see("People you invite can read this session")
+        wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
+        c.app.press("Dispatch")
+        wait_for(lambda: not c.app.snap()["isDispatching"], 40, "the form to close after creating")
+    finally:
+        close_form(c)
+    wait_for(lambda: c.app.snap()["daemons"][0]["lastCreation"] == "profile=review model=fake2 shareable=true", what="the daemon to accept the choices")
+    c.app.session_id("Named by the form")
+
+
+def find_box_label(c):
+    """The executor segment's name, which carries its platform and free scopes."""
+    return wait_for(lambda: next((n["name"] for n in c.app.tree() if n["role"] == "AXRadioButton" and n["name"].startswith("box")), None), what="the box segment")
+
+
+@scenario("NS-12", "NS-08")
+def an_executor_offers_its_registered_workspaces(c):
+    """Choosing the executor lists the workspace names it registered, and one is used."""
+    open_form(c)
+    try:
+        wait_for(lambda: any(t.startswith("Tools run on") or "box" in t for t in c.app.texts()), what="the placement choice")
+        c.app.press(find_box_label(c))
+        c.app.see("Use folder proj")
+        c.app.focus("Prompt")
+        c.app.type("Executor form check demo")
+        wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
+        c.app.press("Dispatch")
+        wait_for(lambda: not c.app.snap()["isDispatching"], 40, "the form to close")
+    finally:
+        close_form(c)
+    sid = c.app.session_id("Executor form check")
+    wait_for(lambda: record(c, sid)["executor"] == "box", what="the session to be placed on box")
+
+
+@scenario()
+def a_new_session_can_start_in_the_current_folder(c):
+    """The Session menu opens the form on the folder of the session in the window."""
+    folder = scratch_folder("heading-place")
+    sid = c.app.dispatch("Heading place run demo", folder)
+    go(c, sid)
+    c.app.menu("New Session in This Folder…")
+    try:
+        wait_for(lambda: c.app.snap()["isDispatching"], what="the new-session form")
+        wait_for(lambda: any(n["name"].startswith("Folder") and n["value"] == folder for n in c.app.tree()), what="the folder to be filled")
+    finally:
+        close_form(c)
+
+
+@scenario("MV-03")
+def a_local_session_cannot_move_and_says_why(c):
+    """Move on a session with no executor states that only an executor's sessions move."""
+    sid = c.app.dispatch("Move me not demo", WORKSPACE)
+    go(c, sid)
+    c.app.menu("Move Session…")
+    c.app.see("Only a session on an executor can move")
+    check(not any(n["name"] == "Move" for n in c.app.tree()), "a local session must offer no Move button")
+    c.app.press("Close")
+    wait_for(lambda: not any("Only a session on an executor" in t for t in c.app.texts()), what="the sheet to close")

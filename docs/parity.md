@@ -46,23 +46,23 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 |---|---|---|---|---|---|
 | NS-01 | Prompt box that becomes the first message | view/new_session.gleam:394 | `sessions.create`, `sessions.open`, `subscribe`, `prompt` | yes (RootView.swift:414; AppModel.swift:276) | 1 |
 | NS-02 | Session named from the message's first line | composer.gleam:490 | `sessions.create` | yes (RootView.swift:564) | 2 |
-| NS-03 | Recent places, "Start again where you worked" | view/new_session.gleam:325 | `sessions.list` | partial (RootView.swift:508 offers paths of known local workspaces only) | 1 |
+| NS-03 | Recent places, "Start again where you worked" | view/new_session.gleam:325 | `sessions.list` | yes (NewSessionSheet.swift lists used folders newest first) | 1 |
 | NS-04 | Choose the agent machine | view/new_session.gleam:571 | `sessions.create` | partial (RootView.swift:426 picks among connected daemons; it does not list configured orchestrators) | 2 |
 | NS-05 | Agent option state: checking, unavailable | view/new_session.gleam:629 | in-process | partial (RootView.swift:351 shows daemon state in the footer, not in the picker) | 3 |
-| NS-06 | Searchable code picker: folders and workspaces | view/new_session.gleam:771 | `deployment.status` | no | 2 |
-| NS-07 | Typed folder, judged before creation | creations.gleam:413 | `sessions.create` | partial (RootView.swift:504 and :551 have a field and panel; only the daemon judges the path) | 1 |
+| NS-06 | Searchable code picker: folders and workspaces | view/new_session.gleam:771 | `deployment.status` | yes (NewSessionSheet.swift; the folder field filters recent places or an executor's registered names) | 2 |
+| NS-07 | Typed folder, judged before creation | creations.gleam:413 | `sessions.create` | yes (NewSessionSheet.swift and FolderCheck in Administration.swift judge the typed path before any request) | 1 |
 | NS-08 | Run on an executor | view/create.gleam:511 | `sessions.create` `executor`; `deployment.status` | yes (RootView.swift:431; ControlClient.swift:97) | 2 |
 | NS-09 | Run in a pool | view/create.gleam:511 | `sessions.create` `pool` | code (RootView.swift:433; ControlClient.swift:98) | 2 |
 | NS-10 | Executor and pool cards: state, free scopes, contradiction, declaration | placements.gleam:71 | `deployment.status` | partial (RootView.swift:542 shows name, platform, free scopes and state; no contradiction text) | 3 |
-| NS-11 | A down executor may still be chosen | view/create.gleam:511 | `sessions.create` | no (RootView.swift:436 disables down and full) | 3 |
-| NS-12 | Workspace select for an executor's registered names | view/create.gleam:852 | `deployment.status` node read | code (RootView.swift:526; AppModel.swift:269) | 2 |
+| NS-11 | A down executor may still be chosen | view/create.gleam:511 | `sessions.create` | code (NewSessionSheet.swift allows a down executor with a warning; no scenario takes the executor down) | 3 |
+| NS-12 | Workspace select for an executor's registered names | view/create.gleam:852 | `deployment.status` node read | yes (NewSessionSheet.swift; `executor.workspaces` read from the node report, which the old decoder missed) | 2 |
 | NS-13 | Typed registered workspace when none is known | view/create.gleam:899 | `sessions.create` | yes (RootView.swift:530) | 3 |
-| NS-14 | Choose a model profile | view/new_session.gleam:116 | `sessions.create` | no | 2 |
-| NS-15 | Choose the main model | view/new_session.gleam:666 | `sessions.create` | no | 2 |
-| NS-16 | Shareable box | view/create.gleam:956 | `sessions.create` `domain_scope` | no | 2 |
-| NS-17 | Optional session name with its default stated | view/create.gleam:380 | `sessions.create` | no (name is derived; there is no field) | 3 |
-| NS-18 | New session under a project heading | view/create.gleam:278 | `sessions.create` | no | 2 |
-| NS-19 | Remembered folders with "Forget this folder" | view/folders.gleam:136 | in-process (`manager.forget_folder`) | no | 3 |
+| NS-14 | Choose a model profile | view/new_session.gleam:116 | `sessions.create` | yes (NewSessionSheet.swift; profiles read from the daemon's loom.toml, local daemons only) | 2 |
+| NS-15 | Choose the main model | view/new_session.gleam:666 | `sessions.create` | yes (NewSessionSheet.swift; models read from the daemon's loom.toml, local daemons only) | 2 |
+| NS-16 | Shareable box | view/create.gleam:956 | `sessions.create` `domain_scope` | yes (NewSessionSheet.swift, `domain_scope: session_only`) | 2 |
+| NS-17 | Optional session name with its default stated | view/create.gleam:380 | `sessions.create` | yes (NewSessionSheet.swift) | 3 |
+| NS-18 | New session under a project heading | view/create.gleam:278 | `sessions.create` | code (a project heading's plus in RootView.swift; the Session menu's New Session in This Folder is proven, but the sidebar list is not in the accessibility tree) | 2 |
+| NS-19 | Remembered folders with "Forget this folder" | view/folders.gleam:136 | in-process (`manager.forget_folder`) | yes (NewSessionSheet.swift; a per-app list, since the daemon's forget is in-process) | 3 |
 | NS-20 | Refusal words for each reason | creations.gleam:251 | `error` reply | partial (RootView.swift:451 draws the daemon's message) | 2 |
 | NS-21 | Created but message unsent: "Open the session" | view/new_session.gleam:1141 | local | no | 3 |
 | NS-22 | Start on another orchestrator | view/new_session.gleam:617 | in-process (`ui_top.found`) | partial (RootView.swift:426 only through a direct daemon connection) | 3 |
@@ -356,11 +356,11 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| MV-01 | Move: list eligible and ineligible destinations | view/home_table.gleam:958; sv:move_candidates.gleam:121 | in-process (`deployment.candidates`) | no | 3 |
-| MV-02 | Move: confirm in the row | view/home_table.gleam:888 | `sessions.move` | no | 3 |
-| MV-03 | Move disabled with a reason for a session with no executor | view/home_table.gleam:774 | local | no | 3 |
-| MV-04 | "Moving to" shown on a row | view/home_table.gleam:1094 | `sessions.list` | code (RootView.swift:304) | 3 |
-| MV-05 | Moves on a machine page, and Abandon with a question | view/admin_machine.gleam:942; view/admin_machine.gleam:1021 | in-process (`server.abandon_move`) | no | 3 |
+| MV-01 | Move: list eligible and ineligible destinations | view/home_table.gleam:958; sv:move_candidates.gleam:121 | in-process (`deployment.candidates`) | code (MoveSheet.swift lists `orchestrators` from deployment.status with the first reason each cannot take the session; the fixture has one orchestrator) | 3 |
+| MV-02 | Move: confirm in the row | view/home_table.gleam:888 | `sessions.move` | code (MoveSheet.swift sends sessions.move; the fixture has no second orchestrator) | 3 |
+| MV-03 | Move disabled with a reason for a session with no executor | view/home_table.gleam:774 | local | yes (MoveSheet.swift) | 3 |
+| MV-04 | "Moving to" shown on a row | view/home_table.gleam:1094 | `sessions.list` | code (RootView.swift) | 3 |
+| MV-05 | Moves on a machine page, and Abandon with a question | view/admin_machine.gleam:942; view/admin_machine.gleam:1021 | in-process (`server.abandon_move`) | code (MoveSheet.swift abandons from the session's move sheet; the web page does it on the machine page) | 3 |
 
 ## Peers
 

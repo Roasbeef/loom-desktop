@@ -141,6 +141,27 @@ private struct SidebarView: View {
         model.isMultiMachine ? SidebarGrouping.allCases : [.status, .project]
     }
 
+    /// A project heading carries a button that starts a session in that folder.
+    @ViewBuilder
+    private func sectionHeader(_ title: String, sessions: [SessionRecord]) -> some View {
+        let folder = sessions.first { $0.executor == nil && $0.pool == nil }?.workspace
+        HStack {
+            Text(title)
+            if grouping == .project, let folder {
+                Spacer()
+                Button {
+                    model.actions.newSessionFolder = folder
+                    model.isDispatching = true
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.plain)
+                .help("New session in \(title)")
+                .accessibilityLabel("New session in \(title)")
+            }
+        }
+    }
+
     var body: some View {
         @Bindable var model = model
         List(selection: $model.destination) {
@@ -157,7 +178,7 @@ private struct SidebarView: View {
             }
 
             ForEach(sections, id: \.title) { section in
-                Section(section.title) {
+                Section {
                     ForEach(section.sessions) { record in
                         SessionRow(
                             record: record,
@@ -170,6 +191,8 @@ private struct SidebarView: View {
                             .tag(Destination.session(record.id))
                             .sessionContextMenu(record: record)
                     }
+                } header: {
+                    sectionHeader(section.title, sessions: section.sessions)
                 }
             }
 
@@ -377,216 +400,5 @@ struct CapacityMeter: View {
         }
         .accessibilityElement()
         .accessibilityLabel("\(used) of \(capacity) session slots in use")
-    }
-}
-
-// MARK: Dispatch
-
-/// The new-agent form. The prompt comes first because it is why a person opened it,
-/// and where it runs defaults to the last choice so a repeat takes one keystroke.
-///
-/// With executors configured, a person also chooses where the tools run, and the
-/// workspace becomes a name that machine registered, since a path here means
-/// nothing on that machine.
-struct DispatchSheet: View {
-    @Environment(AppModel.self) private var model
-    @Environment(\.dismiss) private var dismiss
-    @AppStorage("lastWorkspace") private var lastWorkspace = ""
-    @State private var daemonID = "local"
-    @State private var placement = PlacementChoice.local
-    @State private var workspace = ""
-    @State private var remoteWorkspaces: [String] = []
-    @State private var configuration = ""
-    @State private var prompt = ""
-    @State private var error: String?
-    @State private var isSending = false
-    @FocusState private var isPromptFocused: Bool
-
-    // Held across attempts so a retry after a lost reply recovers the session
-    // the first attempt made rather than creating a second one.
-    @State private var requestKey = UUID().uuidString
-
-    private var daemon: DaemonConnection? {
-        model.daemons.first { $0.id == daemonID } ?? model.daemons.first
-    }
-
-    private var options: [PlacementOption] {
-        (daemon?.deployment?.executors ?? []) + (daemon?.deployment?.pools ?? [])
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            TextField("What should this agent do?", text: $prompt, axis: .vertical)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15))
-                .lineLimit(4...14)
-                .focused($isPromptFocused)
-                .padding(18)
-                .accessibilityLabel("Prompt")
-
-            Divider()
-
-            Form {
-                if model.daemons.count > 1 {
-                    Picker("Agent runs on", selection: $daemonID) {
-                        ForEach(model.daemons) { Text($0.label).tag($0.id) }
-                    }
-                }
-                if !options.isEmpty {
-                    Picker("Tools run on", selection: $placement) {
-                        Text(daemon?.isRemote == true ? daemon?.label ?? "That machine" : "This Mac").tag(PlacementChoice.local)
-                        ForEach(options) { option in
-                            Text(describe(option))
-                                .tag(option.choice)
-                                .selectionDisabled(option.state == "down" || option.state == "full")
-                        }
-                    }
-                }
-                workspaceField
-                if daemon?.isRemote == true {
-                    // A configuration path is read on the machine holding the session.
-                    TextField("Configuration", text: $configuration, prompt: Text("Path on that machine"))
-                        .font(.system(size: 12).monospaced())
-                }
-            }
-            .formStyle(.columns)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 14)
-
-            if let error {
-                Text(error)
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.failure)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 18)
-                    .padding(.bottom, 8)
-            }
-
-            Divider()
-
-            HStack {
-                Text(dispatchHint).font(Theme.caption).foregroundStyle(.tertiary)
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button(isSending ? "Dispatching…" : "Dispatch", action: send)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isSending || workspace.isEmpty || prompt.isEmpty)
-            }
-            .padding(14)
-        }
-        .frame(width: 580)
-        .onAppear {
-            isPromptFocused = true
-            workspace = lastWorkspace
-        }
-        .onChange(of: daemonID) {
-            placement = .local
-            workspace = ""
-            requestKey = UUID().uuidString
-        }
-        .onChange(of: placement) {
-            // Changing where it runs changes what the workspace field means.
-            workspace = ""
-            requestKey = UUID().uuidString
-        }
-        .task(id: placement) {
-            remoteWorkspaces = []
-            if case .executor(let name) = placement, let daemon {
-                remoteWorkspaces = await daemon.workspaces(onExecutor: name)
-                workspace = remoteWorkspaces.first ?? ""
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var workspaceField: some View {
-        switch placement {
-        case .local:
-            LabeledContent("Workspace") {
-                HStack(spacing: 6) {
-                    TextField("Workspace", text: $workspace, prompt: Text("/path/to/project"))
-                        .labelsHidden()
-                        .font(.system(size: 12).monospaced())
-                    if let daemon, !model.knownWorkspaces(on: daemon).isEmpty {
-                        Menu {
-                            ForEach(model.knownWorkspaces(on: daemon), id: \.self) { path in
-                                Button(path) { workspace = path }
-                            }
-                        } label: {
-                            Image(systemName: "clock")
-                        }
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                        .help("Recent workspaces")
-                        .accessibilityLabel("Recent workspaces")
-                    }
-                    if daemon?.isRemote != true {
-                        Button("Choose…", action: choose)
-                    }
-                }
-            }
-        case .executor where !remoteWorkspaces.isEmpty:
-            Picker("Workspace", selection: $workspace) {
-                ForEach(remoteWorkspaces, id: \.self) { Text($0).tag($0) }
-            }
-        case .executor, .pool:
-            TextField("Workspace", text: $workspace, prompt: Text("Name registered on that machine"))
-                .font(.system(size: 12).monospaced())
-        }
-    }
-
-    /// Says why the button is disabled, rather than leaving a person to guess.
-    private var dispatchHint: String {
-        if prompt.isEmpty { return "Describe the work to dispatch." }
-        if workspace.isEmpty { return "Choose a workspace to dispatch." }
-        return "⌘↩ to dispatch"
-    }
-
-    private func describe(_ option: PlacementOption) -> String {
-        var parts = [option.name]
-        if case .pool = option.choice { parts.append("pool") }
-        if let platform = option.platform { parts.append(platform) }
-        if let free = option.freeScopes, option.state == "ready" { parts.append("\(free) free") }
-        if option.state != "ready" { parts.append(option.state) }
-        return parts.joined(separator: " · ")
-    }
-
-    private func choose() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        if panel.runModal() == .OK, let url = panel.url {
-            workspace = url.path
-        }
-    }
-
-    private func send() {
-        guard let daemon, !workspace.isEmpty, !prompt.isEmpty else { return }
-        isSending = true
-        error = nil
-        let firstLine = prompt.split(separator: "\n").first.map { String($0.prefix(60)) } ?? ""
-
-        // The same configuration the terminal falls back to with no --config.
-        let path = daemon.localRoot?.appendingPathComponent("loom.toml").path ?? configuration
-        Task {
-            defer { isSending = false }
-            do {
-                let id = try await daemon.dispatch(
-                    workspace: workspace,
-                    name: firstLine,
-                    prompt: prompt,
-                    placement: placement,
-                    configuration: path,
-                    requestKey: requestKey
-                )
-                if placement == .local { lastWorkspace = workspace }
-                model.destination = .session(id)
-                dismiss()
-            } catch {
-                self.error = error.localizedDescription
-            }
-        }
     }
 }

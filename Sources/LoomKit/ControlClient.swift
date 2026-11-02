@@ -152,6 +152,12 @@ public actor ControlClient {
         return (body["orchestrators"]?.array ?? []).map(ElsewhereGroup.init)
     }
 
+    /// One command with its body and reply left undecoded, for `loom-probe raw`.
+    /// It is how a decoder is checked against what the daemon really sends.
+    public func raw(_ cmd: String, body: JSONValue) async throws -> JSONValue {
+        try await request(cmd, body: body)
+    }
+
     func currentEpoch() throws -> String {
         guard let epoch = hello?.epoch else {
             throw LoomError.protocolViolation("a command preceded hello")

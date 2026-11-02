@@ -17,14 +17,9 @@ struct MoveSheet: View {
 
     private var daemon: DaemonConnection? { model.daemon(holding: record.id) }
 
-    /// The executor's node name, which the destination's report lists.
-    private var executorNode: String? {
-        record.executorNode ?? daemon?.deployment?.executors.first { $0.choice == .executor(record.executor ?? "") }?.node
-    }
-
     private var candidates: [MoveCandidate] {
         guard let deployment = daemon?.deployment else { return [] }
-        return MoveCandidate.choose(from: deployment, executorNode: executorNode)
+        return MoveCandidate.choose(from: deployment, executor: record.executor)
     }
 
     var body: some View {

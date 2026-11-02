@@ -330,16 +330,15 @@ public struct MoveCandidate: Sendable, Equatable, Identifiable {
     /// `session_view/move_candidates`: reached, then accepting moved sessions,
     /// then serving the session's executor. A session with no executor cannot
     /// move at all, which the caller states rather than listing reasons.
-    public static func choose(from deployment: Deployment, executorNode: String?) -> [MoveCandidate] {
-        deployment.nodes.compactMap { node -> MoveCandidate? in
-            guard node.roles.contains("orchestrator"), !node.isSelf else { return nil }
-            if node.state == "down" { return MoveCandidate(name: node.name, refusal: "is not reachable") }
-            guard let imports = node.imports else { return MoveCandidate(name: node.name, refusal: "gave no report") }
-            if imports != "receiving" { return MoveCandidate(name: node.name, refusal: "does not accept moved sessions") }
-            if let executorNode, !node.servesExecutors.isEmpty, !node.servesExecutors.contains(executorNode) {
-                return MoveCandidate(name: node.name, refusal: "does not serve this session's executor")
+    public static func choose(from deployment: Deployment, executor: String?) -> [MoveCandidate] {
+        deployment.others.map { other in
+            if other.state == "down" { return MoveCandidate(name: other.name, refusal: "is not reachable") }
+            guard let imports = other.imports else { return MoveCandidate(name: other.name, refusal: "gave no report") }
+            if imports != "receiving" { return MoveCandidate(name: other.name, refusal: "does not accept moved sessions") }
+            if let executor, !other.serves.contains(executor) {
+                return MoveCandidate(name: other.name, refusal: "does not serve this session's executor")
             }
-            return MoveCandidate(name: node.name, refusal: nil)
+            return MoveCandidate(name: other.name, refusal: nil)
         }
     }
 

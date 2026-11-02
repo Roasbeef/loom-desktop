@@ -69,6 +69,9 @@ final class SessionActions {
     var renaming: SessionRecord?
     var moving: SessionRecord?
 
+    /// A folder the next new-session form starts with, set by a project heading.
+    var newSessionFolder: String?
+
     /// The last refusal, in words, until a person dismisses it.
     var error: String?
 
@@ -117,6 +120,14 @@ extension AppModel {
     func askToDelete(_ record: SessionRecord) {
         guard !record.state.isResident else { return }
         actions.pending = .delete(record)
+    }
+
+    /// Opens the new-session form on a folder, which a project heading and the
+    /// Session menu both do. A session on an executor has no folder here.
+    func startSession(inFolderOf record: SessionRecord) {
+        guard record.executor == nil, record.pool == nil else { return }
+        actions.newSessionFolder = record.workspace
+        isDispatching = true
     }
 
     func askToMove(_ record: SessionRecord) {
@@ -279,6 +290,9 @@ struct SessionLifecycleMenuItems: View {
     let model: AppModel
 
     var body: some View {
+        Button("New Session in This Folder…") {
+            if let record = model.currentRecord { model.startSession(inFolderOf: record) }
+        }
         Button("Rename Session…") {
             if let record = model.currentRecord { model.askToRename(record) }
         }

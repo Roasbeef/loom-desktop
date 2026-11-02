@@ -105,6 +105,10 @@ final class DaemonConnection: Identifiable {
     /// no such time, so this is an observation, absent until a change is seen.
     private(set) var lastChanged: [String: Date] = [:]
 
+    /// The choices of the last accepted creation, which a test reads to see what
+    /// the new-session form actually sent.
+    private(set) var lastCreation = ""
+
     private var endpoint: DaemonEndpoint?
     @ObservationIgnored var control: ControlClient?
     private var loop: Task<Void, Never>?
@@ -279,7 +283,8 @@ final class DaemonConnection: Identifiable {
         prompt: String,
         placement: PlacementChoice,
         configuration: String,
-        requestKey: String
+        requestKey: String,
+        options: CreationOptions = CreationOptions()
     ) async throws -> String {
         guard let control else { throw LoomError.closed("\(label) is not connected.") }
         let record = try await control.createSession(
@@ -287,8 +292,11 @@ final class DaemonConnection: Identifiable {
             workspace: workspace,
             name: name.isEmpty ? (workspace as NSString).lastPathComponent : name,
             configuration: configuration,
-            placement: placement
+            placement: placement,
+            options: options
         )
+        lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") shareable=\(options.isShareable)"
+
         _ = try await control.openUntilResident(sessionID: record.id)
         try await refresh(control)
         guard let controller = attach(record.id) else { return record.id }

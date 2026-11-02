@@ -111,6 +111,19 @@ enum DebugDriver {
                     try? await daemon.stop(record.id)
                 }
             }
+        case "focus":
+            // Puts the caret in a text field of the open sheet (or window) by its
+            // accessibility label, since a test cannot click without coordinates.
+            reply = focusField(labelled: rest) ? "ok" : "not-found"
+        case "clear":
+            // Empties the focused text field, which a select-all key cannot do
+            // reliably in a sheet.
+            if let text = (window?.attachedSheet ?? window)?.firstResponder as? NSTextView {
+                text.selectAll(nil)
+                text.delete(nil)
+            } else {
+                reply = "not-found"
+            }
         case "snapshot":
             reply = Snapshot.encode(model)
         case "tree":
@@ -220,6 +233,25 @@ enum DebugDriver {
         try? bitmap.representation(using: .png, properties: [:])?.write(to: url)
     }
 
+    /// Finds an accessibility element of the open sheet (or window) by role and name.
+    private static func element(role wanted: [String], named label: String) -> NSObject? {
+        guard let target = window?.attachedSheet ?? window else { return nil }
+        var found: NSObject?
+        AccessibilityAudit.visitElements(of: target) { node, role, name in
+            guard found == nil, wanted.contains(role), name == label || name.hasPrefix(label + ",") else { return }
+            found = node
+        }
+        return found
+    }
+
+    private static func focusField(labelled label: String) -> Bool {
+        guard let field = element(role: ["AXTextField", "AXTextArea"], named: label) else { return false }
+        let setter = Selector(("setAccessibilityFocused:"))
+        guard field.responds(to: setter) else { return false }
+        _ = field.perform(setter, with: NSNumber(value: true))
+        return true
+    }
+
     // MARK: Input
 
     private static func click(x: Double, y: Double, right: Bool) {
@@ -323,6 +355,7 @@ enum Snapshot {
                     "label": daemon.label,
                     "state": state,
                     "deployment": daemon.deployment?.state ?? "",
+                    "lastCreation": daemon.lastCreation,
                     "nodes": (daemon.deployment?.nodes ?? []).map { ["name": $0.name, "state": $0.state] },
                     "sessions": daemon.sessions.map { record -> [String: Any] in
                         ["id": record.id, "title": record.title, "state": record.state.label,
@@ -421,6 +454,11 @@ enum AccessibilityAudit {
         walk(root, 0)
     }
 
+    /// Calls `body` with every element under `root`, its role and its name.
+    static func visitElements(of root: Any, _ body: (NSObject, String, String) -> Void) {
+        visit(root) { node, _ in body(node, role(node), name(node)) }
+    }
+
     private static func name(_ node: NSObject) -> String {
         let label = read(node, "accessibilityLabel") as? String ?? ""
         return label.isEmpty ? read(node, "accessibilityTitle") as? String ?? "" : label
@@ -442,7 +480,7 @@ enum AccessibilityAudit {
                     "role": role(node),
                     "name": name(node),
                     "value": read(node, "accessibilityValue").map { "\($0)" } ?? "",
-                    "enabled": (node as? NSControl)?.isEnabled ?? true,
+                    "enabled": (node as? NSControl)?.isEnabled ?? (read(node, "isAccessibilityEnabled") as? Bool) ?? true,
                     "depth": depth,
                     // A detached element reports an infinite frame, which JSON cannot hold.
                     "frame": [frame.origin.x, frame.origin.y, frame.width, frame.height].map { $0.isFinite ? $0 : 0 },

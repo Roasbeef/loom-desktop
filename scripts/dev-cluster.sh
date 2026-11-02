@@ -59,8 +59,20 @@ thinking = "unsupported"
 context_window = 200000
 max_output_tokens = 4096
 
+[models.fake2]
+dialect = "openai"
+base_url = "http://127.0.0.1:$provider/v1"
+api_key_env = "FAKE_KEY"
+model_id = "fake"
+thinking = "unsupported"
+context_window = 200000
+max_output_tokens = 4096
+
 [roles]
 main = ["fake"]
+
+[profiles.review.roles]
+main = ["fake2"]
 EOF
 
 if ! lsof -nP -iTCP:$provider -sTCP:LISTEN >/dev/null 2>&1; then

@@ -75,17 +75,29 @@ final class AdministrationTests: XCTestCase {
     }
 
     func testMoveCandidatesGiveTheFirstReasonThatApplies() {
-        let deployment = Deployment(["self": "a", "nodes": [
-            ["node": "a", "self": .bool(true), "roles": ["orchestrator"]],
-            ["node": "b", "name": "b", "roles": ["orchestrator"], "state": "down"],
-            ["node": "c", "name": "c", "roles": ["orchestrator"], "state": "ok", "orchestrator": ["imports": "not_receiving"]],
-            ["node": "d", "name": "d", "roles": ["orchestrator"], "state": "ok", "orchestrator": ["imports": "receiving"]],
-            ["node": "e", "name": "e", "roles": ["executor"], "state": "ok"],
+        let deployment = Deployment(["self": "a", "orchestrators": [
+            ["name": "b", "node": "b@h", "state": "down"],
+            ["name": "c", "node": "c@h", "state": "ok", "imports": "not_receiving"],
+            ["name": "d", "node": "d@h", "state": "ok", "imports": "receiving", "serves": ["box"]],
+            ["name": "e", "node": "e@h", "state": "ok", "imports": "receiving", "serves": ["other"]],
+            ["name": "f", "node": "f@h", "state": "ok"],
         ]])
-        let candidates = MoveCandidate.choose(from: deployment, executorNode: "box")
-        XCTAssertEqual(candidates.map { $0.name }, ["b", "c", "d"])
-        XCTAssertEqual(candidates.map { $0.isEligible }, [false, false, true])
+        let candidates = MoveCandidate.choose(from: deployment, executor: "box")
+        XCTAssertEqual(candidates.map { $0.name }, ["b", "c", "d", "e", "f"])
+        XCTAssertEqual(candidates.map { $0.isEligible }, [false, false, true, false, false])
         XCTAssertEqual(candidates[0].refusal, "is not reachable")
+        XCTAssertEqual(candidates[3].refusal, "does not serve this session's executor")
+    }
+
+    func testAnExecutorNodeReadsItsWorkspacesAndUncleanScopes() throws {
+        let deployment = Deployment(["nodes": [[
+            "node": "exec@h", "name": "box", "roles": ["executor"],
+            "executor": ["workspaces": ["proj"], "unclean": [["session": "s1", "state": "closing"]], "contradiction": .null],
+        ]]])
+        let node = try XCTUnwrap(deployment.nodes.first)
+        XCTAssertEqual(node.workspaces, ["proj"])
+        XCTAssertEqual(node.unclean.map { $0.sessionID }, ["s1"])
+        XCTAssertNil(node.contradiction)
     }
 
     func testRefusalCodesHaveWordsAndUnknownOnesKeepTheDaemonsMessage() {
