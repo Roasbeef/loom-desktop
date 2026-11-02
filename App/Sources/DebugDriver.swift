@@ -415,6 +415,8 @@ enum Snapshot {
             "actionError": model.actions.error ?? "",
             "isPaletteOpen": model.isPaletteOpen,
             "showsInspector": model.showsInspector,
+            "appearance": model.appearance.rawValue,
+            "effectiveAppearance": NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light",
             "isMultiMachine": model.isMultiMachine,
             "isDaemonMissing": model.isDaemonMissing,
             "attention": model.attention.map { ["id": $0.id, "kind": $0.kind.title, "agent": $0.agent, "title": $0.title] },

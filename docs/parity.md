@@ -400,8 +400,8 @@ The web page has no schedule surface beyond these two commands.
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| SE-01 | Theme: system, light or dark | wc:layout_rule.gleam:348 | local | partial (LoomApp.swift:213 has no theme setting, so it follows the system) | 3 |
-| SE-02 | Saved layout: columns and tab | wc:shell.gleam:539 | local | partial (SessionScreen.swift:974 keeps the inspector tab; column state is not saved by the app) | 3 |
+| SE-01 | Theme: system, light or dark | wc:layout_rule.gleam:348 | local | yes (View menu: Use System, Light or Dark Appearance, stored in the defaults; appearance_follows_the_menu_choice) | 3 |
+| SE-02 | Saved layout: columns and tab | wc:shell.gleam:539 | local | partial (the inspector being open is remembered and a relaunch proves it; the tab is scene storage and column widths are the system's, neither proven) | 3 |
 | SE-03 | Show the session's profile, and switch it | sv:commands.gleam:620; sv:commands.gleam:624 | `profile_get`, `profile_set` | yes (SessionSettingsSheet.swift; `profile_get` and `profile_set`, after a question) | 2 |
 | SE-04 | Reasoning effort | sv:command.gleam:344 | `set_config` | yes (SessionSettingsSheet.swift; `set_config` `thinking_level` on the focused strand) | 2 |
 
@@ -412,7 +412,7 @@ The web page has no schedule surface beyond these two commands.
 | PA-01 | Panel tabs: Strands, Changes, Session, Trace, Notes, Evolution | wc:shell_rule.gleam:467 | local | yes (SessionScreen.swift SessionInspector: Changes, Strands, Session, Trace, Notes, Evolution) | 1 |
 | PA-02 | Hide and show the panel | wc:shell_rule.gleam:949 | local | yes (LoomApp.swift:75, ⌥⌘I) | 1 |
 | PA-03 | Hide and show the sidebar | wc:shell_rule.gleam:946 | local | yes (the toolbar button) | 2 |
-| PA-04 | Resize the panel by drag or keys | wc:grip_rule.gleam:208 | local | partial (SessionScreen.swift:122 by drag; no keys) | 3 |
+| PA-04 | Resize the panel by drag or keys | wc:grip_rule.gleam:208 | local | partial (SwiftUI gives the inspector a draggable edge with a minimum and maximum and exposes no width to set, so there are no keys for it) | 3 |
 | PA-05 | Top bar location: workspace and name | view/heading.gleam:75 | `sessions.list` | yes (SessionScreen.swift:114) | 1 |
 | PA-06 | Main strand's model in the bar | view/heading.gleam:254 | metadata | yes (SessionScreen.swift:700, in the composer) | 1 |
 | PA-07 | Connection pill: connected or disconnected | view/heading.gleam:139 | local | yes (ComposerFigures.swift) | 2 |

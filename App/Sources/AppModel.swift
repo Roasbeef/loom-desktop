@@ -337,7 +337,19 @@ final class AppModel {
     var isDispatching = false
     var isAddingDaemon = false
     var isPaletteOpen = false
-    var showsInspector = false
+    /// Whether the inspector column is open, kept across launches with the rest of
+    /// the window's layout.
+    var showsInspector = UserDefaults.standard.bool(forKey: "showsInspector") {
+        didSet { UserDefaults.standard.set(showsInspector, forKey: "showsInspector") }
+    }
+
+    /// The appearance a person chose. The system's own is the default.
+    var appearance = AppearanceChoice.stored {
+        didSet {
+            UserDefaults.standard.set(appearance.rawValue, forKey: AppearanceChoice.key)
+            appearance.apply()
+        }
+    }
 
     /// A name to prefill, when a person follows a session held elsewhere.
     var daemonSuggestion: (name: String, address: String)?

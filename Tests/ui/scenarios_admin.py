@@ -166,3 +166,35 @@ def a_session_starts_on_another_daemon(c):
         wait_for(lambda: any("Other daemon check" in s["title"] for s in next(d for d in c.app.snap()["daemons"] if d["label"] == "other")["sessions"]), 30, "the session on the second daemon")
     finally:
         c.app.cmd("unattach other")
+
+
+# Settings.
+
+
+@scenario("SE-01")
+def appearance_follows_the_menu_choice(c):
+    """Light, dark and system appearance are chosen from the View menu and take effect at once."""
+    try:
+        c.app.menu("Use Light Appearance")
+        wait_for(lambda: (s := c.app.snap())["appearance"] == "light" and s["effectiveAppearance"] == "light", what="light")
+        c.app.menu("Use Dark Appearance")
+        wait_for(lambda: (s := c.app.snap())["appearance"] == "dark" and s["effectiveAppearance"] == "dark", what="dark")
+    finally:
+        c.app.menu("Use System Appearance")
+        c.app.appearance("dark")
+    check(c.app.snap()["appearance"] == "system", "the choice should return to the system's")
+
+
+@scenario("SE-02")
+def the_inspector_stays_open_across_launches(c):
+    """The inspector column is open again after the app is quit and started."""
+    if not c.app.snap()["showsInspector"]:
+        c.app.menu("Show Inspector")
+    wait_for(lambda: c.app.snap()["showsInspector"], what="the inspector to open")
+    try:
+        c.app.quit()
+        c.app.launch()
+        wait_for(lambda: c.app.snap()["showsInspector"], what="the inspector to be open after the start")
+    finally:
+        if c.app.snap()["showsInspector"]:
+            c.app.menu("Hide Inspector")

@@ -13,6 +13,7 @@ struct LoomApp: App {
                 .environment(model)
                 .frame(minWidth: 880, minHeight: 560)
                 .task {
+                    model.appearance.apply()
                     model.start()
                     Announcer.shared.watch(model)
                     #if DEBUG
@@ -70,6 +71,11 @@ private struct LoomCommands: Commands {
                 model.isAddingDaemon = true
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
+        }
+        CommandGroup(after: .toolbar) {
+            ForEach(AppearanceChoice.allCases) { choice in
+                Button(choice.menuTitle) { model.appearance = choice }
+            }
         }
         CommandGroup(after: .sidebar) {
             Button(model.showsInspector ? "Hide Inspector" : "Show Inspector") {
