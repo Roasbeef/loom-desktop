@@ -106,30 +106,45 @@ class Cluster:
         subprocess.run(["pkill", "-f", f"fake_provider.py {18999 + SLOT}"], check=False)
 
 
+_isolated = None
+
+
+def isolated_app():
+    """Returns a copy of the built app whose bundle identifier belongs to this slot.
+
+    `UserDefaults.standard` is keyed by the bundle identifier, so the copy reads and
+    writes its own preferences and never those of the person running the tests. Its
+    preferences are emptied once per run, and they survive a relaunch within the run,
+    which the scenarios about remembered choices rely on.
+    """
+    global _isolated
+    if _isolated is None:
+        identifier = f"com.roasbeef.loom-desktop.uitest{SLOT}"
+        copy = ROOT / f"build/uitest-app-{SLOT}/Loom.app"
+        shutil.rmtree(copy.parent, ignore_errors=True)
+        copy.parent.mkdir(parents=True)
+        subprocess.run(["ditto", str(ROOT / "build/Loom.app"), str(copy)], check=True)
+        subprocess.run(["plutil", "-replace", "CFBundleIdentifier", "-string", identifier, str(copy / "Contents/Info.plist")], check=True)
+        subprocess.run(["codesign", "--force", "--sign", "-", str(copy)], check=True, capture_output=True)
+        subprocess.run(["defaults", "delete", identifier], check=False, capture_output=True)
+        _isolated = copy / "Contents/MacOS/Loom"
+    return _isolated
+
+
 class App:
     """The app under test. It never takes focus unless a test asks."""
 
     def __init__(self, base, state_root, binary=None, active=False):
         self.dir = Path(base) / "driver"
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.binary = binary or ROOT / "build/Loom.app/Contents/MacOS/Loom"
+        self.binary = binary or isolated_app()
         self.state_root = state_root
         self.active = active
         self.proc = None
         self.seq = 0
 
     def launch(self):
-        # Preferences follow CFFIXED_USER_HOME, so each run starts from empty ones and
-        # never reads or writes those of the person running the tests. The directory
-        # outlives a relaunch, which the scenarios about remembered choices rely on.
-        home = self.dir / "home"
-        home.mkdir(exist_ok=True)
-        env = dict(
-            os.environ,
-            LOOM_DEBUG_DRIVER=str(self.dir),
-            LOOM_STATE_DIR=str(self.state_root),
-            CFFIXED_USER_HOME=str(home),
-        )
+        env = dict(os.environ, LOOM_DEBUG_DRIVER=str(self.dir), LOOM_STATE_DIR=str(self.state_root))
         if self.active:
             env["LOOM_FORCE_ACTIVE"] = "1"
         self.log = open(self.dir / "app.log", "ab")
