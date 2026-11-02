@@ -70,6 +70,7 @@ def archive_and_delete_ask_first(c):
     """Archiving a saved row, stop-and-archive of a running one, and delete each ask."""
     saved = c.app.dispatch("Archive saved row demo", WORKSPACE)
     go(c, saved)
+    c.app.transcript_has("Retry budget is now per host", 60)
     wait_for(lambda: record(c, saved)["activity"] == "idle", 60, "the run to finish")
     c.app.menu("Stop Session")
     wait_for(lambda: record(c, saved)["state"] == "Saved", 60, "the stop")
@@ -80,6 +81,8 @@ def archive_and_delete_ask_first(c):
 
     running = c.app.dispatch("Archive running row demo", WORKSPACE)
     go(c, running)
+    # A new session reads idle until its turn starts, so idle alone proves nothing here.
+    c.app.transcript_has("Retry budget is now per host", 60)
     wait_for(lambda: record(c, running)["activity"] == "idle", 60, "the run to finish")
     c.app.menu("Archive Session…")
     check(asked(c, "archive").endswith("running:quiet"), "a running row says it will stop first")
