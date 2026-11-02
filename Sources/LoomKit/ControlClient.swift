@@ -81,7 +81,8 @@ public actor ControlClient {
         workspace: String,
         name: String,
         configuration: String,
-        placement: PlacementChoice = .local
+        placement: PlacementChoice = .local,
+        options: CreationOptions = CreationOptions()
     ) async throws -> SessionRecord {
         var fields: [String: JSONValue] = [
             "request_key": .string(requestKey),
@@ -97,6 +98,7 @@ public actor ControlClient {
         case .executor(let name): fields["executor"] = .string(name)
         case .pool(let name): fields["pool"] = .string(name)
         }
+        options.add(to: &fields)
         let body = try await request("sessions.create", body: .object(fields))
         guard let record = SessionRecord(body) else {
             throw LoomError.protocolViolation("sessions.create returned no record")
@@ -150,7 +152,7 @@ public actor ControlClient {
         return (body["orchestrators"]?.array ?? []).map(ElsewhereGroup.init)
     }
 
-    private func currentEpoch() throws -> String {
+    func currentEpoch() throws -> String {
         guard let epoch = hello?.epoch else {
             throw LoomError.protocolViolation("a command preceded hello")
         }
@@ -159,7 +161,7 @@ public actor ControlClient {
 
     /// One command, one correlated reply. The control socket pushes nothing
     /// after `hello`, so a read here can only be this command's answer.
-    private func request(_ cmd: String, body: JSONValue) async throws -> JSONValue {
+    func request(_ cmd: String, body: JSONValue) async throws -> JSONValue {
         let frame = try await lock.withCredit { [self] in
             try await exchange(cmd, body: body)
         }

@@ -180,6 +180,10 @@ public struct DeploymentNode: Sendable, Equatable, Identifiable {
     public let capacity: Int?
     public let resident: Int?
     public let workspaces: [String]
+    /// Whether an orchestrator accepts sessions moved to it (`receiving`).
+    public let imports: String?
+    /// The executors an orchestrator serves, when the report lists them.
+    public let servesExecutors: [String]
 
     init?(_ body: JSONValue) {
         guard let node = body["node"]?.string else { return nil }
@@ -200,6 +204,8 @@ public struct DeploymentNode: Sendable, Equatable, Identifiable {
         capacity = body["orchestrator"]?["capacity"]?.int
         resident = body["orchestrator"]?["resident"]?.int
         workspaces = (body["workspaces"]?.array ?? []).compactMap(\.string)
+        imports = body["orchestrator"]?["imports"]?.string
+        servesExecutors = (body["orchestrator"]?["serves"]?.array ?? []).compactMap(\.string)
     }
 }
 
