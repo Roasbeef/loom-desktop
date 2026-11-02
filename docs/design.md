@@ -4,8 +4,11 @@ Loom Desktop is a native macOS client for `loomd`. It adds no agent logic. The
 daemon stays exactly as it is, and this app is one more client of the same v2
 WebSocket protocol the terminal speaks.
 
-The app answers two questions: what is one agent doing, and what across all my
-agents needs me now.
+The app answers three questions: what is one agent doing, what across all my
+agents needs me now, and where is all of it running.
+
+Substrate is not a dependency. Its inbox and its view per agent shaped this
+interface, and the app reads nothing from it.
 
 ## How it reaches the daemon
 
@@ -18,7 +21,7 @@ address.
 |---|---|---|
 | `/v2/control` | The catalogue, capacity, activity, create, open and stop | Polled every 2 s, because this socket pushes nothing after `hello` |
 | `/v2/sessions/<id>/ws` | One conversation | Pushes for streaming, plus `catch_up` after a notice and at least every second |
-| Substrate `GET /api/v1/command/feed` | The fleet of Substrate agents | Reloaded when the `/ws` hub announces a change, and every 15 s as a repair |
+| `deployment.status`, `sessions.elsewhere` | Machines, placement choices, other orchestrators' sessions | Polled every 16 s, because each read connects to every node |
 
 A session gets a socket only when a person opens it, or when its activity reports
 a pending approval, since that count does not include the record the inbox must
@@ -30,9 +33,8 @@ it is an explicit button.
 | Target | Holds | Depends on |
 |---|---|---|
 | `LoomKit` | Wire, transfer assembly, the session lane, the `Conversation` projection | Foundation |
-| `SubstrateKit` | The feed, replies, plan decisions, the hub listener | Foundation |
-| `MissionKit` | The merged attention list and agent cards | Both kits |
-| `App/Sources` | SwiftUI views and the object that owns sockets and timers | All three |
+| `MissionKit` | Placement, the merged attention list, agent cards, blast radius | `LoomKit` |
+| `App/Sources` | SwiftUI views and the objects that own sockets and timers | Both |
 
 The split follows the rule the Loom tree already uses: an engine that decides and
 a host that acts. `TransferAssembler`, `Conversation` and `Mission` are pure
@@ -68,6 +70,43 @@ Two stages, in order:
    `com.apple.security.cs.allow-jit` entitlement under the hardened runtime. This
    stage has not been tried, so that cost is an estimate.
 
+## Machines: brain, hands and subagents
+
+A session's brain is the daemon holding its conversation, keys and approvals. Its
+hands are the machine running its tools beside the checkout. Those can differ, and
+a subagent can run under another orchestrator entirely. This table is what the
+daemon exposes today and how each fact reaches the app.
+
+| Fact | Source |
+|---|---|
+| Hands of a session | `executor` or `pool` on its catalogue record, fixed at `sessions.create` |
+| Machines, roles, health, scopes, slots | `deployment.status`, always stated as seen from the answering daemon |
+| What a machine can accept | `placements`, with `state` and `free_scopes` |
+| Workspaces on an executor | `deployment.status` with `node`; names only, never paths |
+| Sessions on other orchestrators | `sessions.elsewhere`. `silent` never means empty |
+| Subagents on other orchestrators | The pushed `remote_children` snapshot; `child_history` reads a page |
+| Their approvals | `remote-escalation/<id>` cells, with that orchestrator's `seq`, limited to `admitted` |
+
+What follows from that:
+
+- **The app connects to several daemons.** Driving a session requires a socket to
+  the daemon holding it, since a daemon does not forward a client. Each
+  `DaemonConnection` owns its sockets and catalogue, and `AppModel` merges them.
+- **Remote connections use their own credential**, kept in the login keychain, over
+  `wss://` or an SSH tunnel to a loopback port. The daemon binds loopback only, so
+  an `address` from `sessions.elsewhere` is whatever the operator exposed. A cleartext
+  route to any other host is refused, and so is a claim token where a bearer belongs.
+- **One machine sees none of this.** Placement words, the Machines page and the
+  grouping control appear only when more than one machine exists.
+- **A sick machine reaches the inbox only when a session depends on it.**
+- **A subagent's location stops at its orchestrator.** A `remote_children` row
+  names no executor. Per-spawn placement is proposed in loom issue #1137 and would
+  add those fields.
+
+Loom issue #1135 proposes relaying another machine's live session through the local
+daemon. If it lands, a second connection is no longer required to watch a remote
+session, though `DaemonConnection` remains the way to reach a daemon directly.
+
 ## The interface
 
 References, and what each contributed:
@@ -77,8 +116,8 @@ References, and what each contributed:
 | Claude Code desktop | Session sidebar, a transcript with collapsed tool rows, a side pane for review |
 | Codex app | Project grouping in the sidebar, a review pane over the worktree diff |
 | herdr | Blocked, working and done as the only states worth a glance. It is a terminal multiplexer, with no desktop app to borrow from |
-| Plannotator Inbox | Threads grouped by what they need, one place to answer, nothing sent until you send |
-| Substrate Command Center | Agent dossier cards, the heartbeat trace, a needs-you tray, a steer box on each card |
+| Plannotator Inbox | Items grouped by what they need, one place to answer |
+| Substrate Command Center | The idea only: agent cards, a heartbeat trace, a needs-you tray, a steer box on each card |
 
 Rules the views follow:
 
@@ -91,12 +130,16 @@ Rules the views follow:
 
 Three screens:
 
-- **Inbox** merges Loom approvals and failed runs with Substrate questions, plans
-  and blocked agents, grouped by what each needs.
-- **Mission Control** shows fleet counts, daemon slot use and one card per agent.
-  A Loom session and a Substrate agent use the same card.
+- **Inbox** merges approvals, failed runs and unhealthy machines across every
+  connected daemon, grouped by what each needs.
+- **Mission Control** shows fleet counts, slot use per daemon and one card per agent,
+  with its placement.
 - **Session** shows the transcript, live streaming, approvals above the composer,
-  steer and stop while busy, and the worktree diff in an inspector.
+  steer and stop while busy, remote subagents with a read-only page of each, and
+  the worktree diff in an inspector. A dead socket is stated on screen with a
+  Reconnect button rather than left looking connected.
+- **Machines** shows each daemon's view of its nodes, what depends on each, and
+  sessions held elsewhere with a way to connect.
 
 The approval card follows protocol section 5.10. The tool is always named, the
 requested authority is listed literally, the model-written preview has its
@@ -125,18 +168,19 @@ client:
 |---|---|---|
 | No push on the control socket | Fleet state lags by up to 2 s, and every client polls | A catalogue and activity change notice, which needs a protocol change |
 | `sessions.activity` lacks approval records | A socket per waiting session | Include a summary in the row, which needs a protocol change |
-| Substrate has no authentication on loopback | Any local process can answer as the operator | Existing property of Substrate; worth deciding before remote use |
-| An installed `substrated` older than Command Center has no feed | The app shows Substrate as absent | Update `substrated` |
-| Remote escalations (`remote-escalation/`) | Not decoded, so not shown as records | Add when distributed sessions matter here |
-| Reconnecting a dropped session socket | The session shows no live updates until it is reselected | Add the reconnect procedure of section 6.7 |
+| No read of a saved session's approvals or spend | A saved session's pending approval is invisible until opened | The catalogue summary in Loom's `docs/design-notes/web-ui-redesign.md` |
+| Claim tokens are refused, not redeemed | A member needs a credential obtained elsewhere | Implement `/v2/claim` |
+| Sessions cannot be moved from the app | `moving` is displayed, `sessions.move` is not sent | Add once the flow is designed |
+| A dropped session socket does not reconnect by itself | A Reconnect button appears, except for sessions awaiting approval, which reattach automatically | Add the procedure of section 6.7 |
 
-Not built yet: notifications, a free-form canvas, subagent views beyond a strand
-picker, goals, permissions, memory, member invites, and starting the daemon.
+Not built yet: notifications, a free-form canvas, goals, proposals, schedules,
+permissions, memory, member invites, starting the daemon, and bundling it.
 
 ## Verifying a change
 
 `swift test` covers the pure rules. `scripts/fake_provider.py` is a scripted model
 endpoint, so a throwaway daemon runs real sessions with no credential or spend.
+`scripts/dev-cluster.sh` starts a real orchestrator and executor on this machine.
 `loom-probe` drives the protocol headlessly. A debug build run with
 `LOOM_DEBUG_DRIVER=<dir>` takes navigation and screenshot commands from a file;
 see `App/Sources/DebugDriver.swift`. Never point these at a daemon you care about.

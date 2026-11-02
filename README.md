@@ -1,7 +1,7 @@
 # Loom Desktop
 
 A native SwiftUI client and mission control for [`loomd`](https://github.com/roasbeef/loom),
-with optional [Substrate](https://github.com/roasbeef/substrate) integration. It
+including sessions whose brain, hands and subagents run on different machines. It
 uses the same daemon as the terminal client and changes nothing about it.
 
 This is an early exploration. [docs/design.md](docs/design.md) has the
@@ -20,8 +20,8 @@ CONFIG=debug scripts/bundle.sh
 open build/Loom.app
 ```
 
-Substrate appears when a current `substrated` serves `localhost:8080`.
-`SUBSTRATE_URL` and `LOOM_STATE_DIR` point the binary at other instances.
+`LOOM_STATE_DIR` points the binary at another daemon's state root, and the Machines
+page connects daemons on other machines.
 
 ## Test it
 
