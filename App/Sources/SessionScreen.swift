@@ -175,6 +175,22 @@ private struct TranscriptView: View {
     @State private var isAtBottom = true
     @State private var viewport: CGFloat = 0
 
+    // Whether the reader is following the end. Only the reader's own scrolling
+    // changes it, so content that changes height under the viewport cannot.
+    @State private var isFollowing = true
+
+    // The blocks on screen, so a reader partway up can be kept on the same place
+    // when the width changes every row's height.
+    @State private var visibleIDs: [String] = []
+    @State private var width: CGFloat = 0
+
+    /// What changes when a reply settles: the live tail ends and its committed
+    /// rows replace it, often at a different height. Older turns paging in at the
+    /// top leave both parts alone, so they never pull the reader to the end.
+    private var tailKey: String {
+        "\(controller.blocks.last?.id ?? "")|\(controller.stream == nil)"
+    }
+
     private var visibleBlocks: [TranscriptBlock] {
         guard !query.isEmpty else { return controller.blocks }
         return controller.blocks.filter { $0.contains(query) }
@@ -202,6 +218,7 @@ private struct TranscriptView: View {
                 }
                 ForEach(visibleBlocks) { block in
                     BlockView(block: block, controller: controller)
+                        .id(block.id)
                 }
                 if query.isEmpty {
                     LiveTail(controller: controller)
@@ -215,6 +232,7 @@ private struct TranscriptView: View {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity)
                 }
             }
+            .scrollTargetLayout()
             .frame(maxWidth: Theme.contentWidth, alignment: .leading)
             .padding(.horizontal, 28)
             .padding(.top, 28)
@@ -235,12 +253,45 @@ private struct TranscriptView: View {
         } action: { _, atBottom in
             isAtBottom = atBottom
         }
+        .onScrollPhaseChange { _, phase, context in
+            guard phase == .idle else { return }
+            let geometry = context.geometry
+            isFollowing = geometry.visibleRect.maxY >= geometry.contentSize.height - 40
+        }
+
+        // When a reply settles, the lazy stack replaces the tail with rows of other
+        // heights and can leave the viewport over rows it has not built, which draws
+        // an empty page. A reader who was following is put back at the end.
+        .onChange(of: tailKey) {
+            guard isFollowing else { return }
+            Task { @MainActor in position.scrollTo(edge: .bottom) }
+        }
+        .onScrollTargetVisibilityChange(idType: String.self) { visibleIDs = $0 }
+
+        // Opening the inspector or resizing the window changes every row's height
+        // at once, and the lazy stack then sits over rows it has not built and draws
+        // nothing. The reader is put back where they were: at the end when
+        // following, otherwise on the block that was at the top of the view.
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { next in
+            let changed = width != 0 && abs(width - next) > 1
+            width = next
+            guard changed else { return }
+            let anchor = visibleIDs.first
+            Task { @MainActor in
+                if !isFollowing, let anchor {
+                    position.scrollTo(id: anchor, anchor: .top)
+                } else {
+                    position.scrollTo(edge: .bottom)
+                }
+            }
+        }
         // Layout geometry excludes the toolbar and composer insets, and it reports at
         // once, before anything has scrolled.
         .onGeometryChange(for: CGFloat.self, of: \.size.height) { viewport = $0 }
         .overlay(alignment: .bottom) {
             if !isAtBottom {
                 Button {
+                    isFollowing = true
                     withAnimation(.smooth(duration: 0.25)) { position.scrollTo(edge: .bottom) }
                 } label: {
                     Label("Latest", systemImage: "arrow.down")
