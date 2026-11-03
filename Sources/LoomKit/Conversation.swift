@@ -886,6 +886,9 @@ public struct Conversation: Sendable, Equatable {
             // turns with no author. Drawing one as a person's message would put
             // words in their mouth.
             let kind = origin?["kind"]?.string
+            if author == nil, MemoryContext.isNotesDigest(body) {
+                break
+            }
             if let lines = MemoryContext.lines(in: body) {
                 rows.append(.init(id: id, kind: .memory(lines: lines, text: body)))
             } else if kind == "peer", let session = origin?["session"]?.string, let strand = origin?["strand"]?.string {

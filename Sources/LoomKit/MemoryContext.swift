@@ -25,6 +25,17 @@ public enum MemoryContext {
         return nil
     }
 
+    /// Whether the text is the strand's own notes digest, which the daemon puts in
+    /// front of each run as an unauthored user message (Loom's `client/notes`).
+    ///
+    /// The terminal and web clients recognize it by the same opening and fence and
+    /// draw no row for it, since the notes have a page of their own and the plan bar
+    /// shows the todo board. A fresh copy arrives with every run, so a row for it
+    /// would repeat the board above each answer.
+    public static func isNotesDigest(_ text: String) -> Bool {
+        text.hasPrefix("Your own notes for strand `") && text.contains("\n```agent-notes\n")
+    }
+
     /// The closed row's words.
     public static func summary(lines: Int) -> String {
         "Memory context, \(lines) line\(lines == 1 ? "" : "s")"

@@ -253,6 +253,13 @@ final class FoldParityTests: XCTestCase {
         XCTAssertEqual(MemoryContext.summary(lines: 3), "Memory context, 3 lines")
     }
 
+    func testTheNotesDigestIsRecognizedAndAQuoteOfItIsNot() {
+        let digest = "Your own notes for strand `main`, newest first — quoted.\n\n```agent-notes\ntodo = {}\n```"
+        XCTAssertTrue(MemoryContext.isNotesDigest(digest))
+        XCTAssertFalse(MemoryContext.isNotesDigest("Your own notes for strand `main` say to ship it"))
+        XCTAssertFalse(MemoryContext.isNotesDigest("look at this:\n" + digest))
+    }
+
     func testAMemoryContextJoinsTheTurnItFollowsAndOpensNone() {
         let user = TranscriptRow(id: "u", kind: .user(text: "go", author: "Owner"), at: 1_000)
         let memory = TranscriptRow(id: "m", kind: .memory(lines: 2, text: "notes"))
