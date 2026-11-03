@@ -346,7 +346,7 @@ struct StepRow: View {
         case "bash":
             // The whole command, which the line shows only the first row of.
             if let command = parts.arguments["command"]?.string {
-                OutputBlock(text: "$ " + command, tint: .secondary)
+                OutputBlock(text: "$ " + command, tint: .secondary, language: "sh")
             }
         case "fs_read", "grep":
             EmptyView()
@@ -477,7 +477,7 @@ struct ProgramCardView: View {
             }
             if !card.program.isEmpty {
                 Text("Program · \(card.lines) lines").font(Theme.caption).foregroundStyle(.secondary)
-                OutputBlock(text: card.program, tint: .primary)
+                OutputBlock(text: card.program, tint: .primary, language: "gleam")
             }
             if let failure = card.failure, !failure.isEmpty {
                 OutputBlock(text: failure, tint: Theme.failure)
@@ -494,11 +494,18 @@ struct ProgramCardView: View {
 struct OutputBlock: View {
     let text: String
     var tint: Color
+    /// The language to colour the text as. Output with none is drawn in the tint alone.
+    var language: String?
+
+    private var styled: Text {
+        guard let language else { return Text(text) }
+        return Text(HighlightCache.attributed(text, language: language, isStreaming: false))
+    }
 
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
             HStack(spacing: 0) {
-                Text(text)
+                styled
                     .font(Theme.code)
                     .foregroundStyle(tint)
                     .lineSpacing(2)
@@ -525,9 +532,12 @@ struct ReasoningRow: View {
     let summary: String?
     @State private var isOpen = false
 
-    private var preview: String {
+    /// The summary's section titles when it has them, or its first line otherwise.
+    private var preview: AttributedString {
+        let titles = Markdown.sectionTitles(in: text)
+        if !titles.isEmpty { return AttributedString(titles.joined(separator: " · ")) }
         let line = text.split(separator: "\n", omittingEmptySubsequences: true).first.map(String.init) ?? text
-        return line.count > 90 ? String(line.prefix(90)) + "…" : line
+        return MarkdownView.inline(line.count > 90 ? String(line.prefix(90)) + "…" : line)
     }
 
     private var figures: String {
@@ -567,11 +577,9 @@ struct ReasoningRow: View {
             .accessibilityValue((summary.map { "Summarized: \($0). " } ?? "") + (isOpen ? "Expanded" : "Collapsed"))
 
             if isOpen {
-                Text(text)
+                MarkdownView(source: text)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
             }
         }
     }
@@ -706,9 +714,11 @@ private struct LiveReasoning: View {
     let isSettling: Bool
     @State private var isOpen = false
 
-    private var newest: String {
+    /// The section the summary is in now when it has titles, or its newest line.
+    private var newest: AttributedString {
+        if let title = Markdown.sectionTitles(in: thinking).last { return AttributedString(title) }
         let line = thinking.split(separator: "\n", omittingEmptySubsequences: true).last.map(String.init) ?? thinking
-        return line.count > 120 ? "…" + String(line.suffix(120)) : line
+        return MarkdownView.inline(line.count > 120 ? "…" + String(line.suffix(120)) : line)
     }
 
     var body: some View {
@@ -739,11 +749,9 @@ private struct LiveReasoning: View {
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
 
             if isOpen {
-                Text(thinking)
+                MarkdownView(source: thinking, isStreaming: true)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                    .lineSpacing(3)
-                    .textSelection(.enabled)
             }
         }
     }

@@ -70,6 +70,17 @@ final class MarkdownTests: XCTestCase {
     }
 }
 
+final class ReasoningTitleTests: XCTestCase {
+    func testReadsSummaryTitles() {
+        let summary = "**Analyzing CI Activity**\n\nI'm watching the checks.\n\n  **Investigating CI Workflow**  \n\nMore **bold** words."
+        XCTAssertEqual(Markdown.sectionTitles(in: summary), ["Analyzing CI Activity", "Investigating CI Workflow"])
+    }
+
+    func testIgnoresLinesThatAreNotOneBoldSpan() {
+        XCTAssertEqual(Markdown.sectionTitles(in: "**a** and **b**\n****\nplain"), [])
+    }
+}
+
 final class SyntaxTests: XCTestCase {
     /// The property that matters most: colouring never changes the text.
     func testTokensAlwaysJoinBackToTheInput() {
@@ -94,6 +105,21 @@ final class SyntaxTests: XCTestCase {
 
     func testAnApostropheInAWordIsNotAString() {
         XCTAssertFalse(Syntax.highlight("don't stop", language: "python").contains { $0.kind == .string })
+    }
+
+    func testGleamProgramTokens() {
+        let program = "import cap/proc\n\npub fn main() -> report.Outcome {\n  let s = \"it's\" // don't\n  proc.run(1)\n}"
+        let tokens = Syntax.highlight(program, language: "gleam")
+        XCTAssertEqual(tokens.map(\.text).joined(), program)
+        XCTAssertTrue(tokens.contains(.init(kind: .keyword, text: "pub")))
+        XCTAssertTrue(tokens.contains(.init(kind: .function, text: "main")))
+        XCTAssertTrue(tokens.contains(.init(kind: .function, text: "run")))
+        XCTAssertTrue(tokens.contains(.init(kind: .type, text: "Outcome")))
+        XCTAssertTrue(tokens.contains(.init(kind: .number, text: "1")))
+
+        // An apostrophe inside a Gleam string or comment opens nothing.
+        XCTAssertTrue(tokens.contains(.init(kind: .string, text: "\"it's\"")))
+        XCTAssertTrue(tokens.contains(.init(kind: .comment, text: "// don't")))
     }
 
     func testLanguageFromPath() {

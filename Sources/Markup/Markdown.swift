@@ -35,6 +35,21 @@ public enum MarkdownBlock: Sendable, Equatable {
 /// code through to the end, and a half-written table reads as text until its
 /// delimiter row arrives, so a reply never jumps between layouts more than once.
 public enum Markdown {
+    /// The titles of a reasoning summary, in order.
+    ///
+    /// Providers that return summaries of their reasoning rather than the reasoning
+    /// itself open each section with a line that is bold and nothing else, such as
+    /// `**Analyzing CI Activity**`. Those lines are the summary's own headings, so a
+    /// collapsed row can show them in place of a fragment of the first sentence.
+    public static func sectionTitles(in source: String) -> [String] {
+        source.split(separator: "\n").compactMap { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard trimmed.count > 4, trimmed.hasPrefix("**"), trimmed.hasSuffix("**") else { return nil }
+            let title = trimmed.dropFirst(2).dropLast(2).trimmingCharacters(in: .whitespaces)
+            return title.isEmpty || title.contains("**") ? nil : title
+        }
+    }
+
     public static func parse(_ source: String) -> [MarkdownBlock] {
         let lines = source.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var blocks: [MarkdownBlock] = []

@@ -22,6 +22,7 @@ public enum Syntax {
         var lineComments: [String] = []
         var blockComment: (open: String, close: String)?
         var capitalizedAreTypes = true
+        var quotes: Set<Character> = ["\"", "'", "`"]
     }
 
     private static func language(_ name: String?) -> Language {
@@ -33,7 +34,8 @@ public enum Syntax {
         case "go", "golang":
             return Language(keywords: words("break case chan const continue default defer else fallthrough false for func go goto if import interface map nil package range return select struct switch true type var"), lineComments: ["//"], blockComment: cStyle)
         case "gleam":
-            return Language(keywords: words("as assert case const external fn if import let opaque panic pub todo type use True False Nil Ok Error"), lineComments: ["//"], capitalizedAreTypes: true)
+            // Gleam has no character literals, so only a double quote opens a string.
+            return Language(keywords: words("as assert case const echo external fn if import let opaque panic pub todo type use True False Nil Ok Error"), lineComments: ["//"], capitalizedAreTypes: true, quotes: ["\""])
         case "rust", "rs":
             return Language(keywords: words("as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self Self static struct super trait true type unsafe use where while"), lineComments: ["//"], blockComment: cStyle)
         case "python", "py":
@@ -100,7 +102,7 @@ public enum Syntax {
                 continue
             }
 
-            if character == "\"" || character == "'" || character == "`" {
+            if language.quotes.contains(character) {
                 // An apostrophe inside a word is not a string.
                 if character == "'", index > 0, characters[index - 1].isLetter {
                     plain.append(character)
