@@ -20,5 +20,7 @@ cp "$binary" "$app/Contents/MacOS/Loom"
 mkdir -p "$app/Contents/Resources"
 cp "$root/App/Info.plist" "$app/Contents/Info.plist"
 cp "$root/App/Loom.icns" "$app/Contents/Resources/Loom.icns"
+# The diagram renderer, served to its web view from the bundle (App/Resources/Diagram).
+cp -R "$root/App/Resources/Diagram" "$app/Contents/Resources/Diagram"
 codesign --force --options runtime --entitlements "$root/App/Loom.entitlements" --sign "$identity" "$app"
 echo "$app"

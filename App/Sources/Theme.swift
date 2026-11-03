@@ -310,7 +310,12 @@ struct MarkdownView: View {
                 Text(Self.inline(text)).font(Theme.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
         case .code(let language, let text, let closed):
-            CodeBlockView(code: text, language: language, isStreaming: isStreaming && !closed)
+            // A diagram is drawn once its fence closes; while it streams it is code.
+            if language?.lowercased() == "mermaid", closed {
+                DiagramBlock(source: text)
+            } else {
+                CodeBlockView(code: text, language: language, isStreaming: isStreaming && !closed)
+            }
         case .table(let header, let rows):
             MarkdownTable(header: header, rows: rows)
         case .rule:
