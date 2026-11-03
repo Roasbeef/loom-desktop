@@ -503,4 +503,3 @@ Each run takes a slot from `LOOM_UITEST_SLOT`, which offsets the ports, paths an
 - A window other than the main one has no Session menu of its own: `AppModel.currentSession` follows `destination`.
 - The document does not cover view layout, which `design.md` describes as rules, or the individual sheets beyond naming them.
 - The frame and CPU figures in `design.md` depend on the machine they were taken on.
-- The screenshots in `docs/images` were not regenerated for this commit and may not match the current interface.

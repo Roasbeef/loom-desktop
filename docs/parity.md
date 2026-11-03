@@ -184,13 +184,13 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | ST-01 | Strand cards with name and one status line | view/strip.gleam:272; sv:strand_card.gleam:50 | metadata | yes (StrandsPane.swift, StrandLine.swift) | 1 |
 | ST-02 | Focus a strand from its card | view/strip.gleam:457 | local | yes (StrandsPane.swift card focus) | 1 |
 | ST-03 | Cache ring or avatar on a card | view/strip.gleam:491 | `usage` | no (the card has no cache ring; the outlook is shown for the addressed strand only, see CO-11) | 3 |
-| ST-04 | Needs-approval badge on the Strands tab | wc:shell_rule.gleam:647 | metadata | code (SessionInspector tab title carries the count; scenario written, needs an unlocked screen) | 2 |
+| ST-04 | Needs-approval badge on the Strands tab | wc:shell_rule.gleam:647 | metadata | yes (SessionInspector tab title carries the count) | 2 |
 | ST-05 | Settled strands in a closed group, how each ended | view/strip.gleam:350 | metadata | yes (StrandsPane.swift Settled group; main is never settled) | 2 |
 | ST-06 | Strand detail: task, model, context, cache, running, recent tools | view/strand_detail.gleam:86 | metadata | yes (StrandsPane.swift StrandDetail: task, model, context, running, recent tools; no cache figure) | 2 |
-| ST-07 | Breadcrumb "All strands", with Esc | view/crumb.gleam:61 | local | code (StrandsPane All Strands button and Escape; scenario written, needs an unlocked screen) | 2 |
+| ST-07 | Breadcrumb "All strands", with Esc | view/crumb.gleam:61 | local | yes (StrandsPane All Strands button and Escape) | 2 |
 | ST-08 | Remote child card with orchestrator and seen age | view/strip.gleam:400 | `remote_children` | code (SessionScreen.swift RemoteChildRow; needs a second orchestrator) | 3 |
 | ST-09 | Peek at a remote child's transcript | view/peek.gleam:49 | `child_history` | code (ChildPeekSheet requests the first page only; needs a second orchestrator) | 3 |
-| ST-10 | Model on a card when it differs from main | view/strip.gleam:410 | metadata | code (the card's accessibility value names a model that differs from main's; scenario written, needs an unlocked screen) | 3 |
+| ST-10 | Model on a card when it differs from main | view/strip.gleam:410 | metadata | yes (the card's accessibility value names a model that differs from main's) | 3 |
 | ST-11 | Todo board in the dock | view/todo_panel.gleam:153 | `notes` seed, `entry` | yes (TodoDock.swift, TodoBoard.swift) | 1 |
 | ST-12 | Reviewer band | view/todo_panel.gleam:82; sv:reviewer_status.gleam:225 | metadata | no (no reviewer band; the advisor's reviews are readable on its strand) | 3 |
 | ST-13 | Advisor's pending nudges | view/nudges.gleam:66 | `advisor_pending`† | no (the pending nudge queue, advisor_pending, is not read; a delivered nudge draws as TR-31) | 2 |
@@ -433,7 +433,7 @@ The web page has no schedule surface beyond these two commands.
 | KB-04 | Command or Control Alt B toggles the panel | wc:shell_rule.gleam:949 | local | yes (⌥⌘I, LoomApp.swift:78) | 2 |
 | KB-05 | Escape returns to main | wc:shell_rule.gleam:940 | local | yes (Escape in the composer returns to the main strand) | 2 |
 | KB-06 | Composer list: Up, Down, Tab, Enter, Escape | wc:composer_rule.gleam:361 | local | yes (Up, Down, Tab, Return and Escape drive the command list) | 2 |
-| KB-07 | Escape in a note goes back | wc:notes.gleam:114 | local | code (NotesPane onExitCommand; scenario written, needs an unlocked screen) | 3 |
+| KB-07 | Escape in a note goes back | wc:notes.gleam:114 | local | yes (NotesPane cancel shortcut) | 3 |
 
 ## Not applicable natively
 

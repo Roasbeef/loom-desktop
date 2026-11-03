@@ -674,6 +674,10 @@ def approval_shows_what_is_asked(c):
     c.app.see(r"Write to /Users/Shared")
     c.app.see(r"fs_write")
     c.app.see(r"sample of the call")
+    # Pressing works on a control the window has cut off, so check each size for a person's sake.
+    for width, height in ((1400, 900), (1024, 640), (880, 560)):
+        c.app.cmd(f"resize {width} {height}")
+        wait_for(lambda: c.app.fully_on_screen("Deny") and c.app.fully_on_screen("Allow"), 5, f"the answers on screen at {width}x{height}")
 
 
 @scenario()
@@ -759,7 +763,7 @@ def run_session(c, title, prompt, wait="scripted"):
 def bar_figures_and_tabs(c):
     """The composer shows the connection and an estimated cost, and the inspector has six tabs."""
     run_session(c, "Figures", "check", "scripted")
-    c.app.see(r"Connected")
+    c.app.not_see(r"Disconnected")
     wait_for(lambda: c.app.session().get("context", "").startswith("ctx ~"), 20, "the context figure")
     # The fake model reports tokens and the cluster prices them, so the bar says
     # how much, as an estimate and not as a bill.

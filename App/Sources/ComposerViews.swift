@@ -101,12 +101,9 @@ struct Composer: View {
                     if let tokens = controller.totalTokens, tokens > 0 {
                         Text("\(tokens.formatted(.number.notation(.compactName))) tokens")
                     }
-                    if let cost = controller.totalCost, cost > 0 {
-                        Text(cost, format: .currency(code: "USD").precision(.fractionLength(2)))
-                    }
                     ComposerFigures(controller: controller)
                     if let who = controller.who {
-                        Text(who).accessibilityLabel("Acting as").accessibilityValue(who)
+                        Text(who).layoutPriority(-1).accessibilityLabel("Acting as").accessibilityValue(who)
                     }
                     if controller.peers.count > 1 {
                         Label("\(controller.peers.count)", systemImage: "person.2")

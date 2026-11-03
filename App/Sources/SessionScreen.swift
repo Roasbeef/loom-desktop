@@ -463,6 +463,7 @@ private struct ComposerStack: View {
 /// escaped, the screen says it is a sample of a larger action, and the requested
 /// authority is listed literally.
 struct ApprovalCard: View {
+    @State private var cardWidth: CGFloat = 1000
     let record: Escalation
     let controller: SessionController
     @State private var isArmed = false
@@ -529,23 +530,18 @@ struct ApprovalCard: View {
             .background(Color(nsColor: .textBackgroundColor).opacity(0.6), in: .rect(cornerRadius: Theme.radiusInner))
             .overlay(RoundedRectangle(cornerRadius: Theme.radiusInner).strokeBorder(Theme.hairline, lineWidth: 0.5))
 
-            // A narrow column cannot hold the sentence beside the buttons without
-            // crushing both, and the buttons are the one thing that must stay whole.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) {
-                    sampleNote.fixedSize()
-                    Spacer(minLength: 8)
-                    answers
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    sampleNote.fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        Spacer(minLength: 0)
-                        answers
-                    }
-                }
+            // The buttons keep their size, since they are the one thing that must stay
+            // whole, and a column too narrow for the sentence beside them stacks the two.
+            // This reads the width rather than measuring both layouts, because a card
+            // that measures itself in the composer's bar pushes the window's content up.
+            let layout = cardWidth < 460 ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 8)) : AnyLayout(HStackLayout(spacing: 8))
+            layout {
+                sampleNote
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 8) { answers }
             }
         }
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { cardWidth = $0 }
         // A card that appears under a person's hands must not take the Return or
         // click they meant for something else, so its buttons wait 600 ms.
         .task(id: record.id) {

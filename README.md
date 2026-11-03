@@ -30,7 +30,7 @@ It is an early exploration, and it does not match the web UI yet. [docs/parity.m
 | `partial` | 15 | Part of it exists. |
 | `no` | 22 | Absent. Some are deliberate differences. |
 
-Of the 215 `yes` rows, 44 are covered only by scenarios that need an unlocked screen. On a locked screen those scenarios report `blocked`, so the rows rest on a run made with the screen unlocked. Twelve of the rows below `yes` need a second orchestrator, and the static cluster the scenarios use has one, so those cannot be proven there. The screenshots above were taken earlier and may differ from the current interface.
+The last run with the screen unlocked passed 119 of 120 scenarios. `older_turns_page_in` fails intermittently on its last step, which looks for the first line of the conversation after a programmatic scroll. On a locked screen 22 scenarios report `blocked`, so the rows they alone cover rest on a run made with the screen unlocked.
 
 ## Run it
 

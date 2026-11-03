@@ -76,3 +76,6 @@ Then change the row in `docs/parity.md` to `yes`. Every scenario starts with all
 - Windows are captured without being frontmost, so controls render in their inactive state. `LOOM_FORCE_ACTIVE=1` approximates active controls. Only `open -b com.roasbeef.loom-desktop` gives the true state, and that takes focus.
 - A scripted model cannot show how a real model behaves over a long session.
 - The checks read the accessibility tree in process, which is not the same as listening to VoiceOver.
+- `older_turns_page_in` fails intermittently on its last step. A programmatic scroll does not always stay at the top, because the transcript's scroll position is anchored to the bottom, and synthetic wheel events sent inside the process did not move it at all. Whether a real trackpad reaches the first line has not been checked.
+- A press works on a control the window has cut off, so a passing scenario says nothing about whether a person can reach it. `fully_on_screen` checks the frame, and the approval scenario uses it at three window sizes.
+- `tests/ui/readme_shots.py` retakes `docs/images`. Look at the images: the suite does not read them.

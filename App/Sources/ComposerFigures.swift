@@ -26,8 +26,9 @@ struct ComposerFigures: View {
                 .accessibilityLabel("Estimated cost")
                 .accessibilityValue(cost)
         }
-        Text(controller.isLive ? "Connected" : "Disconnected")
-            .foregroundStyle(controller.isLive ? Color.secondary : Theme.attention)
+        // Being connected is the normal state, so the bar spends words only on losing it.
+        Text(controller.isLive ? "" : "Disconnected")
+            .foregroundStyle(Theme.attention)
             .accessibilityLabel("Connection")
             .accessibilityValue(controller.isLive ? "Connected" : "Disconnected")
             .debouncedTask(id: ContextFigure.Trigger(strand: controller.focusedStrand, isBusy: controller.isBusy, blocks: controller.blocks.count)) {

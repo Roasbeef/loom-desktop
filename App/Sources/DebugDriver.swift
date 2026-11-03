@@ -461,6 +461,10 @@ enum Snapshot {
             "actionError": model.actions.error ?? "",
             "isPaletteOpen": model.isPaletteOpen,
             "showsInspector": model.showsInspector,
+            "windowFrame": NSApp.windows.first { $0.isVisible && $0.frame.width > 400 && $0.canBecomeMain }.map { w in
+                let frame = w.accessibilityFrame()
+                return [frame.origin.x, frame.origin.y, frame.width, frame.height]
+            } ?? [0, 0, 0, 0],
             "appearance": model.appearance.rawValue,
             "effectiveAppearance": NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? "dark" : "light",
             "showsSidebar": model.sidebarVisibility != .detailOnly,
