@@ -106,6 +106,18 @@ LONG = " ".join(
     for i in range(240)
 )
 
+# A report in the shape agents write at the end of a long task: many sections,
+# each with a table, a code block and a list, so it is far taller than a window.
+BIG_REPORT = "\n\n".join(
+    f"## Finding {i}: report-section-{i}\n\n"
+    f"The walk in `cow/walk.go` rehashes every file, which costs **{i * 17} ms** here.\n\n"
+    "| Step | Before | After |\n| --- | --- | --- |\n"
+    + "\n".join(f"| step {k} | {k * 9} ms | {k * 2} ms |" for k in range(6))
+    + "\n\n```go\nfunc scanTree(root string) error {\n\treturn filepath.WalkDir(root, visit)\n}\n```\n\n"
+    + "\n".join(f"- point {k} about the cloned index in finding {i}" for k in range(5))
+    for i in range(24)
+)
+
 
 PROGRAM = """import cap/proc
 import cap/report
@@ -389,6 +401,10 @@ def script(messages):
         yield chunk({"content": "Starting. "})
         time.sleep(30)
         yield chunk({}, "stop")
+        return
+
+    if "bigreport" in prompt:
+        yield from text_stream(BIG_REPORT, delay=0.002)
         return
 
     if "long" in prompt:

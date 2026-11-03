@@ -566,3 +566,22 @@ def escape_in_a_note_goes_back_to_the_list(c):
     c.app.key("escape")
     wait_for(lambda: not any(t == "All Notes" for t in c.app.texts()), 5, "the note to close")
     c.app.see(r"Search notes", 5)
+
+@scenario("TR-37", needs_display=True)
+def the_end_stays_in_view_when_the_width_changes(c):
+    """A reader at the end of a long reply stays there when the inspector opens or closes."""
+    c.app.dispatch("Big words", WORKSPACE)
+    c.app.open_session("Big words")
+    settle(c)
+    c.app.prompt(c.app.session_id("Big words"), "bigreport")
+    c.app.transcript_has("in finding 23", 60)
+    settle(c)
+
+    # Opening the inspector changes every row's height. Before the fix the view kept
+    # its offset and landed mid-report, or over rows it had not built and drew nothing.
+    for toggle in range(4):
+        c.app.menu("Toggle Inspector")
+        time.sleep(1.2)
+        wait_for(lambda: c.app.fully_on_screen("point 4 about the cloned index in finding 23"), 5,
+                 f"the end of the reply on screen after toggle {toggle}")
+

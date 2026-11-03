@@ -191,9 +191,9 @@ class App:
         return json.loads(self.cmd("tree"))
 
     def fully_on_screen(self, name):
-        """Whether a control named `name` lies wholly inside the window."""
+        """Whether an element named `name`, or showing it as its value, lies wholly inside the window."""
         wx, wy, ww, wh = self.snap()["windowFrame"]
-        found = [n["frame"] for n in self.tree() if n["name"] == name]
+        found = [n["frame"] for n in self.tree() if name in (n["name"].strip(), n["value"].strip())]
         return bool(found) and all(
             x >= wx and y >= wy and x + w <= wx + ww and y + h <= wy + wh for x, y, w, h in found
         )
