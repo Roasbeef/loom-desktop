@@ -403,28 +403,67 @@ struct StepRow: View {
 /// record declared is not drawn, and the line says so.
 struct PictureStrip: View {
     let pictures: [ImageBlock]
+    @State private var expanded: ImageBlock?
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             ForEach(pictures) { picture in
                 VStack(alignment: .leading, spacing: 4) {
                     if picture.isDrawable, let image = NSImage(data: picture.data) {
-                        Image(nsImage: image)
-                            .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: 220, maxHeight: 160, alignment: .leading)
-                            .clipShape(.rect(cornerRadius: Theme.radiusInner))
-                            .overlay(RoundedRectangle(cornerRadius: Theme.radiusInner).strokeBorder(Theme.hairline, lineWidth: 0.5))
-                            .accessibilityHidden(true)
+                        Button { expanded = picture } label: {
+                            Image(nsImage: image)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: 220, maxHeight: 160, alignment: .leading)
+                                .clipShape(.rect(cornerRadius: Theme.radiusInner))
+                                .overlay(RoundedRectangle(cornerRadius: Theme.radiusInner).strokeBorder(Theme.hairline, lineWidth: 0.5))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Expand")
+                        .accessibilityLabel("Expand image, \(picture.caption)")
                     }
                     Text(picture.caption)
                         .font(Theme.caption)
                         .foregroundStyle(.secondary)
+                        .accessibilityLabel("Image, \(picture.caption)")
                 }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Image, \(picture.caption)")
+                .accessibilityElement(children: .contain)
             }
         }
+        .sheet(item: $expanded) { ExpandedPicture(picture: $0) }
+    }
+}
+
+/// One picture at the size it was sent, or scaled down to fit the screen.
+/// Escape or Done closes it.
+private struct ExpandedPicture: View {
+    let picture: ImageBlock
+    @Environment(\.dismiss) private var dismiss
+
+    /// The picture's own size, capped so the sheet stays inside a laptop screen.
+    private var size: CGSize {
+        let pixels = picture.pixelSize.map { CGSize(width: $0.width, height: $0.height) } ?? CGSize(width: 800, height: 600)
+        let scale = min(1, 1200 / max(pixels.width, 1), 760 / max(pixels.height, 1))
+        return CGSize(width: max(320, pixels.width * scale), height: max(200, pixels.height * scale))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let image = NSImage(data: picture.data) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: size.width, height: size.height)
+                    .accessibilityLabel("Image, \(picture.caption)")
+            }
+            HStack {
+                Text(picture.caption).font(Theme.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(16)
     }
 }
 
