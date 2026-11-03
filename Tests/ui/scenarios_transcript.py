@@ -502,7 +502,7 @@ def long_reasoning_carries_the_summarizers_label(c):
 # The inspector. These need the inspector's tabs laid out, so they cannot run on a locked screen.
 
 
-@scenario(needs_display=True)
+@scenario(needs_display=True, "ST-04")
 def the_strands_tab_counts_the_approvals_waiting(c):
     """While a strand waits on a person, the Strands tab's title carries the count."""
     pending_approval(c, "Badge count")
@@ -515,7 +515,7 @@ def the_strands_tab_counts_the_approvals_waiting(c):
     c.app.not_see(r"Strands \(\d\)")
 
 
-@scenario(needs_display=True)
+@scenario(needs_display=True, "ST-07")
 def escape_leaves_a_strands_page(c):
     """Escape on a strand's page returns to the list of all strands."""
     c.app.dispatch("Crumb check", WORKSPACE)
@@ -533,7 +533,7 @@ def escape_leaves_a_strands_page(c):
     c.app.see(r"Strand main", 5)
 
 
-@scenario(needs_display=True)
+@scenario(needs_display=True, "ST-10")
 def a_card_names_its_model_where_it_differs_from_main(c):
     """Once main runs another model, a card for a strand on the first model says which."""
     c.app.dispatch("Model on card", WORKSPACE)
@@ -550,7 +550,7 @@ def a_card_names_its_model_where_it_differs_from_main(c):
     c.app.not_see(r"Strand main.*model ")
 
 
-@scenario(needs_display=True)
+@scenario(needs_display=True, "KB-07")
 def escape_in_a_note_goes_back_to_the_list(c):
     """Escape on an open note returns to the list of notes."""
     sid = c.app.dispatch("Note keys todoboard", WORKSPACE)

@@ -25,8 +25,8 @@ It is an early exploration, and it does not match the web UI yet. [docs/parity.m
 
 | Native state | Rows | Meaning |
 | --- | --- | --- |
-| `yes` | 215 | A UI scenario proves it against a real daemon. |
-| `code` | 40 | Implemented, with no scenario yet. |
+| `yes` | 219 | A UI scenario proves it against a real daemon. |
+| `code` | 36 | Implemented, with no scenario yet. |
 | `partial` | 15 | Part of it exists. |
 | `no` | 22 | Absent. Some are deliberate differences. |
 
