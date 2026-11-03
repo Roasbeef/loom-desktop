@@ -27,8 +27,8 @@ It is an early exploration, and it does not match the web UI yet. [docs/parity.m
 | --- | --- | --- |
 | `yes` | 219 | A UI scenario proves it against a real daemon. |
 | `code` | 36 | Implemented, with no scenario yet. |
-| `partial` | 15 | Part of it exists. |
-| `no` | 22 | Absent. Some are deliberate differences. |
+| `partial` | 16 | Part of it exists. |
+| `no` | 21 | Absent. Some are deliberate differences. |
 
 The last run with the screen unlocked passed 119 of 120 scenarios. `older_turns_page_in` fails intermittently on its last step, which looks for the first line of the conversation after a programmatic scroll. On a locked screen 22 scenarios report `blocked`, so the rows they alone cover rest on a run made with the screen unlocked.
 

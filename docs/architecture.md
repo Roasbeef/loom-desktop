@@ -317,6 +317,8 @@ A `code_mode` call draws as a `ProgramCard`. `ProgramCard.read(arguments:result:
 
 An image block in a message or a tool result becomes an `ImageBlock`. The record declares a type and carries base64 bytes, and `ImageBlock.isDrawable` is true only when `ImageAttachment.mimeType(of:)` reads the same type from the bytes. A picture that fails the check is not drawn, and its caption says so instead of giving a size.
 
+A `mermaid` code block draws as a diagram once its fence closes; while it streams it is code. The renderer is the web view's own isolated frame, copied unchanged from Loom into `App/Resources/Diagram` (Loom's protocol-change/091), so a diagram draws and fails the same way in both clients. `DiagramWebView` loads a host page through the private `loom-diagram` scheme, and `DiagramFiles` answers only the five renderer files, each with the web view's content policy and no network. The host holds the renderer in an `allow-scripts` sandbox, accepts a message only from that frame's window, and relays it to Swift. The source goes in as a message with a revision, and only a height (clamped to 120 through 2,000 points) or a failure with the parser's message comes back (`DiagramProtocol.reply`). A failure, or no answer within 10 seconds, shows the message and the source as code. The web view ignores wheel events, so the transcript scrolls under a diagram.
+
 ## Panels and their boards
 
 A panel is a board decoder in `Sources/LoomKit/Panels/` and a view that draws it. Each board is a value built by a total initializer: input that is not a board gives nil, never a partial board. A board comes from one of three places, and the place decides when it is read.
