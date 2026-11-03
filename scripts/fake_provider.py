@@ -119,6 +119,27 @@ BIG_REPORT = "\n\n".join(
 )
 
 
+# One flowchart the renderer draws and one it refuses, so both paths show.
+DIAGRAMS = """The add path, measured:
+
+```mermaid
+flowchart LR
+    A[git worktree add: 16ms] --> B[scanTree: 87ms]
+    B --> C[clonefile: 112ms]
+    C --> D[update-index: 41ms]
+    D --> E[git status rehash: 479ms]
+```
+
+And one that is not valid:
+
+```mermaid
+flowchart LR
+    A --> 
+```
+
+diagram-reply-done"""
+
+
 PROGRAM = """import cap/proc
 import cap/report
 
@@ -401,6 +422,10 @@ def script(messages):
         yield chunk({"content": "Starting. "})
         time.sleep(30)
         yield chunk({}, "stop")
+        return
+
+    if "diagram" in prompt:
+        yield from text_stream(DIAGRAMS)
         return
 
     if "bigreport" in prompt:

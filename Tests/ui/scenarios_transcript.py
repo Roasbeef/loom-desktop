@@ -567,6 +567,7 @@ def escape_in_a_note_goes_back_to_the_list(c):
     wait_for(lambda: not any(t == "All Notes" for t in c.app.texts()), 5, "the note to close")
     c.app.see(r"Search notes", 5)
 
+
 @scenario("TR-37", needs_display=True)
 def the_end_stays_in_view_when_the_width_changes(c):
     """A reader at the end of a long reply stays there when the inspector opens or closes."""
@@ -585,3 +586,20 @@ def the_end_stays_in_view_when_the_width_changes(c):
         wait_for(lambda: c.app.fully_on_screen("point 4 about the cloned index in finding 23"), 5,
                  f"the end of the reply on screen after toggle {toggle}")
 
+
+# TR-08 stays partial until a diagram can be expanded, so this carries no row.
+@scenario()
+def a_mermaid_block_draws_as_a_diagram(c):
+    """A finished mermaid fence becomes a diagram, and one the renderer refuses shows why and its source."""
+    c.app.dispatch("show diagram please", WORKSPACE)
+    c.app.open_session("show diagram")
+    c.app.transcript_has("diagram-reply-done", 40)
+    settle(c)
+
+    # The valid flowchart draws and keeps its source behind a control. The invalid
+    # one names the parser's complaint and falls back to the source as code.
+    c.app.see(r"^Diagram$", 20)
+    c.app.see(r"^The diagram could not be drawn\.$", 20)
+    c.app.see(r"Parse error on line", 5)
+    c.app.press("Show Source")
+    c.app.see(r"^Hide Source$", 5)
