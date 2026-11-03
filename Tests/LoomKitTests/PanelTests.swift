@@ -96,6 +96,27 @@ final class PanelTests: XCTestCase {
         XCTAssertEqual(board.matching("absent").count, 0)
     }
 
+    func testAnObjectNoteReadsAsFields() {
+        let note = NotesBoard.Note(
+            key: "review", seq: 1,
+            text: #"{"scope":"Read-only review","head":"ccf2","steps":["a","b"],"nested":{"x":1},"ok":true}"#,
+            isExcerpt: false
+        )
+        XCTAssertEqual(note.fields?.map(\.key), ["head", "nested", "ok", "scope", "steps"])
+        XCTAssertEqual(note.fields?.first { $0.key == "scope" }?.value, .text("Read-only review"))
+        XCTAssertEqual(note.fields?.first { $0.key == "steps" }?.value, .items(["a", "b"]))
+        XCTAssertEqual(note.fields?.first { $0.key == "ok" }?.value, .text("true"))
+        guard case .structure(let json)? = note.fields?.first(where: { $0.key == "nested" })?.value else {
+            return XCTFail("a nested object keeps its JSON form")
+        }
+        XCTAssertTrue(json.contains("\"x\" : 1"))
+
+        // Plain text, an array at the top, and an excerpt have no fields.
+        XCTAssertNil(NotesBoard.Note(key: "k", seq: 1, text: "## plan\n- one", isExcerpt: false).fields)
+        XCTAssertNil(NotesBoard.Note(key: "k", seq: 1, text: "[1,2]", isExcerpt: false).fields)
+        XCTAssertNil(NotesBoard.Note(key: "k", seq: 1, text: #"{"a":"b"}"#, isExcerpt: true).fields)
+    }
+
     func testForgetBodiesCarryTheSequenceTheListingHad() throws {
         let board = try XCTUnwrap(RememberedBoard(json("""
         {"seq":9,"grants":[{"grant":{"type":"readable_root","path":"/repo"},"provenance":{"by":{"name":"Alice"},"via":{"kind":"login","fingerprint":"9c1e0f2ab3d4e5f6"},"at_ms":1}}],

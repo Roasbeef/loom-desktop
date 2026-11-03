@@ -1,4 +1,5 @@
 import LoomKit
+import Markup
 import SwiftUI
 
 /// The focused strand's notes: the durable, keyed text it keeps for itself.
@@ -96,30 +97,75 @@ struct NotesPane: View {
             HStack {
                 Text(note.key).font(.system(size: 13, weight: .semibold).monospaced())
                 Spacer()
-                if note.isStructured {
-                    Picker("Representation", selection: $showsRaw) {
-                        Text("Readable").tag(false)
-                        Text("Raw").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 150)
-                    .accessibilityLabel("Note representation")
+                // Every note has a readable form now, since plain text is drawn as markdown.
+                Picker("Representation", selection: $showsRaw) {
+                    Text("Readable").tag(false)
+                    Text("Raw").tag(true)
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 150)
+                .accessibilityLabel("Note representation")
             }
             if note.isExcerpt {
                 Quiet("Excerpt only. This bounded snapshot does not contain the rest of the note.")
             }
-            ScrollView(.horizontal) {
-                Text(showsRaw ? note.text : note.readable)
-                    .font(Theme.code)
+            if !showsRaw, let fields = note.fields {
+                NoteFields(fields: fields)
+            } else if !showsRaw, !note.isStructured {
+                // A note of plain text is usually markdown the agent wrote.
+                MarkdownView(source: note.text)
                     .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
                     .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .surface()
+            } else {
+                ScrollView(.horizontal) {
+                    Text(showsRaw ? note.text : note.readable)
+                        .font(Theme.code)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .surface()
             }
-            .surface()
             Quiet("Written at sequence \(note.seq).")
         }
+    }
+}
+
+/// A note that is a JSON object, one labelled entry per key, so sentences wrap
+/// in a narrow pane instead of running off its edge.
+private struct NoteFields: View {
+    let fields: [NotesBoard.Note.Field]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(fields) { field in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(field.key).font(Theme.meta).foregroundStyle(.secondary)
+                    switch field.value {
+                    case .text(let text):
+                        MarkdownView(source: text)
+                    case .items(let items):
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text("•").foregroundStyle(.tertiary)
+                                    Text(MarkdownView.inline(item))
+                                }
+                            }
+                        }
+                    case .structure(let json):
+                        OutputBlock(text: json, tint: .primary, language: "json")
+                    }
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .textSelection(.enabled)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface()
     }
 }

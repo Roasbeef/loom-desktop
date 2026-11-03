@@ -30,6 +30,57 @@ public struct NotesBoard: Sendable, Equatable {
         /// Raw differ.
         public var isStructured: Bool { readable != text }
 
+        /// One entry of a note that is a JSON object, in key order.
+        public struct Field: Sendable, Equatable, Identifiable {
+            public enum Value: Sendable, Equatable {
+                /// A string, number or boolean, drawn as prose that wraps.
+                case text(String)
+                /// An array of scalars, drawn as a list.
+                case items([String])
+                /// Anything nested deeper, drawn as formatted JSON.
+                case structure(String)
+            }
+
+            public let key: String
+            public let value: Value
+            public var id: String { key }
+        }
+
+        /// The note's entries when it is a JSON object, or nil when it is not.
+        ///
+        /// Agents commonly write a note as a flat object of sentences, which reads
+        /// badly as indented JSON in a narrow pane. Laid out as fields, each value
+        /// wraps, and only a value with structure of its own keeps the JSON form.
+        public var fields: [Field]? {
+            guard !isExcerpt, let data = text.data(using: .utf8),
+                  case .object(let object)? = try? JSONDecoder().decode(JSONValue.self, from: data),
+                  !object.isEmpty else { return nil }
+            return object.keys.sorted().map { key in Field(key: key, value: Self.value(object[key] ?? .null)) }
+        }
+
+        private static func value(_ json: JSONValue) -> Field.Value {
+            if let scalar = scalar(json) { return .text(scalar) }
+            if case .array(let elements) = json {
+                let scalars = elements.compactMap(scalar)
+                if scalars.count == elements.count { return .items(scalars) }
+            }
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let pretty = (try? encoder.encode(json)).flatMap { String(data: $0, encoding: .utf8) }
+            return .structure(pretty ?? json.compactText)
+        }
+
+        private static func scalar(_ json: JSONValue) -> String? {
+            switch json {
+            case .string(let value): return value
+            case .int(let value): return String(value)
+            case .double(let value): return String(value)
+            case .bool(let value): return value ? "true" : "false"
+            case .null: return "null"
+            case .array, .object: return nil
+            }
+        }
+
         /// One line of the note for a list row.
         public var summary: String { PanelWords.clip(PanelWords.oneLine(text), 120) }
     }
