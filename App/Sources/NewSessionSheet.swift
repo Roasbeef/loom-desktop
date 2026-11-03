@@ -228,9 +228,12 @@ struct DispatchSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             LabeledContent(placement == .local ? "Folder" : "Workspace") {
                 HStack(spacing: 6) {
+                    // A field holding a long path asks for its whole width, which would push the
+                    // fixed-width sheet out past both edges. It takes the width it is given instead.
                     TextField("Folder", text: $workspace, prompt: Text(placement == .local ? "Search places or type a path" : "Name registered on that machine"))
                         .labelsHidden()
                         .font(.system(size: 12).monospaced())
+                        .frame(minWidth: 120, maxWidth: .infinity)
                         .accessibilityLabel("Folder")
                     if placement == .local, daemon?.isRemote != true {
                         Button("Choose…", action: choose)
@@ -360,8 +363,17 @@ private struct ChoicePicker<Value: Hashable>: View {
     @Binding var selection: Value
     let options: [(title: String, value: Value)]
 
+    /// Segments never shrink below their titles, so long titles such as a machine
+    /// with its platform and state would widen the sheet past its edges. Up to about
+    /// this many characters in all, three segments fit the form's value column.
+    private static var segmentCharacters: Int { 42 }
+
+    private var fitsAsSegments: Bool {
+        options.count <= 3 && options.reduce(0) { $0 + $1.title.count } <= Self.segmentCharacters
+    }
+
     var body: some View {
-        if options.count <= 3 {
+        if fitsAsSegments {
             Picker(title, selection: $selection) {
                 ForEach(options, id: \.title) { Text($0.title).tag($0.value) }
             }
