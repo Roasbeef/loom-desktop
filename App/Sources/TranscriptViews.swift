@@ -305,6 +305,13 @@ struct StepRow: View {
                             }
                             ProgressView().controlSize(.mini)
                         }
+
+                        // The same disclosure mark as a fold and a thought, so a step reads
+                        // as something that opens and, once open, as something to close.
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isOpen ? 90 : 0))
                     }
                     .contentShape(.rect)
                 }
@@ -323,7 +330,12 @@ struct StepRow: View {
                     OutputBlock(text: tail, tint: .secondary)
                 }
                 if isOpen {
-                    detail(parts)
+                    // Indented to the title, past the icon, so the program and its
+                    // result read as belonging to this step and not as the next row.
+                    VStack(alignment: .leading, spacing: 6) {
+                        detail(parts)
+                    }
+                    .padding(.leading, 21)
                 }
             }
         }
@@ -595,12 +607,8 @@ struct ReasoningRow: View {
                 HStack(spacing: 7) {
                     Image(systemName: "brain").foregroundStyle(.tertiary).frame(width: 14)
                     Text("Thought").font(Theme.label).foregroundStyle(.secondary)
-                    if !isOpen {
-                        if let summary {
-                            Text("Summarized: \(summary)").font(Theme.caption).foregroundStyle(.tertiary).lineLimit(2)
-                        } else {
-                            Text(preview).font(Theme.caption).foregroundStyle(.tertiary).lineLimit(1)
-                        }
+                    if !isOpen, summary == nil {
+                        Text(preview).font(Theme.caption).foregroundStyle(.tertiary).lineLimit(1)
                     }
                     Spacer(minLength: 4)
                     Text(figures).font(Theme.meta).foregroundStyle(.tertiary)
@@ -614,6 +622,18 @@ struct ReasoningRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Thought, \(figures)")
             .accessibilityValue((summary.map { "Summarized: \($0). " } ?? "") + (isOpen ? "Expanded" : "Collapsed"))
+
+            // A long block's label gets a line of its own, open or closed, so a reader
+            // skimming the turn reads the summary rather than a cut fragment of it. The
+            // leading word says it is the summarizer's, not the agent's.
+            if let summary {
+                (Text("Summary  ").font(Theme.meta).foregroundStyle(.tertiary)
+                    + Text(MarkdownView.inline(summary)).font(Theme.caption).foregroundStyle(.secondary))
+                    .lineLimit(isOpen ? nil : 3)
+                    .textSelection(.enabled)
+                    .padding(.leading, 21)
+                    .accessibilityHidden(true)
+            }
 
             if isOpen {
                 MarkdownView(source: text)
