@@ -171,6 +171,9 @@ enum StrandName {
 private struct TranscriptView: View {
     let controller: SessionController
     let query: String
+    #if DEBUG
+    @Environment(AppModel.self) private var model
+    #endif
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isAtBottom = true
     @State private var viewport: CGFloat = 0
@@ -196,43 +199,68 @@ private struct TranscriptView: View {
         return controller.blocks.filter { $0.contains(query) }
     }
 
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 18) {
-                if controller.hasOlder, query.isEmpty {
-                    Button(controller.isLoadingOlder ? "Loading…" : "Load Older Turns") {
-                        controller.loadOlder()
-                    }
-                    .buttonStyle(.link)
-                    .frame(maxWidth: .infinity)
+    /// How many of the newest blocks are built eagerly, below the lazy stack.
+    ///
+    /// A lazy stack places rows from estimated heights and corrects them as it
+    /// measures. At the end of the transcript, where a prompt is added and the
+    /// live tail is replaced as a reply settles, that left it holding space it had
+    /// not filled, and the page drew empty until something else moved it. With the
+    /// newest block and the live tail built eagerly the end is always drawn. Only
+    /// one block is, because an eager block is laid out again on every streamed
+    /// token: with three, a long report among them pushed 15% of frames over
+    /// 25 ms while streaming, and with one the rate matches the all-lazy stack.
+    private static let eagerTail = 1
 
-                    // The button is built only once the reader scrolls to it, so
-                    // its appearing is the request, and each page that lands
-                    // changes the first block and asks for the next while it shows.
-                    .task(id: controller.blocks.first?.id) { controller.loadOlder() }
-                } else if controller.isAdopted, query.isEmpty, !controller.blocks.isEmpty {
-                    Text("Beginning of the conversation")
-                        .font(Theme.caption)
-                        .foregroundStyle(.tertiary)
+    var body: some View {
+        let blocks = visibleBlocks
+        let older = blocks.dropLast(Self.eagerTail)
+        let newest = blocks.suffix(Self.eagerTail)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                LazyVStack(alignment: .leading, spacing: 18) {
+                    if controller.hasOlder, query.isEmpty {
+                        Button(controller.isLoadingOlder ? "Loading…" : "Load Older Turns") {
+                            controller.loadOlder()
+                        }
+                        .buttonStyle(.link)
                         .frame(maxWidth: .infinity)
+
+                        // The button is built only once the reader scrolls to it, so
+                        // its appearing is the request, and each page that lands
+                        // changes the first block and asks for the next while it shows.
+                        .task(id: controller.blocks.first?.id) { controller.loadOlder() }
+                    } else if controller.isAdopted, query.isEmpty, !controller.blocks.isEmpty {
+                        Text("Beginning of the conversation")
+                            .font(Theme.caption)
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity)
+                    }
+                    ForEach(older) { block in
+                        BlockView(block: block, controller: controller)
+                            .id(block.id)
+                    }
                 }
-                ForEach(visibleBlocks) { block in
-                    BlockView(block: block, controller: controller)
-                        .id(block.id)
+                .scrollTargetLayout()
+
+                VStack(alignment: .leading, spacing: 18) {
+                    ForEach(newest) { block in
+                        BlockView(block: block, controller: controller)
+                            .id(block.id)
+                    }
+                    if query.isEmpty {
+                        LiveTail(controller: controller)
+                    }
+                    if !query.isEmpty, blocks.isEmpty {
+                        Text("No matches in what is loaded.")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                    }
+                    if !controller.isAdopted {
+                        ProgressView().controlSize(.small).frame(maxWidth: .infinity)
+                    }
                 }
-                if query.isEmpty {
-                    LiveTail(controller: controller)
-                }
-                if !query.isEmpty, visibleBlocks.isEmpty {
-                    Text("No matches in what is loaded.")
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity)
-                }
-                if !controller.isAdopted {
-                    ProgressView().controlSize(.small).frame(maxWidth: .infinity)
-                }
+                .scrollTargetLayout()
             }
-            .scrollTargetLayout()
             .frame(maxWidth: Theme.contentWidth, alignment: .leading)
             .padding(.horizontal, 28)
             .padding(.top, 28)
@@ -266,7 +294,16 @@ private struct TranscriptView: View {
             guard isFollowing else { return }
             Task { @MainActor in position.scrollTo(edge: .bottom) }
         }
-        .onScrollTargetVisibilityChange(idType: String.self) { visibleIDs = $0 }
+        // Any part on screen counts. At the default of half, a reply taller than two
+        // windows would never count as visible, and a width change would lose the
+        // reader's place in it.
+        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.001) { visibleIDs = $0 }
+        #if DEBUG
+        .onChange(of: model.debugScrollToTop) {
+            isFollowing = false
+            position.scrollTo(edge: .top)
+        }
+        #endif
 
         // Opening the inspector or resizing the window changes every row's height
         // at once, and the lazy stack then sits over rows it has not built and draws

@@ -337,6 +337,12 @@ final class AppModel {
     var isDispatching = false
     var isAddingDaemon = false
     var isPaletteOpen = false
+    #if DEBUG
+    /// Bumped by the UI driver to scroll the transcript to its top through SwiftUI,
+    /// as a person scrolling up would, rather than behind its back in AppKit.
+    var debugScrollToTop = 0
+    #endif
+
     /// Whether the inspector column is open, kept across launches with the rest of
     /// the window's layout.
     var showsInspector = UserDefaults.standard.bool(forKey: "showsInspector") {

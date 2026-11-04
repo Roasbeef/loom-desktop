@@ -206,20 +206,11 @@ enum DebugDriver {
             let text = parts.dropFirst(2).joined(separator: " ")
             model.daemon(holding: parts[1])?.attach(parts[1])?.send(text: text)
         case "scrollup":
-            // Scrolls the transcript to its top. It is the tallest view that has more
-            // to scroll vertically, where the widest could be a code block.
-            func scrollViews(_ view: NSView) -> [NSScrollView] {
-                ((view as? NSScrollView).map { [$0] } ?? []) + view.subviews.flatMap(scrollViews)
-            }
-            let tall = window?.contentView.map(scrollViews)?.filter {
-                ($0.documentView?.frame.height ?? 0) > $0.contentView.bounds.height
-            }
-            if let scroll = tall?.max(by: { $0.frame.height < $1.frame.height }), let document = scroll.documentView {
-                // The top is the far end of the document when its view is not flipped.
-                let top = document.isFlipped ? 0 : document.frame.height - scroll.contentView.bounds.height
-                scroll.contentView.scroll(to: NSPoint(x: 0, y: top))
-                scroll.reflectScrolledClipView(scroll.contentView)
-            }
+            // Scrolls the transcript to its top through its own scroll position and
+            // marks the reader as no longer following, which is what a person
+            // scrolling up does. Moving AppKit's clip view directly went behind
+            // SwiftUI's back, and SwiftUI put its own position back on next layout.
+            model.debugScrollToTop += 1
         case "detach" where parts.count > 1:
             // Ends the session's socket so the daemon connection attaches a fresh
             // lane, which opens on the recent window and not on everything held.

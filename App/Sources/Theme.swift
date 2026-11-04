@@ -233,11 +233,10 @@ struct MarkdownView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The blocks with no stack of their own. A reply still streaming can grow
-    /// without bound, so the live tail places these directly in the transcript's
-    /// lazy stack, and only the ones on screen pay for each token. A second lazy
-    /// stack nested inside would leave the bottom-anchored scroll view with no
-    /// height to measure, and it draws nothing.
+    /// The blocks with no stack of their own, so the live tail can place them
+    /// directly in the transcript's stack of newest rows. A lazy stack nested
+    /// inside would leave the bottom-anchored scroll view with no height to
+    /// measure, and it draws nothing.
     @ViewBuilder
     var blocks: some View {
         ForEach(Array(Markdown.parse(source).enumerated()), id: \.offset) { _, block in
