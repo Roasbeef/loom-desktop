@@ -30,7 +30,7 @@ It is an early exploration, and it does not match the web UI yet. [docs/parity.m
 | `partial` | 16 | Part of it exists. |
 | `no` | 21 | Absent. Some are deliberate differences. |
 
-The last run with the screen unlocked passed 119 of 120 scenarios. `older_turns_page_in` fails intermittently on its last step, which looks for the first line of the conversation after a programmatic scroll. On a locked screen 22 scenarios report `blocked`, so the rows they alone cover rest on a run made with the screen unlocked.
+The last full run with the screen unlocked passed 119 of 120 scenarios. The one failure, `older_turns_page_in`, came from how the test driver scrolled; the driver now scrolls through SwiftUI and the scenario passes on its own. On a locked screen 22 scenarios report `blocked`, so the rows they alone cover rest on a run made with the screen unlocked.
 
 ## Run it
 
