@@ -76,23 +76,6 @@ struct MissionControlView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Mission Control")
-        .toolbar {
-            ToolbarItem(placement: .status) {
-                HStack(spacing: 10) {
-                    ForEach(model.daemons) { daemon in
-                        if let status = daemon.status {
-                            HStack(spacing: 6) {
-                                CapacityMeter(used: status.resident, capacity: status.capacity)
-                                Text(model.daemons.count > 1 ? "\(daemon.label) \(status.resident)/\(status.capacity)" : "\(status.resident) of \(status.capacity) slots")
-                                    .font(Theme.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 8)
-            }
-        }
     }
 
     @ViewBuilder

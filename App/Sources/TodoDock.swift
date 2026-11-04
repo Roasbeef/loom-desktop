@@ -10,9 +10,20 @@ import SwiftUI
 /// as tone: a ring is waiting, a filled dot is the active task, a check is
 /// done, a dash is dropped, and a blocked task is amber because it waits on a
 /// person.
+///
+/// It opens while the strand is running and closes to its one line when the run
+/// ends, so an idle session does not give a sixth of its window to a finished
+/// plan. A person's own open or close holds until the next run starts or ends.
 struct TodoDock: View {
     let board: TodoBoard
-    @AppStorage("todoBoardOpen") private var isOpen = false
+    let isBusy: Bool
+    @State private var isOpen: Bool
+
+    init(board: TodoBoard, isBusy: Bool) {
+        self.board = board
+        self.isBusy = isBusy
+        _isOpen = State(initialValue: isBusy)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -34,6 +45,9 @@ struct TodoDock: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Todo board")
             .accessibilityValue("\(board.progress) · \(headline)")
+            .onChange(of: isBusy) {
+                withAnimation(.smooth(duration: 0.18)) { isOpen = isBusy }
+            }
 
             if isOpen {
                 VStack(alignment: .leading, spacing: 9) {
