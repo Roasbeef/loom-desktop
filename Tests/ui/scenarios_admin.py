@@ -101,12 +101,13 @@ def a_machine_filter_keeps_only_that_machines_rows(c):
     machines = wait_for(lambda: (m := {x["name"]: x["count"] for x in sidebar(c)["machines"]}) and "box" in m and m, what="a count for each machine")
     check(len(machines) >= 2, f"machines were {machines}")
     try:
-        c.app.press(f"box {machines['box']}")
+        # The filter is chosen from a menu, which the driver sets directly.
+        c.app.cmd("sidebar machine box")
         wait_for(lambda: sidebar(c)["filter"] == "box", what="the filter")
         ids = [r["id"] for s in sidebar(c)["Project"] for r in s["rows"]]
         check(remote in ids and local not in ids, f"the box filter showed {ids}")
     finally:
-        c.app.press(f"All {sum(machines.values())}")
+        c.app.cmd("sidebar machine")
     wait_for(lambda: sidebar(c)["filter"] == "", what="the filter to clear")
     ids = [r["id"] for s in sidebar(c)["Project"] for r in s["rows"]]
     check(remote in ids and local in ids, "All shows every machine's rows")

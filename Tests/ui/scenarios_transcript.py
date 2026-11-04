@@ -9,7 +9,7 @@ import re
 import time
 
 from loomui import wait_for
-from scenarios import WORKSPACE, check, fold_titles, name_starting, pending_approval, run_command, scenario, settle
+from scenarios import WORKSPACE, open_tab, check, fold_titles, name_starting, pending_approval, run_command, scenario, settle
 
 
 def say(c, text):
@@ -35,10 +35,14 @@ def the_composer_says_whom_it_addresses_and_who_it_is(c):
     c.app.open_session("Addressing please")
     settle(c)
     check(c.app.session()["to"] == "main", c.app.session()["to"])
+
+    # The cluster gives every session an advisor strand, so there are two to
+    # address and the line is drawn. The owner's role is the usual case, so the
+    # footer does not name it.
     c.app.see(r"^To main$")
     who = wait_for(lambda: c.app.session()["who"], 10, "who the window acts as")
     check(who.endswith("· owner"), f"the role should follow the name: {who!r}")
-    c.app.see(r"Acting as.*owner")
+    c.app.not_see(r"Acting as")
     run_command(c, "/fork branch-b")
     name = wait_for(lambda: next((x for x in c.app.session()["strands"] if "branch-b" in x), None), 10, "the forked strand")
     c.app.cmd(f"strand {name}")
@@ -207,12 +211,13 @@ def generation_speed_is_timed_from_the_stream(c):
     """After a reply that took a few seconds, the footer shows its output speed in tokens a second."""
     c.app.dispatch("Speed check slow", WORKSPACE)
     c.app.open_session("Speed check")
-    c.app.see(r"Output speed.*— tok/s", 10)
     c.app.transcript_has("scripted", 60)
     settle(c)
     rate = wait_for(lambda: c.app.session()["outputRate"], 10, "a measured rate")
     check(0 < rate < 1000, f"the scripted reply is 300 tokens over several seconds: {rate}")
-    c.app.see(rf"Output speed.*{rate} tok/s")
+    c.app.press("Context window")
+    c.app.see(rf"Output speed.*{rate} tok/s", 10)
+    c.app.key("escape")
 
 
 @scenario("TR-06", "TR-10")
@@ -292,7 +297,7 @@ def a_subagent_is_started_and_reports(c):
     c.app.open_session("Delegate")
     c.app.transcript_has("The subagent has reported", 60)
     settle(c)
-    c.app.see(r"^Started agent survey-files-\w+: survey files", 5)
+    c.app.see(r"^Started agent survey-files: survey files", 5)
     report = name_starting(c, "Report from survey-files")
     check("completed" in report, report)
     c.app.press(report)
@@ -323,10 +328,10 @@ def command_b_toggles_the_sidebar(c):
     wait_for(lambda: c.app.snap()["showsSidebar"], 5, "the sidebar")
     c.app.key("b", "cmd")
     wait_for(lambda: not c.app.snap()["showsSidebar"], 5, "⌘B to hide the sidebar")
-    wait_for(lambda: not any(t.startswith("Group by") for t in c.app.texts()), 5, "the sidebar to leave the screen")
+    wait_for(lambda: not any(t.startswith("Group and Filter") for t in c.app.texts()), 5, "the sidebar to leave the screen")
     c.app.key("b", "cmd")
     wait_for(lambda: c.app.snap()["showsSidebar"], 5, "⌘B to show the sidebar again")
-    c.app.see(r"Group by", 5)
+    c.app.see(r"Group and Filter", 5)
 
 
 # Images.
@@ -393,14 +398,15 @@ def images_are_drawn_with_their_type_size_and_weight(c):
 
 @scenario("TR-20")
 def a_message_names_its_sender_and_role(c):
-    """A person's message carries the sender's name and the fixed word operator on a line of its own."""
+    """With one person writing, a message names no sender; the name appears once more than one has written."""
     c.app.dispatch("Who said this", WORKSPACE)
     c.app.open_session("Who said this")
     c.app.transcript_has("scripted", 30)
     settle(c)
     senders = c.app.session()["senders"]
     check(len(senders) == 1 and senders[0].startswith("Owner"), senders)
-    c.app.see(rf"^{re.escape(senders[0])} · operator$", 5)
+    c.app.not_see(rf"^{re.escape(senders[0])}$")
+    c.app.not_see(r"· operator$")
 
 
 # Messages from other agents.
@@ -565,7 +571,8 @@ def escape_in_a_note_goes_back_to_the_list(c):
     if not c.app.snap()["showsInspector"]:
         c.app.menu("Toggle Inspector")
         wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
-    c.app.press("Notes")
+    open_tab(c, "Session")
+    c.app.press("Refresh notes")
     c.app.press("Note todo")
     c.app.see(r"All Notes", 5)
     c.app.key("escape")

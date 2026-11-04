@@ -132,7 +132,9 @@ def dispatch_runs_on_this_machine(c):
     # then its workspace and branch. The model it runs on is named in the composer.
     title = window_title(c)
     check("Local hello" in title and "proj" in title, f"the top bar should name the session and its workspace: {title!r}")
-    c.app.see(r"^fake$", 5)
+    c.app.press("Context window")
+    c.app.see(r"^Model: fake$", 5)
+    c.app.key("escape")
 
 
 @scenario("NS-08", "NS-13", "HM-08", "MA-13", "TR-09", "WT-08")
@@ -587,7 +589,9 @@ def a_turn_folds_to_one_line_with_figures(c):
     c.app.see(r"Wrote tour-notes.txt.*4 added")
     c.app.press("Ran echo tour-command-output")
     c.app.see(r"tour-command-output")
-    c.app.see(r"\$ echo tour-command-output")
+
+    # A short one-line command is all there in the step's title, so it is not repeated.
+    c.app.not_see(r"\$ echo tour-command-output")
 
 
 @scenario("TR-03", "TR-04", "TR-18")
@@ -611,19 +615,22 @@ def reasoning_is_live_then_settled(c):
 
 @scenario("TR-17")
 def a_program_draws_as_a_card(c):
-    """A code_mode call opens to its outcome, the calls it made, its program and its result."""
+    """A code_mode step is titled with its outcome and opens to its result, its call and its program."""
     c.app.dispatch("Run a program card", WORKSPACE)
     c.app.open_session("Run a program card")
     c.app.transcript_has("The program has run", 40)
     settle(c)
     c.app.press(fold_titles(c)[0])
-    c.app.press(name_starting(c, "Ran a program"))
+    c.app.press(name_starting(c, "Ran 1 command"))
     c.app.see(r"Program: Ran 1 command")
-    c.app.see(r"^completed$")
+
+    # Plain success has no status word, and one call has no timeline: it is named.
+    c.app.not_see(r"^completed$")
     c.app.see(r"^1 call$")
     c.app.see(r"^proc\.run$")
-    c.app.see(r"Program · \d+ lines")
     c.app.see(r"program-ran")
+    c.app.press(name_starting(c, "Program · "))
+    c.app.see(r"report\.text", 5)
 
 
 @scenario("TR-29")
@@ -769,16 +776,21 @@ def run_session(c, title, prompt, wait="scripted"):
 
 @scenario("PA-01", "PA-07", "PA-08", needs_display=True)
 def bar_figures_and_tabs(c):
-    """The composer shows the connection and an estimated cost, and the inspector has six tabs."""
+    """The composer's context figure opens to the model, tokens and an estimated cost, and the inspector has four tabs."""
     run_session(c, "Figures", "check", "scripted")
     c.app.not_see(r"Disconnected")
     wait_for(lambda: c.app.session().get("context", "").startswith("ctx ~"), 20, "the context figure")
-    # The fake model reports tokens and the cluster prices them, so the bar says
-    # how much, as an estimate and not as a bill.
+
+    # The fake model reports tokens and the cluster prices them, so the figures
+    # behind the context figure say how much, as an estimate and not as a bill.
+    c.app.not_see(r"^Estimated cost")
+    c.app.press("Context window")
     c.app.see(r"Estimated cost.*est \$0\.0", 10)
-    for tab in ("Changes", "Strands", "Session", "Trace", "Notes", "Evolution"):
+    c.app.see(r"^Model: fake$", 5)
+    c.app.key("escape")
+    for tab in ("Changes", "Strands", "Programs", "Session"):
         open_tab(c, tab)
-    open_tab(c, "Trace")
+    open_tab(c, "Programs")
     c.app.see(r"No program has run on this strand", 5)
     open_tab(c, "Session")
     c.app.see(r"Estimated cost", 10)
@@ -928,7 +940,7 @@ def proposals_are_reviewed(c):
 def notes_are_searched_and_opened(c):
     """The Notes tab lists the strand's notes, searches them and shows one readable or raw."""
     run_session(c, "Notes", "todoboard", "first task is finished")
-    open_tab(c, "Notes")
+    open_tab(c, "Session")
     c.app.see(r"Note todo", 10)
     c.app.press("Refresh notes")
     c.app.press("Note todo")
@@ -948,15 +960,19 @@ def remembered_permissions_can_be_forgotten(c):
     wait_for(lambda: not c.app.session()["escalations"], 15, "the approval to clear")
     open_tab(c, "Session")
     # The listing is read when the tab opens, which may be before the daemon has
-    # written the remembered fact, so ask again until it is there.
-    wait_for(lambda: c.app.press("Refresh permissions") and any("Write to /Users/Shared" in t for t in c.app.texts()), 15, "the remembered permission")
+    # written the remembered fact, so ask again until it is there. An empty
+    # listing has no section, so the closing line's refresh reads it.
+    def refreshed():
+        c.app.cmd("press Refresh permissions") == "ok" or c.app.cmd("press Refresh empty sections")
+        return any("Write to /Users/Shared" in t for t in c.app.texts())
+    wait_for(refreshed, 15, "the remembered permission")
     c.app.see(r"Owner", 5)
     label = wait_for(lambda: next((t for t in c.app.texts() if t.startswith("Forget Write to")), None), 10, "a Forget button")
     c.app.press(label)
     c.app.press("Forget")
     # The transcript keeps its record of the approval, so only the listing's own button can say it went.
     wait_for(lambda: not any(t.startswith("Forget Write to") for t in c.app.texts()), 15, "the permission to go")
-    c.app.see(r"Nothing is remembered", 10)
+    c.app.see(r"^No .*remembered permissions", 10)
 
 
 @scenario("SC-01", "SC-02", needs_display=True)
@@ -969,7 +985,7 @@ def schedules_are_listed_and_retired(c):
     c.app.see(r"fired \d", 5)
     c.app.press("Retire schedule heartbeat")
     c.app.press("Retire Schedule")
-    c.app.see(r"Nothing is scheduled", 15)
+    c.app.see(r"^No .*schedules", 15)
 
 
 @scenario("JO-01", "JO-02", needs_display=True)
@@ -987,7 +1003,7 @@ def live_jobs_are_listed(c):
 def side_question_panel(c):
     """A question asked on the side is answered in its own panel, which clears and closes."""
     run_session(c, "Aside", "check", "scripted")
-    c.app.press("Side Question")
+    c.app.menu("Toggle Side Question")
     wait_for(lambda: c.app.session()["side"], 5, "the panel")
     # Focus reaches the field a moment after the panel opens and typed keys sent sooner
     # are lost, so the question is filled by name.
@@ -1054,13 +1070,18 @@ def home_and_sidebar_controls(c):
 
 @scenario("PV-06", "PV-13", needs_display=True)
 def evolution_tab_reads_the_board_and_core(c):
-    """The Evolution tab reads the catalogue again on request, and reads the core's status."""
+    """An empty evolution board draws no section, and the core's status is read from the Session tab."""
     run_session(c, "Evolving", "check", "scripted")
-    open_tab(c, "Evolution")
-    c.app.see(r"No candidates yet", 15)
-    c.app.press("Read Again")
-    c.app.see(r"No candidates yet", 10)
-    c.app.press("Read Core Status")
+    open_tab(c, "Session")
+    c.app.see(r"Daemon core", 15)
+    c.app.not_see(r"^Evolution$")
+    # The disclosure opens with an animation; press it again if the button is not there yet.
+    def opened():
+        if c.app.cmd("press Read Core Status") == "ok":
+            return True
+        c.app.cmd("press Daemon core")
+        return False
+    wait_for(opened, 15, "the core status control")
     c.app.see(r"boundary", 15)
 
 
