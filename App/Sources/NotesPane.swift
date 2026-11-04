@@ -157,7 +157,12 @@ private struct NoteFields: View {
                             }
                         }
                     case .structure(let json):
-                        OutputBlock(text: json, tint: .primary, language: "json")
+                        // Wrapped in place: a scroll view inside the inspector's own
+                        // scroll view centred short values and hid the rest.
+                        Text(json)
+                            .font(Theme.code)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .accessibilityElement(children: .combine)

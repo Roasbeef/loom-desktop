@@ -119,7 +119,7 @@ private struct LiveSession: View {
             .searchable(text: $query, isPresented: $controller.isSearching, placement: .toolbar, prompt: "Find in transcript")
             .inspector(isPresented: $model.showsInspector) {
                 SessionInspector(record: record, controller: controller, placement: placement)
-                    .inspectorColumnWidth(min: 320, ideal: 460, max: 800)
+                    .inspectorColumnWidth(min: 260, ideal: 460, max: 800)
             }
             .sheet(isPresented: Binding(
                 get: { controller.peek != nil },
@@ -864,16 +864,40 @@ private struct SessionInspector: View {
         case notes = "Notes"
         case evolution = "Evolution"
         var id: Self { self }
+
+        /// The symbol drawn when the column is too narrow for titled segments.
+        var symbol: String {
+            switch self {
+            case .changes: return "plusminus"
+            case .agents: return "person.2"
+            case .details: return "info.circle"
+            case .trace: return "curlybraces"
+            case .notes: return "note.text"
+            case .evolution: return "arrow.triangle.branch"
+            }
+        }
     }
 
     @SceneStorage("inspectorTab") private var tab = Tab.changes
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("Inspector", selection: $tab) {
-                ForEach(Tab.allCases) { Text($0 == .agents ? controller.strandsTabTitle : $0.rawValue).tag($0) }
+            // Segments never shrink below their contents, so six titled ones held
+            // the column at about 540 points however narrow a person dragged it.
+            // The tabs are titled segments when they fit the width offered, then
+            // segments of symbols, which keep their titles for VoiceOver and as
+            // tooltips, and a pop-up menu only below that.
+            ViewThatFits(in: .horizontal) {
+                Picker("Inspector", selection: $tab) { tabLabels(.titleOnly) }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                Picker("Inspector", selection: $tab) { tabLabels(.iconOnly) }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                Picker("Inspector", selection: $tab) { tabLabels(.titleOnly) }
+                    .pickerStyle(.menu)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .pickerStyle(.segmented)
             .labelsHidden()
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -892,6 +916,16 @@ private struct SessionInspector: View {
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+    }
+
+    private func tabLabels<S: LabelStyle>(_ style: S) -> some View {
+        ForEach(Tab.allCases) { tab in
+            let title = tab == .agents ? controller.strandsTabTitle : tab.rawValue
+            Label(title, systemImage: tab.symbol)
+                .labelStyle(style)
+                .help(title)
+                .tag(tab)
         }
     }
 }
