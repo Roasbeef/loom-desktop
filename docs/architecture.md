@@ -331,15 +331,15 @@ A panel is a board decoder in `Sources/LoomKit/Panels/` and a view that draws it
 | `GoalBoard` | `goal` snapshot, command `goal_get` | On attach, and on each `goal_changed` push | `GoalDock`, `GoalSection` |
 | `ProposalBoard` | `proposals` snapshot, command `proposals_get` | On attach, and on each `proposals_changed` push | `ProposalCard`, `ProposalsSection` |
 | `ContextBoard` | `context` snapshot | A debounced read when the strand, its busy state or its block count changes | `ContextFigure`, `ContextPanel` |
-| `NotesBoard` | `notes` snapshot | When the Notes tab opens or the strand changes | `NotesPane` |
+| `NotesBoard` | `notes` snapshot | When the Session tab opens or the strand changes, and on its refresh | `NotesPane`, a Session tab section |
 | `JobsBoard` | `live_jobs` snapshot | Every 5 s while the Session tab is open | `JobsSection` |
-| `ScheduleRow`, `RememberedBoard`, `MemoryBoard` | `schedules`, `permissions`, `memory_get` | When the Session tab opens, and on its refresh button | `SessionExtras` sections |
+| `ScheduleRow`, `RememberedBoard`, `MemoryBoard` | `schedules`, `permissions`, `memory_get` | When the Session tab opens, and on its refresh button or the closing line's | `SessionExtras` sections |
 | `SideBoard` | `btw` snapshot | Each second while an answer runs | `SideQuestionPanel` |
-| `EvolutionBoard`, `CoreStatus` | `evolution` command, actions `board` and `core_status` | When the Evolution tab opens, and on each `evolution_changed` push | `EvolutionPane`, which holds the result in its own state |
+| `EvolutionBoard`, `CoreStatus` | `evolution` command, actions `board` and `core_status` | When the Session tab opens, and on each `evolution_changed` push | `EvolutionPane`, which holds the result in its own state; `CoreStatusSection` reads the core |
 
 The first three rows are derived from the chain that `Conversation` already holds, so they cost no command. The rest are observations the daemon computes on demand. A push announces that one changed (`goal_changed`, `proposals_changed`, `evolution_changed`), and `Conversation.apply(push:)` counts each in `signals`. A view that shows the board runs `.task(id: signals[...])`, so the count changing re-reads it. The push carries no board.
 
-`PanelDock` is the strip above the composer: the goal, the first pending proposal, the todo board and the side question. It is a separate view so that a board changing redraws it and not the composer. The inspector holds the rest, as six tabs in `SessionInspector`: Changes, Strands, Session, Trace, Notes and Evolution.
+`PanelDock` is the strip above the composer: the goal, the first pending proposal, the todo board and the side question. It is a separate view so that a board changing redraws it and not the composer. The inspector holds the rest, as four tabs in `SessionInspector`: Changes, Strands, Programs (`TracePane`) and Session. The tabs are titled segments when they fit the column, segments of symbols when they do not, and a pop-up menu below that. On the Session tab, `Collapsing` draws a section that was read and found empty as a zero-height row that keeps reading, and one closing line names the empty sections with a refresh for all of them; a read that failed keeps its section.
 
 A `context` read takes two steps. The reply carries `status: pending`, and a pushed snapshot with the same `request_id` is `ready` or `failed`. `ContextBoard.reading` returns `.pending`, `.ready` or `.failed`. `Conversation.apply(push:)` stores a ready board in `context`, sets `contextNotice` and clears `context` on a failure, and changes nothing on pending. A failure is therefore unavailable, never a zero.
 
@@ -393,7 +393,7 @@ flowchart TB
     rows --> snap["SidebarSnapshot.encode"]
 ```
 
-`SidebarGrouping` has three cases. `status` orders Needs You, Working, Idle and Not Answering by `Mission.liveness`, and `project` and `machine` group the running rows under their workspace name or machine, sorted by title. Rows that are not running leave every grouping and go to `SidebarRows.saved`, which the sidebar folds under a heading. A machine filter keeps only that machine's rows, and the choice persists in the `sidebarMachine` default.
+`SidebarGrouping` has three cases. `status` orders Needs You, Working, Idle and Not Answering by `Mission.liveness`, and `project` and `machine` group the running rows under their workspace name or machine, sorted by title. Rows that are not running leave every grouping and go to `SidebarRows.saved`, which the sidebar folds under a heading. A machine filter keeps only that machine's rows, and the choice persists in the `sidebarMachine` default. Both are set from `SidebarFilterMenu`, a popover behind one button in the sidebar's foot, and an active filter shows above it as a chip that clears it.
 
 `SidebarRows.standing` words a row from its `SessionState`, its `movingTo` and, for a resident session, its `SessionActivity`. The worktree name is read only for a local session, from the `.git` file of its workspace (`WorkspaceGit.pointer`), because only a daemon on this Mac has a workspace this app can read.
 

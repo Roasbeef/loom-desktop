@@ -75,7 +75,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-02 | Streaming answer in a live region | view/live.gleam:187 | `stream_delta` | yes (SessionScreen.swift:563) | 1 |
 | TR-03 | Thinking row before anything streams, with elapsed time | view/live.gleam:174 | `op_transition`, `stream_delta` | yes (WorkingLine reads Thinking from the recorded input time; reasoning_is_live_then_settled) | 1 |
 | TR-04 | Live reasoning row with a preview and expandable text | view/fold_row.gleam:189 | `stream_delta` | yes (LiveReasoning shows the newest line and opens to the text) | 1 |
-| TR-05 | Generation rate, `tok/s` | view/heading.gleam:227 | `usage`, `op_transition` | yes (GenerationRate.swift, ComposerFigures.swift; timed from the first streamed fragment to the usage reading, because the daemon pushes no phase transitions to a session lane) | 2 |
+| TR-05 | Generation rate, `tok/s` | view/heading.gleam:227 | `usage`, `op_transition` | yes (GenerationRate.swift; timed from the first streamed fragment to the usage reading, and read behind the context figure, ContextFigure.swift SessionFigures; generation_speed_is_timed_from_the_stream) | 2 |
 | TR-06 | Markdown answers | markdown_view.gleam:248 | `entry` | yes (Markdown.swift alert and footnote blocks, Theme.swift; a mermaid fence draws as a diagram, see TR-08) | 1 |
 | TR-07 | Code fences with syntax highlighting | code_view.gleam:67 | `entry` | code (Syntax.swift picks a lexical class for each token and Theme.swift colours it, unit tested; a colour is not in the accessibility tree, and a screen capture proves nothing on a locked screen) | 1 |
 | TR-08 | Mermaid diagrams, source disclosure, Copy source, Expand | markdown_view.gleam:248; wc:mermaid.gleam:36 | `entry` | partial (DiagramView.swift draws a closed mermaid fence with the web view's own isolated renderer, with Show Source and Copy code, and a refused diagram shows the parser's message and its source; Expand is unbuilt; a_mermaid_block_draws_as_a_diagram) | 2 |
@@ -90,7 +90,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | TR-17 | Program card for `code_mode`: outcome, chips, calls, result | view/program_card.gleam:89 | `entry` | yes (ProgramCardView; the scripted model now runs a valid program, so the card shows its outcome, status, one proc.run call, the program and the result) | 2 |
 | TR-18 | Settled reasoning: preview, line count, time, body | view/lane.gleam:1400 | `entry` | yes (ReasoningRow: preview, line count, time, body) | 1 |
 | TR-19 | Summarizer's label on long reasoning | view/lane.gleam:1467 | `block_summaries`, `block_summary` | yes (SessionController.askForSummaries reads block_summaries for reasoning over 512 bytes and the label draws as Summarized; the cluster routes the summarize role to the scripted model) | 2 |
-| TR-20 | A person's message with sender name and role | view/lane.gleam:713 | `entry`, `presence` | yes (SessionScreen.swift RowView shows the sender's name and the fixed word operator, as the web page does) | 2 |
+| TR-20 | A person's message with sender name and role | view/lane.gleam:713 | `entry`, `presence` | yes (SessionScreen.swift RowView names the sender once more than one person has written in the session; with one author no name is drawn, and the fixed word operator is dropped; a_message_names_its_sender_and_role) | 2 |
 | TR-21 | Long message shortened with a toggle | view/lane.gleam:1341 | local | no (deliberate difference: the whole message is drawn, so no toggle is needed; a_long_message_is_drawn_whole) | 3 |
 | TR-22 | Memory context as a closed row in the fold | sv:turns.gleam:213 | `entry` | yes (MemoryContext.swift, MemoryRow; the notes index the daemon attaches draws closed inside the turn's fold and opens to its text) | 2 |
 | TR-23 | Spawned line for a sub-agent | view/lane.gleam:780 | `entry` | yes (SpawnedLine; the scripted model starts a subagent with agent_spawn) | 2 |
@@ -128,7 +128,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | CO-07 | Addressed strand shown above the editor | operator_page.gleam:1066 | local | yes (ComposerViews.swift To line above the editor; the_composer_says_whom_it_addresses_and_who_it_is) | 2 |
 | CO-08 | Busy mark and hint | operator_page.gleam:950 | local | yes (the composer swaps Send for a Stop control while the run is busy; the placeholder hint is not in the accessibility tree) | 1 |
 | CO-09 | Notice line after a command | operator_page.gleam:1164; sv:notice_words.gleam:35 | reply outcome | yes (ComposerModel.Notice; schedules_list_and_retire, a_refused_draft_returns_to_the_editor) | 2 |
-| CO-10 | Who the page acts as, `Owner · operator` | operator_page.gleam:1093 | `snapshot_begin` | yes (ComposerFigures.swift SessionController.who, from the attachment list and the role) | 3 |
+| CO-10 | Who the page acts as, `Owner · operator` | operator_page.gleam:1093 | `snapshot_begin` | yes (ComposerFigures.swift SessionController.who, shown only when the role is not owner; the_composer_says_whom_it_addresses_and_who_it_is) | 3 |
 | CO-11 | Cache outlook of the addressed strand | operator_page.gleam:1108 | `usage` | yes (CacheWatch.swift, ComposerFigures.swift CacheOutlookFigure; the label counts idle time only, because the OpenAI dialect never reports a one-hour write and the web page's countdown needs one) | 2 |
 | CO-12 | Sent draft as a pending line until taken | wc:pending_rule.gleam:126 | local | yes (DraftLedger; a pending line shows until the daemon takes the draft, a_refused_draft_returns_to_the_editor) | 2 |
 | CO-13 | Refused draft restored to the editor | wc:pending_rule.gleam:148 | error reply | yes (a refused draft returns to the editor with the daemon's words) | 2 |
@@ -218,14 +218,14 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 | PV-03 | Approve a proposal, after a question | view/proposals.gleam:311 | `proposal_decide` | yes (ProposalsPanel.swift, asks first) | 2 |
 | PV-04 | Reject a proposal | view/proposals.gleam:279 | `proposal_decide` | yes (ProposalsPanel.swift) | 2 |
 | PV-05 | Count of proposals on the Session tab | wc:shell.gleam:263 | `proposals_changed` | yes (ProposalsPanel.swift section count) | 3 |
-| PV-06 | Evolution tab, Read again | view/evolution.gleam:150 | `evolution` `board`; `evolution_changed` | yes (EvolutionPane.swift Read Again) | 3 |
+| PV-06 | Evolution tab, Read again | view/evolution.gleam:150 | `evolution` `board`; `evolution_changed` | code (EvolutionPane.swift Read Again, in the Session tab's Evolution section, which is drawn only when the board has candidates, publications or history; the scripted cluster produces none) | 3 |
 | PV-07 | Live generation per surface | view/evolution.gleam:230 | `evolution` `board` | code (EvolutionPane.swift Published section; the scripted cluster produces no candidates) | 3 |
 | PV-08 | Candidates with description, facts, evidence and approval | view/evolution.gleam:344 | `evolution` `board` | code (EvolutionPane.swift candidate cards; the scripted cluster produces no candidates) | 3 |
 | PV-09 | Approve or revoke, after a question | view/evolution.gleam:638 | `evolution` `approve`, `revoke` | code (EvolutionPane.swift Approve and Revoke, each asks first; no candidates to try them on) | 3 |
 | PV-10 | Select a candidate, with a staging line | view/evolution.gleam:551 | `evolution` `select`, `status` | no (needs a candidate to select, and the scripted cluster cannot produce one; the arguments of `select` and `status` are not in the protocol doc) | 3 |
 | PV-11 | Roll back, with a reason | view/evolution.gleam:759 | `evolution` `rollback` | no (same limit as PV-10: no candidate to roll back, and `rollback` is not specified in the protocol doc) | 3 |
 | PV-12 | History section | view/evolution.gleam:844 | `evolution` `board` | code (EvolutionPane.swift History section; no decisions to list) | 3 |
-| PV-13 | Read core status | view/evolution.gleam:940 | `evolution` `core_status` | yes (EvolutionPane.swift Read Core Status) | 3 |
+| PV-13 | Read core status | view/evolution.gleam:940 | `evolution` `core_status` | yes (CoreStatusSection at the end of the Session tab, behind Daemon core; evolution_tab_reads_the_board_and_core) | 3 |
 | PV-14 | Evolution count on its tab | wc:shell_rule.gleam:472 | `evolution` `board` | no (the count is drawn in the pane header only; a count on the tab needs the board read before the tab opens, and no candidate exists in the cluster to show one) | 3 |
 
 ## Memory
@@ -238,7 +238,7 @@ This inventory lists what a person can do or see in Loom's web UI and says what 
 
 | ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
 |---|---|---|---|---|---|
-| NO-01 | Notes tab for the focused strand | view/notes.gleam:45 | `notes` | yes (NotesPane.swift) | 2 |
+| NO-01 | Notes tab for the focused strand | view/notes.gleam:45 | `notes` | yes (NotesPane.swift, a section of the Session tab) | 2 |
 | NO-02 | Refresh | view/notes.gleam:60 | `notes` | yes (NotesPane.swift) | 3 |
 | NO-03 | Search keys and values | view/notes.gleam:78 | local | code (NotesPane.swift filters by the search text; the scenario shows the field but never types into it) | 2 |
 | NO-04 | Open a note, go back | view/notes.gleam:157; view/notes.gleam:220 | local | yes (NotesPane.swift) | 2 |
@@ -294,7 +294,7 @@ The web page has no schedule surface beyond these two commands.
 | WT-07 | Edit board from this session's edits, as a fallback | view/changes.gleam:178; sv:changes_view.gleam:217 | `entry` | no (the Changes tab shows the failure with no board of this session's edits as a fallback) | 2 |
 | WT-08 | Edit diffs in a step | view/diff.gleam:52 | `entry` | yes (TranscriptViews.swift: an opened write shows its lines as a patch, a plus mark for each line added) | 1 |
 | WT-09 | Read refused or failed, one sentence | view/changes.gleam:240 | `worktree_diff` | code (the Changes tab draws the daemon's message for a failed read; a scenario on a folder that is not a repository could not open the inspector and was not kept, so the row is unproven) | 3 |
-| WT-10 | Trace tab: programs, state, result, calls, budget | view/trace.gleam:62; view/trace.gleam:96 | `entry` | code (TracePane.swift, TraceBoard.swift; the test cluster has no code-mode toolchain, so only the empty state is driven) | 2 |
+| WT-10 | Trace tab: programs, state, result, calls, budget | view/trace.gleam:62; view/trace.gleam:96 | `entry` | code (TracePane.swift, TraceBoard.swift, on the Programs tab; the test cluster has no code-mode toolchain, so only the empty state is shown) | 2 |
 
 ## Permissions
 
@@ -416,7 +416,7 @@ The web page has no schedule surface beyond these two commands.
 | PA-05 | Top bar location: workspace and name | view/heading.gleam:75 | `sessions.list` | yes (SessionScreen.swift:114) | 1 |
 | PA-06 | Main strand's model in the bar | view/heading.gleam:254 | metadata | yes (SessionScreen.swift:700, in the composer) | 1 |
 | PA-07 | Connection pill: connected or disconnected | view/heading.gleam:139 | local | yes (ComposerFigures.swift) | 2 |
-| PA-08 | Estimated cost in the bar and Session tab | view/heading.gleam:182; view/session_tab.gleam:175 | `usage` | yes (ComposerFigures.swift, UsageWords.swift) | 1 |
+| PA-08 | Estimated cost in the bar and Session tab | view/heading.gleam:182; view/session_tab.gleam:175 | `usage` | yes (ContextFigure.swift SessionFigures behind the context figure, and the Session tab; UsageWords.swift; bar_figures_and_tabs) | 1 |
 | PA-09 | Home button | view/heading.gleam:286 | local | yes (the Mission Control row and menu) | 2 |
 | PA-10 | Session tab: workspace and session name | view/session_tab.gleam:170 | `sessions.list` | code (SessionScreen.swift:1160 draws the workspace and name on the Session tab; that tab is not laid out on a locked screen, and no scenario has read it) | 2 |
 | PA-11 | Page ended notice with fixed advice | view/ended.gleam:27; ending.gleam:170 | close frame | yes (SessionScreen.swift ComposerStack, EndingWords.swift) | 2 |

@@ -1068,7 +1068,7 @@ def home_and_sidebar_controls(c):
     wait_for(lambda: c.app.snap()["destination"] == "mission", 5, "Mission Control")
 
 
-@scenario("PV-06", "PV-13", needs_display=True)
+@scenario("PV-13", needs_display=True)
 def evolution_tab_reads_the_board_and_core(c):
     """An empty evolution board draws no section, and the core's status is read from the Session tab."""
     run_session(c, "Evolving", "check", "scripted")
