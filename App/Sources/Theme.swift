@@ -245,8 +245,23 @@ struct MarkdownView: View {
         }
     }
 
+    /// Remembers the blocks of settled replies. The transcript splits a long reply
+    /// into one row per block and asks for them on every update of the list, so a
+    /// reply that has not changed is parsed once.
+    @MainActor private static var parseCache: [String: [MarkdownBlock]] = [:]
+
+    @MainActor
+    static func parsed(_ source: String) -> [MarkdownBlock] {
+        if let hit = parseCache[source] { return hit }
+        let blocks = Markdown.parse(source)
+        if parseCache.count > 500 { parseCache.removeAll() }
+        parseCache[source] = blocks
+        return blocks
+    }
+
+    /// One block on its own, for a reply the transcript lays out a block per row.
     @ViewBuilder
-    private func view(for block: MarkdownBlock) -> some View {
+    func view(for block: MarkdownBlock) -> some View {
         switch block {
         case .heading(let level, let text):
             Text(Self.inline(text))

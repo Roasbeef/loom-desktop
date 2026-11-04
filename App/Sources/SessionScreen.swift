@@ -173,7 +173,6 @@ private struct TranscriptView: View {
     let query: String
     #if DEBUG
     @Environment(AppModel.self) private var model
-    @State private var debugContentHeight: CGFloat = 0
     #endif
     @State private var position = ScrollPosition(edge: .bottom)
     @State private var isAtBottom = true
@@ -183,9 +182,9 @@ private struct TranscriptView: View {
     // changes it, so content that changes height under the viewport cannot.
     @State private var isFollowing = true
 
-    // The blocks on screen, so a reader partway up can be kept on the same place
-    // when the width changes every row's height.
-    @State private var visibleIDs: [String] = []
+    #if DEBUG
+    @State private var sweep = SweepNotes()
+    #endif
     @State private var width: CGFloat = 0
 
     /// What changes when a reply settles: the live tail ends and its committed
@@ -198,6 +197,40 @@ private struct TranscriptView: View {
     private var visibleBlocks: [TranscriptBlock] {
         guard !query.isEmpty else { return controller.blocks }
         return controller.blocks.filter { $0.contains(query) }
+    }
+
+    /// One row of the lazy stack: a whole block, or one markdown block of a long reply.
+    private enum Item: Identifiable {
+        case block(TranscriptBlock)
+        case answerPart(id: String, part: MarkdownBlock, text: String, isFirst: Bool)
+
+        var id: String {
+            switch self {
+            case .block(let block): return block.id
+            case .answerPart(let id, _, _, _): return id
+            }
+        }
+    }
+
+    /// A reply with more blocks than this is laid out a block per row.
+    ///
+    /// A lazy stack lays out a whole row once any of it is on screen, and estimates
+    /// the rows it has not built. A long report as one row was ten thousand points
+    /// tall: scrolling into it laid out all of it at once, and the stack's estimate
+    /// of the transcript swung between a sixth and three times the real height,
+    /// which left the view over rows it had not drawn. The live tail already lays
+    /// a streaming reply out this way.
+    private static let splitAbove = 6
+
+    private var items: [Item] {
+        visibleBlocks.flatMap { block -> [Item] in
+            guard case .row(let row) = block, case .assistant(let text) = row.kind else { return [.block(block)] }
+            let parts = MarkdownView.parsed(text)
+            guard parts.count > Self.splitAbove else { return [.block(block)] }
+            return parts.enumerated().map { index, part in
+                .answerPart(id: index == 0 ? block.id : "\(block.id)#\(index)", part: part, text: text, isFirst: index == 0)
+            }
+        }
     }
 
     var body: some View {
@@ -225,9 +258,16 @@ private struct TranscriptView: View {
                         .foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity)
                 }
-                ForEach(visibleBlocks) { block in
-                    BlockView(block: block, controller: controller)
-                        .id(block.id)
+                ForEach(items) { item in
+                    Group {
+                        switch item {
+                        case .block(let block):
+                            BlockView(block: block, controller: controller)
+                        case .answerPart(_, let part, let text, let isFirst):
+                            AnswerPart(part: part, text: text, isFirst: isFirst)
+                        }
+                    }
+                    .id(item.id)
                 }
                 if query.isEmpty {
                     LiveTail(controller: controller)
@@ -241,7 +281,6 @@ private struct TranscriptView: View {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity)
                 }
             }
-            .scrollTargetLayout()
             .frame(maxWidth: Theme.contentWidth, alignment: .leading)
             .padding(.horizontal, 28)
             .padding(.top, 28)
@@ -275,17 +314,18 @@ private struct TranscriptView: View {
             guard isFollowing else { return }
             Task { @MainActor in position.scrollTo(edge: .bottom) }
         }
-        // Any part on screen counts. At the default of half, a reply taller than two
-        // windows would never count as visible, and a width change would lose the
-        // reader's place in it.
-        .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.001) { visibleIDs = $0 }
         #if DEBUG
         .onChange(of: model.debugScrollToTop) {
             isFollowing = false
             position.scrollTo(edge: .top)
         }
         .onScrollGeometryChange(for: CGFloat.self) { $0.contentSize.height } action: { _, height in
-            debugContentHeight = height
+            sweep.contentHeight = height
+        }
+        .onScrollGeometryChange(for: String.self) { g in
+            "content=\(Int(g.contentSize.height)) offset=\(Int(g.contentOffset.y)) visible=\(Int(g.visibleRect.minY))..\(Int(g.visibleRect.maxY)) container=\(Int(g.containerSize.height))"
+        } action: { _, text in
+            TranscriptDebug.geometry = text
         }
 
         // A steady scroll from the top to the end at 1,500 points a second, one step
@@ -296,7 +336,7 @@ private struct TranscriptView: View {
             position.scrollTo(edge: .top)
             try? await Task.sleep(for: .milliseconds(500))
             var offset: CGFloat = 0
-            while offset < debugContentHeight, !Task.isCancelled {
+            while offset < sweep.contentHeight, !Task.isCancelled {
                 offset += 1500.0 / 60.0
                 position.scrollTo(y: offset)
                 try? await Task.sleep(for: .milliseconds(16))
@@ -305,21 +345,17 @@ private struct TranscriptView: View {
         #endif
 
         // Opening the inspector or resizing the window changes every row's height
-        // at once, and the lazy stack then sits over rows it has not built and draws
-        // nothing. The reader is put back where they were: at the end when
-        // following, otherwise on the block that was at the top of the view.
+        // at once, so a reader following the end is put back at it.
+        //
+        // A reader partway up keeps the offset. Keeping them on the same row needs
+        // the stack to report which rows are visible (`scrollTargetLayout` with
+        // `onScrollTargetVisibilityChange`), and with that in place a session
+        // switching profile crashed AppKit with a constraint-update loop.
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { next in
             let changed = width != 0 && abs(width - next) > 1
             width = next
-            guard changed else { return }
-            let anchor = visibleIDs.first
-            Task { @MainActor in
-                if !isFollowing, let anchor {
-                    position.scrollTo(id: anchor, anchor: .top)
-                } else {
-                    position.scrollTo(edge: .bottom)
-                }
-            }
+            guard changed, isFollowing else { return }
+            Task { @MainActor in position.scrollTo(edge: .bottom) }
         }
         // Layout geometry excludes the toolbar and composer insets, and it reports at
         // once, before anything has scrolled.
@@ -373,6 +409,37 @@ extension TranscriptBlock {
         case .row(let row): return search(row)
         case .fold(let fold): return fold.rows.contains(where: search)
         }
+    }
+}
+
+#if DEBUG
+/// The content's height, for the debug scroll sweep. A plain class, so writing it
+/// invalidates nothing: as state, every size change re-ran the transcript, which
+/// placed the lazy rows again and changed the size again.
+private final class SweepNotes {
+    var contentHeight: CGFloat = 0
+}
+#endif
+
+/// One markdown block of a long reply, as its own row. The first carries the
+/// reply's copy control; the rest close the stack's spacing to the reply's own.
+private struct AnswerPart: View {
+    let part: MarkdownBlock
+    let text: String
+    let isFirst: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        MarkdownView(source: "").view(for: part)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, isFirst ? 0 : -8)
+            .overlay(alignment: .topTrailing) {
+                if isFirst {
+                    CopyButton(text: text, label: "Copy reply")
+                        .opacity(isHovering ? 1 : 0)
+                }
+            }
+            .onHover { isHovering = $0 }
     }
 }
 
@@ -1005,3 +1072,11 @@ private struct DetailsPane: View {
         }
     }
 }
+
+#if DEBUG
+/// The transcript's last scroll geometry, for the UI driver's snapshot.
+@MainActor
+enum TranscriptDebug {
+    static var geometry = ""
+}
+#endif
