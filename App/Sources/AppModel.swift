@@ -362,7 +362,10 @@ final class AppModel {
     }
 
     /// Whether the sidebar column shows. The toolbar's control and ⌘B change the same value.
-    var sidebarVisibility: NavigationSplitViewVisibility = .automatic
+    ///
+    /// It starts shown. With `.automatic` the system collapsed it in a narrow window,
+    /// and a window that opens with no sidebar and an empty page reads as stuck.
+    var sidebarVisibility: NavigationSplitViewVisibility = .all
 
     /// A name to prefill, when a person follows a session held elsewhere.
     var daemonSuggestion: (name: String, address: String)?
