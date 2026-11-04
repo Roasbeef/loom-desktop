@@ -153,6 +153,17 @@ enum DebugDriver {
             // Presses a control by its accessibility label, through the action a
             // screen reader uses, so it needs neither coordinates nor focus.
             reply = AccessibilityAudit.press(label: rest) ? "ok" : "not-found"
+        case "sidebar" where parts.count > 2:
+            // Sets the sidebar's grouping or machine filter, which a person sets
+            // from a menu the driver cannot open: "sidebar group Project",
+            // "sidebar machine box", or "sidebar machine" alone for every machine.
+            switch parts[1] {
+            case "group": UserDefaults.standard.set(parts[2], forKey: "sidebarGrouping")
+            case "machine": UserDefaults.standard.set(parts.count > 2 ? parts[2] : "", forKey: "sidebarMachine")
+            default: reply = "not-found"
+            }
+        case "sidebar" where parts.count == 2 && parts[1] == "machine":
+            UserDefaults.standard.set("", forKey: "sidebarMachine")
         case "place":
             // Chooses where a new agent's tools run, by the start of the option's
             // title, for when the form draws the choice as a pop-up menu. Its menu

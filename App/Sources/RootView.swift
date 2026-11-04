@@ -167,7 +167,8 @@ private struct SidebarView: View {
                             placement: model.sessions.first { $0.id == row.id }.flatMap { model.placement(of: $0) },
                             ask: model.controller(for: row.id)?.escalations.first?.authorityLines.first,
                             changed: model.daemon(holding: row.id)?.lastChanged[row.id],
-                            isUnseen: model.hasUnseenReply(row.id)
+                            isUnseen: model.hasUnseenReply(row.id),
+                            groupsByStatus: grouping == .status
                         )
                             .tag(Destination.session(row.id))
                             .sessionContextMenu(id: row.id)
@@ -190,12 +191,34 @@ private struct SidebarView: View {
         .listStyle(.sidebar)
         .safeAreaBar(edge: .bottom, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
-                GroupingTabs(options: groupings, selection: $grouping)
-                if model.isMultiMachine, model.machineCounts.count > 1 {
-                    MachineChips(total: model.sessions.count, machines: model.machineCounts, selection: $machineFilter)
+                // An active filter is always on screen, so a shorter list is never
+                // mistaken for fewer sessions.
+                if let filter {
+                    Button {
+                        machineFilter = ""
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text(filter.split(separator: "@").first.map(String.init) ?? filter)
+                            Image(systemName: "xmark").font(.system(size: 8, weight: .semibold))
+                        }
+                        .font(Theme.caption)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(Theme.tintStrong, in: .rect(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Showing \(filter) only. Click to show every machine.")
+                    .accessibilityLabel("Clear machine filter \(filter)")
                 }
                 HStack(alignment: .lastTextBaseline, spacing: 8) {
                     DaemonFooter()
+                    SidebarFilterMenu(
+                        groupings: groupings,
+                        grouping: $grouping,
+                        machines: model.isMultiMachine && model.machineCounts.count > 1 ? model.machineCounts : [],
+                        total: model.sessions.count,
+                        machineFilter: $machineFilter
+                    )
                     Button {
                         model.actions.showsPeople = true
                     } label: {
@@ -281,6 +304,7 @@ private struct SessionRow: View {
     var ask: String?
     var changed: Date?
     var isUnseen = false
+    var groupsByStatus = true
 
     @Environment(AppModel.self) private var model
 
@@ -299,9 +323,21 @@ private struct SessionRow: View {
         return (Markdown.plainPreview(line), false)
     }
 
-    /// The quiet line: where the session stands, how old it is, and the worktree.
+    /// Whether where the session stands is worth a word: always when it is failed,
+    /// moving or needs attention, and otherwise only when the section heading does
+    /// not already say it.
+    private var showsStanding: Bool {
+        isNotable || !groupsByStatus
+    }
+
+    private var isNotable: Bool {
+        row.standing.hasPrefix("moving") || row.standing.hasPrefix("failed") || row.standing == "needs attention"
+    }
+
+    /// The quiet line: the worktree, and where the session stands when that says
+    /// something the heading and the age beside the title do not.
     private var quiet: String {
-        [row.worktree, row.standing, row.created].compactMap { $0 }.joined(separator: " · ")
+        [row.worktree, showsStanding ? row.standing : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
     var body: some View {
@@ -343,12 +379,14 @@ private struct SessionRow: View {
                             .fixedSize()
                     }
                 }
-                Text(quiet)
-                    .font(Theme.caption)
-                    .foregroundStyle(row.standing.hasPrefix("moving") || row.standing.hasPrefix("failed") || row.standing == "needs attention"
-                        ? AnyShapeStyle(row.standing.hasPrefix("failed") ? Theme.failure : Theme.attention)
-                        : AnyShapeStyle(.tertiary))
-                    .lineLimit(1)
+                if !quiet.isEmpty {
+                    Text(quiet)
+                        .font(Theme.caption)
+                        .foregroundStyle(isNotable
+                            ? AnyShapeStyle(row.standing.hasPrefix("failed") ? Theme.failure : Theme.attention)
+                            : AnyShapeStyle(.tertiary))
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 2)
@@ -370,89 +408,41 @@ extension Date {
     }
 }
 
-/// The sidebar's grouping choice, drawn by hand because a system segmented
-/// control takes the accent colour and sizes each segment to its text.
-private struct GroupingTabs: View {
-    let options: [SidebarGrouping]
-    @Binding var selection: SidebarGrouping
+/// How the sidebar groups and which machine it shows, behind one button beside
+/// the daemon line. Both are set rarely, so they cost no rows of their own; an
+/// active machine filter is shown above the button as a removable chip.
+private struct SidebarFilterMenu: View {
+    let groupings: [SidebarGrouping]
+    @Binding var grouping: SidebarGrouping
+    let machines: [(name: String, count: Int)]
+    let total: Int
+    @Binding var machineFilter: String
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(options) { option in
-                let isSelected = option == selection
-                Button {
-                    selection = option
-                } label: {
-                    Text(option.rawValue)
-                        .font(Theme.caption)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 3)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-                .background(isSelected ? Theme.tintStrong : .clear, in: .rect(cornerRadius: 5))
-                .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.hairline)
+        Menu {
+            Picker("Group By", selection: $grouping) {
+                ForEach(groupings) { Text($0.rawValue).tag($0) }
+            }
+            if !machines.isEmpty {
+                Picker("Machine", selection: $machineFilter) {
+                    Text("All Machines (\(total))").tag("")
+                    ForEach(machines, id: \.name) { machine in
+                        Text("\(machine.name.split(separator: "@").first.map(String.init) ?? machine.name) (\(machine.count))")
+                            .tag(machine.name)
                     }
                 }
-                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
-        }
-        .padding(2)
-        .background(Theme.tint, in: .rect(cornerRadius: 7))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Group by")
-    }
-}
-
-/// The filter to one machine. It scrolls because a cluster can have more
-/// machines than the sidebar is wide, and it shows the node name alone because
-/// the host part of `orch0@127.0.0.1` would take the whole row.
-private struct MachineChips: View {
-    let total: Int
-    let machines: [(name: String, count: Int)]
-    @Binding var selection: String
-
-    var body: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 2) {
-                chip(title: "All", count: total, value: "", help: "Every machine")
-                ForEach(machines, id: \.name) { machine in
-                    chip(
-                        title: machine.name.split(separator: "@").first.map(String.init) ?? machine.name,
-                        count: machine.count,
-                        value: machine.name,
-                        help: machine.name
-                    )
-                }
-            }
-        }
-        .scrollIndicators(.never)
-    }
-
-    private func chip(title: String, count: Int, value: String, help: String) -> some View {
-        let isSelected = selection == value
-        return Button {
-            selection = value
         } label: {
-            HStack(spacing: 4) {
-                Text(title).lineLimit(1)
-                Text("\(count)").monospacedDigit().foregroundStyle(.tertiary)
-            }
-            .font(Theme.caption)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
+            Image(systemName: "line.3.horizontal.decrease")
+                .font(Theme.caption)
         }
+        .menuStyle(.button)
+        .menuIndicator(.hidden)
         .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
-        .background(isSelected ? Theme.tintStrong : .clear, in: .rect(cornerRadius: 5))
-        .help(help)
-        .accessibilityLabel(value.isEmpty ? "All \(count)" : "\(value) \(count)")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .foregroundStyle(.secondary)
+        .fixedSize()
+        .help("Group and filter the sessions")
+        .accessibilityLabel("Group and Filter")
     }
 }
 
