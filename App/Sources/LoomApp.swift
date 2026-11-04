@@ -145,6 +145,11 @@ private struct SessionMenuItems: View {
             .keyboardShortcut(".")
         Button("Find in Transcript") { session?.isSearching = true }
             .keyboardShortcut("f")
+
+        // The side question had a button in the composer's bar; it is here, and
+        // `/btw` in the composer asks one directly.
+        Button("Toggle Side Question") { session?.showsSideQuestion.toggle() }
+            .keyboardShortcut("b", modifiers: [.command, .shift])
         Button("Refresh Changes") { session?.requestDiff() }
             .keyboardShortcut("r", modifiers: [.command, .shift])
     }

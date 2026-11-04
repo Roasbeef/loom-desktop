@@ -69,7 +69,7 @@ struct ContextPanel: View {
                 Quiet(compactMessage)
             }
             if let board = controller.context {
-                BoardView(board: board, remote: controller.remoteUsage)
+                BoardView(controller: controller, board: board, remote: controller.remoteUsage)
             } else {
                 Quiet(controller.contextNotice.map { "Context unavailable: \(PanelWords.oneLine($0))" } ?? "Reading the context.")
             }
@@ -101,11 +101,14 @@ struct ContextPanel: View {
 }
 
 private struct BoardView: View {
+    let controller: SessionController
     let board: ContextBoard
     let remote: [RemoteUsage]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
+            SessionFigures(controller: controller)
+            Divider()
             Text(board.headline).font(.system(size: 13, weight: .semibold))
             Quiet(board.basisWords)
             StackedBar(board: board)
@@ -125,9 +128,47 @@ private struct BoardView: View {
     }
 }
 
+/// The session's model, tokens, speed and cost, which the composer's bar used to
+/// carry. They are read here, behind the context figure, so the bar holds one
+/// figure and the input stays the widest thing in the composer.
+private struct SessionFigures: View {
+    let controller: SessionController
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+            if let model = controller.strand?.model {
+                row("Model", model, label: "Model")
+            }
+            if let tokens = controller.totalTokens, tokens > 0 {
+                row("Tokens", "\(tokens.formatted(.number.notation(.compactName))) tokens", label: "Tokens")
+            }
+            if let rate = controller.outputRate {
+                row("Speed", "\(rate) tok/s", label: "Output speed")
+            }
+            let cost = UsageWords.estimate(usage: controller.usage)
+            if !cost.hasSuffix("—") {
+                row("Cost", cost, label: "Estimated cost")
+            }
+        }
+        .font(Theme.caption)
+    }
+
+    private func row(_ name: String, _ value: String, label: String) -> some View {
+        GridRow {
+            Text(name).foregroundStyle(.secondary)
+            Text(value).textSelection(.enabled)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+        .accessibilityValue(value)
+    }
+}
+
 /// One segment per part that holds tokens, each as wide as its share of the
-/// window. The tones differ in lightness only, since colour is reserved for
-/// state; the legend beneath names every segment.
+/// window, and the legend beneath names every segment. The three parts a person
+/// can act on (the system prompt, the tools and the messages) each have a hue;
+/// what is not itemised and the compaction reserve stay grey. Amber and red are
+/// left out, because elsewhere they mean waiting and failed.
 private struct StackedBar: View {
     let board: ContextBoard
 
@@ -152,9 +193,9 @@ private struct StackedBar: View {
 
     static func fill(_ kind: ContextBoard.Part.Kind) -> Color {
         switch kind {
-        case .system: return Color.primary.opacity(0.62)
-        case .tools: return Color.primary.opacity(0.44)
-        case .messages: return Color.primary.opacity(0.3)
+        case .system: return Theme.adaptive(light: 0x2F6FDB, dark: 0x5B9BF7)
+        case .tools: return Theme.adaptive(light: 0x12867A, dark: 0x3CCBB8)
+        case .messages: return Theme.adaptive(light: 0x7A4FD6, dark: 0xA88BF5)
         case .unattributed: return Color.primary.opacity(0.18)
         case .reserve: return Color.primary.opacity(0.09)
         case .free: return Color.clear

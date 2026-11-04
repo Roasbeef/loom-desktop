@@ -37,14 +37,17 @@ struct Composer: View {
                 .scrollIndicators(.hidden)
             }
 
-            // Which strand a message goes to, above the editor and not only in its hint.
-            HStack(spacing: 5) {
-                Text("To").foregroundStyle(.tertiary)
-                Text(StrandName.display(controller.focusedStrand)).foregroundStyle(.secondary)
+            // Which strand a message goes to, above the editor, once there is more
+            // than one to send to. With one, the placeholder already names it.
+            if controller.strands.count > 1 {
+                HStack(spacing: 5) {
+                    Text("To").foregroundStyle(.tertiary)
+                    Text(StrandName.display(controller.focusedStrand)).foregroundStyle(.secondary)
+                }
+                .font(Theme.meta)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("To \(StrandName.display(controller.focusedStrand))")
             }
-            .font(Theme.meta)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("To \(StrandName.display(controller.focusedStrand))")
 
             TextField(placeholder(busy), text: $composer.draft, axis: .vertical)
                 .textFieldStyle(.plain)
@@ -95,14 +98,10 @@ struct Composer: View {
 
             HStack(spacing: 10) {
                 Group {
-                    if let model = controller.strand?.model {
-                        Label(model, systemImage: "cpu")
-                    }
-                    if let tokens = controller.totalTokens, tokens > 0 {
-                        Text("\(tokens.formatted(.number.notation(.compactName))) tokens")
-                    }
                     ComposerFigures(controller: controller)
-                    if let who = controller.who {
+
+                    // The owner is the usual case, so only another role is named.
+                    if controller.role != "owner", let who = controller.who {
                         Text(who).layoutPriority(-1).accessibilityLabel("Acting as").accessibilityValue(who)
                     }
                     if controller.peers.count > 1 {
