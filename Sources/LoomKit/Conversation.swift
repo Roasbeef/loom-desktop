@@ -700,7 +700,7 @@ public struct Conversation: Sendable, Equatable {
             chain.append(entry)
             cursor = entry["parentId"]?.string
         }
-        var rows = Self.rows(ordered: Array(chain.reversed()))
+        var rows = Self.withoutRepeatedMemory(Self.rows(ordered: Array(chain.reversed())))
 
         // `/clear` hides what this client had already drawn. The records stay in
         // the session, so another client and a reopened window still show them.
@@ -723,6 +723,20 @@ public struct Conversation: Sendable, Equatable {
             }
         }
         return rows
+    }
+
+    /// Drops a memory context row whose text is the same as the last one drawn.
+    ///
+    /// The daemon gives every run the same notes index until a note changes, so
+    /// the row stood before every reply. It is drawn the first time and again only
+    /// when what the runs receive changes.
+    static func withoutRepeatedMemory(_ rows: [TranscriptRow]) -> [TranscriptRow] {
+        var last: String?
+        return rows.filter { row in
+            guard case .memory(_, let text) = row.kind else { return true }
+            defer { last = text }
+            return text != last
+        }
     }
 
     /// Draws entries already in order, as a remote child's page delivers them.
@@ -935,10 +949,13 @@ public struct Conversation: Sendable, Equatable {
                     break
                 }
             }
+            // A stop the person asked for is a notice, not a failure. The provider
+            // reports its cancellation as an error message too ("provider request was
+            // cancelled"), which drew a red card for an ordinary stop; that message is
+            // not drawn on an aborted turn. Every other error message still is.
             if message?["stopReason"]?.string == "aborted" {
                 rows.append(.init(id: "\(id)/stopped", kind: .notice(text: "Stopped before the turn finished.")))
-            }
-            if let error = message?["errorMessage"]?.string {
+            } else if let error = message?["errorMessage"]?.string {
                 rows.append(.init(id: "\(id)/error", kind: .failure(text: error)))
             }
 

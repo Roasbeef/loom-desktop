@@ -464,3 +464,39 @@ final class SummaryLabelTests: XCTestCase {
         XCTAssertTrue(state.takeWantedSummaries(in: [thought("e1/0", bytes: 700)]).isEmpty, "a labelled block needs no read")
     }
 }
+
+final class QuietTranscriptTests: XCTestCase {
+    private let memory = "Notes saved in this repository by earlier sessions.\n\n```loom-notes\n- (fact) a\n```"
+
+    private func memoryMessage(_ text: String) -> JSONValue {
+        ["role": "user", "content": [["type": "text", "text": .string(text)]]]
+    }
+
+    func testARepeatedMemoryContextIsDrawnOnce() {
+        let rows = Conversation.withoutRepeatedMemory(Conversation.rows(ordered: [
+            entry("u1", parent: nil, seq: 1, at: 1_000, person("one")),
+            entry("m1", parent: "u1", seq: 2, at: 1_001, memoryMessage(memory)),
+            entry("a1", parent: "m1", seq: 3, at: 2_000, reply("first", input: 10, cacheRead: 0)),
+            entry("u2", parent: "a1", seq: 4, at: 3_000, person("two")),
+            entry("m2", parent: "u2", seq: 5, at: 3_001, memoryMessage(memory)),
+            entry("a2", parent: "m2", seq: 6, at: 4_000, reply("second", input: 10, cacheRead: 0)),
+            entry("m3", parent: "a2", seq: 7, at: 5_001, memoryMessage(memory + "\n- (fact) b")),
+        ]))
+        let memoryRows = rows.filter { if case .memory = $0.kind { return true }; return false }
+        XCTAssertEqual(memoryRows.map(\.id), ["m1", "m3"], "drawn first, and again only when it changes")
+    }
+
+    func testARequestedStopIsANoticeAndAnyOtherErrorIsAFailure() {
+        let stopped: JSONValue = [
+            "role": "assistant", "content": [], "stopReason": "aborted",
+            "errorMessage": "provider request was cancelled (runtime: explicit stop)",
+        ]
+        let failed: JSONValue = ["role": "assistant", "content": [], "stopReason": "error", "errorMessage": "rate limited"]
+        let rows = Conversation.rows(ordered: [
+            entry("s", parent: nil, seq: 1, at: 1_000, stopped),
+            entry("f", parent: "s", seq: 2, at: 2_000, failed),
+        ])
+        XCTAssertEqual(rows.compactMap { if case .notice(let text) = $0.kind { return text }; return nil }, ["Stopped before the turn finished."])
+        XCTAssertEqual(rows.compactMap { if case .failure(let text) = $0.kind { return text }; return nil }, ["rate limited"])
+    }
+}
