@@ -69,30 +69,32 @@ struct ProposalsSection: View {
     let controller: SessionController
 
     var body: some View {
-        PanelSection("Proposals", trailing: {
-            if let board, board.pending > 0 {
-                Text("\(board.pending)").font(Theme.meta).foregroundStyle(Theme.attention)
-                    .accessibilityLabel("\(board.pending) proposals waiting")
-            }
-        }) {
-            if let board {
-                if board.rows.isEmpty {
-                    Quiet("No rules are proposed. A strand suggests one with its propose tool.")
+        Collapsing(isEmpty: board?.rows.isEmpty == true) {
+            PanelSection("Proposals", trailing: {
+                if let board, board.pending > 0 {
+                    Text("\(board.pending)").font(Theme.meta).foregroundStyle(Theme.attention)
+                        .accessibilityLabel("\(board.pending) proposals waiting")
                 }
-                ForEach(board.pendingRows) { ProposalCard(row: $0, controller: controller, compact: false) }
-                if !board.decidedRows.isEmpty {
-                    DisclosureGroup("Decided (\(board.decidedRows.count))") {
-                        ForEach(board.decidedRows) { ProposalCard(row: $0, controller: controller, compact: true) }
+            }) {
+                if let board {
+                    if board.rows.isEmpty {
+                        Quiet("No rules are proposed. A strand suggests one with its propose tool.")
                     }
-                    .font(Theme.label)
+                    ForEach(board.pendingRows) { ProposalCard(row: $0, controller: controller, compact: false) }
+                    if !board.decidedRows.isEmpty {
+                        DisclosureGroup("Decided (\(board.decidedRows.count))") {
+                            ForEach(board.decidedRows) { ProposalCard(row: $0, controller: controller, compact: true) }
+                        }
+                        .font(Theme.label)
+                    }
+                    if board.omitted > 0 {
+                        Quiet("\(board.omitted) older proposals are not shown.")
+                    }
+                } else if let error = controller.readFailures["proposals_get"] {
+                    Quiet("Proposals are not available here: \(error)")
+                } else {
+                    Quiet("Not read yet.")
                 }
-                if board.omitted > 0 {
-                    Quiet("\(board.omitted) older proposals are not shown.")
-                }
-            } else if let error = controller.readFailures["proposals_get"] {
-                Quiet("Proposals are not available here: \(error)")
-            } else {
-                Quiet("Not read yet.")
             }
         }
     }

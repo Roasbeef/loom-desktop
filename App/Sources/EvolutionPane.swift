@@ -1,17 +1,16 @@
 import LoomKit
 import SwiftUI
 
-/// The Evolution tab: candidates a session proposed to extend itself, the
-/// evidence for each, what is published, and the decisions made.
+/// The Session tab's Evolution section: candidates a session proposed to extend
+/// itself, the evidence for each, what is published, and the decisions made.
 ///
-/// The board is read when the tab opens, when the daemon says it changed, and on
-/// Read Again. Approving or revoking a candidate asks first, since an approved
-/// candidate can be selected into the running agent. Reading the core's status
-/// is a separate read, and core upgrades are run from the terminal.
+/// The board is read when the section appears, when the daemon says it changed,
+/// and on Read Again. Approving or revoking a candidate asks first, since an
+/// approved candidate can be selected into the running agent. A board with
+/// nothing on it draws no section; a read that failed keeps it.
 struct EvolutionPane: View {
     let controller: SessionController
     @State private var board: EvolutionBoard?
-    @State private var core: CoreStatus?
     @State private var failure: String?
     @State private var asking: Question?
 
@@ -23,7 +22,27 @@ struct EvolutionPane: View {
         let arguments: [String: JSONValue]
     }
 
+    private var isEmpty: Bool {
+        guard failure == nil, let board else { return false }
+        return board.candidates.isEmpty && board.selections.isEmpty && board.history.isEmpty
+    }
+
     var body: some View {
+        Collapsing(isEmpty: isEmpty) { section }
+            .task(id: controller.signals["evolution_changed"] ?? 0) { await read() }
+            .confirmationDialog(
+                asking?.title ?? "",
+                isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })
+            ) {
+                if let question = asking {
+                    Button(question.confirm, role: question.action == "revoke" ? .destructive : nil) {
+                        Task { await send(question.action, question.arguments) }
+                    }
+                }
+            }
+    }
+
+    private var section: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Evolution").font(.headline)
@@ -63,30 +82,6 @@ struct EvolutionPane: View {
                 }
             } else if failure == nil {
                 Quiet("Reading the evolution board…")
-            }
-            PanelSection("Core") {
-                Quiet("Core upgrades run from the terminal: loom evolution core_upgrade.")
-                Button("Read Core Status") { Task { await readCore() } }.controlSize(.small)
-                if let core {
-                    ForEach(Array(core.rows.enumerated()), id: \.offset) { _, row in
-                        HStack {
-                            Text(row.name).font(Theme.caption).foregroundStyle(.secondary)
-                            Spacer()
-                            Text(row.value).font(Theme.meta).textSelection(.enabled)
-                        }
-                    }
-                }
-            }
-        }
-        .task(id: controller.signals["evolution_changed"] ?? 0) { await read() }
-        .confirmationDialog(
-            asking?.title ?? "",
-            isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })
-        ) {
-            if let question = asking {
-                Button(question.confirm, role: question.action == "revoke" ? .destructive : nil) {
-                    Task { await send(question.action, question.arguments) }
-                }
             }
         }
     }
@@ -144,18 +139,46 @@ struct EvolutionPane: View {
         }
     }
 
-    private func readCore() async {
-        if let reply = try? await controller.exchange("evolution", body: ["action": "core_status", "arguments": .object([:])]) {
-            core = CoreStatus(reply.body["board"])
-        }
-    }
-
     private func send(_ action: String, _ arguments: [String: JSONValue]) async {
         do {
             _ = try await controller.exchange("evolution", body: ["action": .string(action), "arguments": .object(arguments)])
             await read()
         } catch {
             failure = error.localizedDescription
+        }
+    }
+}
+
+/// The daemon core's status, read on request. It describes the daemon rather than
+/// the session, so it sits at the end of the Session tab behind a disclosure, and
+/// core upgrades are run from the terminal.
+struct CoreStatusSection: View {
+    let controller: SessionController
+    @State private var core: CoreStatus?
+
+    var body: some View {
+        DisclosureGroup("Daemon core") {
+            VStack(alignment: .leading, spacing: 4) {
+                Quiet("Core upgrades run from the terminal: loom evolution core_upgrade.")
+                Button("Read Core Status") { Task { await read() } }.controlSize(.small)
+                if let core {
+                    ForEach(Array(core.rows.enumerated()), id: \.offset) { _, row in
+                        HStack {
+                            Text(row.name).font(Theme.caption).foregroundStyle(.secondary)
+                            Spacer()
+                            Text(row.value).font(Theme.meta).textSelection(.enabled)
+                        }
+                    }
+                }
+            }
+            .padding(.top, 4)
+        }
+        .font(Theme.label)
+    }
+
+    private func read() async {
+        if let reply = try? await controller.exchange("evolution", body: ["action": "core_status", "arguments": .object([:])]) {
+            core = CoreStatus(reply.body["board"])
         }
     }
 }

@@ -2,12 +2,17 @@ import LoomKit
 import SwiftUI
 
 /// The Session tab's operating sections: the goal, background jobs, schedules,
-/// remembered permissions, proposals and memory.
+/// remembered permissions, proposals, the strand's notes, evolution and memory.
 ///
 /// Each section reads its own surface when the tab opens, and none draws a
 /// guess. A board that has not been read says "not read yet", a jobs board says
 /// it is as of its last refresh because the daemon observed it then, and a
 /// surface the daemon refuses to this client says why it is empty.
+///
+/// A section that was read and holds nothing draws no heading of its own. It
+/// keeps reading, so it appears when something arrives, and one closing line
+/// names every such section, so an empty one is said to be empty, not hidden.
+/// A read that failed always keeps its section.
 struct SessionExtras: View {
     let controller: SessionController
 
@@ -18,9 +23,57 @@ struct SessionExtras: View {
             SchedulesSection(controller: controller)
             RememberedSection(controller: controller)
             ProposalsSection(board: ProposalBoard(controller.surfaces["proposals"]?["board"]), controller: controller)
+            NotesPane(controller: controller)
+            EvolutionPane(controller: controller)
             MemorySection(controller: controller)
+            if !emptySections.isEmpty {
+                Quiet("No " + ListFormatter.localizedString(byJoining: emptySections).replacingOccurrences(of: " and ", with: " or ") + ".")
+            }
         }
         .task { controller.read("goal_get") }
+    }
+
+    /// The sections read and found empty, in the order they would be drawn.
+    private var emptySections: [String] {
+        var names: [String] = []
+        if Self.jobsAreEmpty(controller) { names.append("live jobs") }
+        if Self.schedulesAreEmpty(controller) { names.append("schedules") }
+        if Self.permissionsAreEmpty(controller) { names.append("remembered permissions") }
+        if Self.proposalsAreEmpty(controller) { names.append("proposals") }
+        return names
+    }
+
+    static func jobsAreEmpty(_ controller: SessionController) -> Bool {
+        guard let board = JobsBoard(controller.surfaces["live_jobs"]?["board"]), board.strand == controller.focusedStrand else { return false }
+        return board.total == 0
+    }
+
+    static func schedulesAreEmpty(_ controller: SessionController) -> Bool {
+        ScheduleRow.list(controller.surfaces["schedules"])?.isEmpty == true
+    }
+
+    static func permissionsAreEmpty(_ controller: SessionController) -> Bool {
+        RememberedBoard(controller.surfaces["permissions"]?["board"])?.isEmpty == true
+    }
+
+    static func proposalsAreEmpty(_ controller: SessionController) -> Bool {
+        ProposalBoard(controller.surfaces["proposals"]?["board"])?.rows.isEmpty == true
+    }
+}
+
+/// A section's content, or a zero-height stand-in when it was read and is empty.
+/// The stand-in is drawn rather than left out, because a task attached to a view
+/// with nothing to draw never runs, and the section must keep reading.
+struct Collapsing<Content: View>: View {
+    let isEmpty: Bool
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        if isEmpty {
+            Color.clear.frame(height: 0).accessibilityHidden(true)
+        } else {
+            content
+        }
     }
 }
 
@@ -36,24 +89,26 @@ private struct JobsSection: View {
     }
 
     var body: some View {
-        PanelSection("Live jobs", trailing: {
-            IconButton(symbol: "arrow.clockwise", label: "Refresh live jobs") { refresh() }
-        }) {
-            if let board {
-                Quiet("\(board.total) job\(board.total == 1 ? "" : "s") · at last refresh")
-                ForEach(board.jobs) { job in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(PanelWords.clip(PanelWords.oneLine(job.command), 90)).font(Theme.code).lineLimit(2)
-                        Text("\(job.state) · started by \(job.startedBy) · age \(PanelWords.age(milliseconds: job.ageMs)) · \(board.deadline(job))")
-                            .font(Theme.caption).foregroundStyle(.secondary)
+        Collapsing(isEmpty: SessionExtras.jobsAreEmpty(controller)) {
+            PanelSection("Live jobs", trailing: {
+                IconButton(symbol: "arrow.clockwise", label: "Refresh live jobs") { refresh() }
+            }) {
+                if let board {
+                    Quiet("\(board.total) job\(board.total == 1 ? "" : "s") · at last refresh")
+                    ForEach(board.jobs) { job in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(PanelWords.clip(PanelWords.oneLine(job.command), 90)).font(Theme.code).lineLimit(2)
+                            Text("\(job.state) · started by \(job.startedBy) · age \(PanelWords.age(milliseconds: job.ageMs)) · \(board.deadline(job))")
+                                .font(Theme.caption).foregroundStyle(.secondary)
+                        }
+                        .accessibilityElement(children: .combine)
                     }
-                    .accessibilityElement(children: .combine)
+                    if board.omitted > 0 { Quiet("\(board.omitted) more are not listed.") }
+                } else if let error = controller.readFailures["live_jobs"] {
+                    Quiet("Jobs are not available here: \(error)")
+                } else {
+                    Quiet("not read yet")
                 }
-                if board.omitted > 0 { Quiet("\(board.omitted) more are not listed.") }
-            } else if let error = controller.readFailures["live_jobs"] {
-                Quiet("Jobs are not available here: \(error)")
-            } else {
-                Quiet("not read yet")
             }
         }
         // The board is an observation, so it is read again every few seconds
@@ -82,36 +137,38 @@ private struct SchedulesSection: View {
     private var rows: [ScheduleRow]? { ScheduleRow.list(controller.surfaces["schedules"]) }
 
     var body: some View {
-        PanelSection("Schedules", trailing: {
-            IconButton(symbol: "arrow.clockwise", label: "Refresh schedules") { controller.read("schedules") }
-        }) {
-            if let rows {
-                if rows.isEmpty { Quiet("Nothing is scheduled.") }
-                ForEach(rows) { row in
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(PanelWords.oneLine(row.name)).font(Theme.label)
-                            Text("→ \(StrandName.display(row.target))").font(Theme.meta).foregroundStyle(.secondary)
-                            Spacer(minLength: 6)
-                            if row.isOperator {
-                                Text("configuration").font(Theme.caption).foregroundStyle(.tertiary)
-                            } else {
-                                Button("Retire") { retiring = row }
-                                    .controlSize(.small)
-                                    .accessibilityLabel("Retire schedule \(row.name)")
+        Collapsing(isEmpty: SessionExtras.schedulesAreEmpty(controller)) {
+            PanelSection("Schedules", trailing: {
+                IconButton(symbol: "arrow.clockwise", label: "Refresh schedules") { controller.read("schedules") }
+            }) {
+                if let rows {
+                    if rows.isEmpty { Quiet("Nothing is scheduled.") }
+                    ForEach(rows) { row in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(PanelWords.oneLine(row.name)).font(Theme.label)
+                                Text("→ \(StrandName.display(row.target))").font(Theme.meta).foregroundStyle(.secondary)
+                                Spacer(minLength: 6)
+                                if row.isOperator {
+                                    Text("configuration").font(Theme.caption).foregroundStyle(.tertiary)
+                                } else {
+                                    Button("Retire") { retiring = row }
+                                        .controlSize(.small)
+                                        .accessibilityLabel("Retire schedule \(row.name)")
+                                }
                             }
+                            Text("\(PanelWords.oneLine(row.when)) · fired \(row.fired)" + (row.wake ? " · may wake" : " · steers only"))
+                                .font(Theme.caption).foregroundStyle(.secondary)
+                            Text(PanelWords.clip(PanelWords.oneLine(row.body), 120))
+                                .font(Theme.caption).foregroundStyle(.tertiary).lineLimit(2)
                         }
-                        Text("\(PanelWords.oneLine(row.when)) · fired \(row.fired)" + (row.wake ? " · may wake" : " · steers only"))
-                            .font(Theme.caption).foregroundStyle(.secondary)
-                        Text(PanelWords.clip(PanelWords.oneLine(row.body), 120))
-                            .font(Theme.caption).foregroundStyle(.tertiary).lineLimit(2)
+                        .accessibilityElement(children: .contain)
                     }
-                    .accessibilityElement(children: .contain)
+                } else if let error = controller.readFailures["schedules"] {
+                    Quiet("Schedules are not available here: \(error)")
+                } else {
+                    Quiet("not read yet")
                 }
-            } else if let error = controller.readFailures["schedules"] {
-                Quiet("Schedules are not available here: \(error)")
-            } else {
-                Quiet("not read yet")
             }
         }
         .task { controller.read("schedules") }
@@ -148,33 +205,35 @@ private struct RememberedSection: View {
     private var board: RememberedBoard? { RememberedBoard(controller.surfaces["permissions"]?["board"]) }
 
     var body: some View {
-        PanelSection("Remembered permissions", trailing: {
-            IconButton(symbol: "arrow.clockwise", label: "Refresh permissions") { controller.read("permissions") }
-        }) {
-            if let board {
-                if board.isEmpty {
-                    Quiet("Nothing is remembered for this session.")
-                } else {
-                    Quiet("Allowed for the rest of this session. Forget one and the agent has to ask again.")
-                }
-                ForEach(board.grants) { grant in
-                    entry(grant.words, provenance: grant.provenance, noun: "this permission",
-                          body: board.forgetBody(grant: grant))
-                }
-                ForEach(board.actions) { action in
-                    entry(action.tool.map { "\($0): \(PanelWords.clip(PanelWords.oneLine(action.preview ?? ""), 60))" } ?? "One exact action",
-                          provenance: action.provenance, noun: "this consent", body: board.forgetBody(action: action))
-                }
-                if board.count > 1 {
-                    Button("Forget All") {
-                        asking = Question(noun: "all \(board.count) permissions", body: board.forgetAllBody)
+        Collapsing(isEmpty: SessionExtras.permissionsAreEmpty(controller)) {
+            PanelSection("Remembered permissions", trailing: {
+                IconButton(symbol: "arrow.clockwise", label: "Refresh permissions") { controller.read("permissions") }
+            }) {
+                if let board {
+                    if board.isEmpty {
+                        Quiet("Nothing is remembered for this session.")
+                    } else {
+                        Quiet("Allowed for the rest of this session. Forget one and the agent has to ask again.")
                     }
-                    .controlSize(.small)
+                    ForEach(board.grants) { grant in
+                        entry(grant.words, provenance: grant.provenance, noun: "this permission",
+                              body: board.forgetBody(grant: grant))
+                    }
+                    ForEach(board.actions) { action in
+                        entry(action.tool.map { "\($0): \(PanelWords.clip(PanelWords.oneLine(action.preview ?? ""), 60))" } ?? "One exact action",
+                              provenance: action.provenance, noun: "this consent", body: board.forgetBody(action: action))
+                    }
+                    if board.count > 1 {
+                        Button("Forget All") {
+                            asking = Question(noun: "all \(board.count) permissions", body: board.forgetAllBody)
+                        }
+                        .controlSize(.small)
+                    }
+                } else if let error = controller.readFailures["permissions"] {
+                    Quiet("Only the daemon's owner can read these: \(error)")
+                } else {
+                    Quiet("not read yet")
                 }
-            } else if let error = controller.readFailures["permissions"] {
-                Quiet("Only the daemon's owner can read these: \(error)")
-            } else {
-                Quiet("not read yet")
             }
         }
         .task { controller.read("permissions") }

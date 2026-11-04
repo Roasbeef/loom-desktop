@@ -54,12 +54,14 @@ struct GoalDock: View {
 }
 
 /// The Session tab's goal section: the row, the spend, the last check, and a
-/// form to pin a goal when none is pinned.
+/// form to pin a goal when none is pinned. The form opens from a button, since
+/// most sessions never pin one and an open form is most of the tab's height.
 struct GoalSection: View {
     let board: GoalBoard?
     let controller: SessionController
     @State private var objective = ""
     @State private var budget = "400000"
+    @State private var isComposing = false
 
     var body: some View {
         PanelSection("Goal") {
@@ -79,21 +81,32 @@ struct GoalSection: View {
                 if let note = board.reviewerNote {
                     Quiet("reviewer: " + PanelWords.oneLine(note))
                 }
+            } else if !isComposing {
+                HStack {
+                    Quiet("No goal is pinned.")
+                    Spacer()
+                    Button("Pin a Goal…") { isComposing = true }
+                        .controlSize(.small)
+                }
             } else {
-                Quiet("No goal is pinned. Pin one to keep the agent working until a reviewer judges it done.")
+                Quiet("A goal keeps the agent working until a reviewer judges it done.")
                 TextField("Objective", text: $objective, axis: .vertical)
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(1...4)
                     .accessibilityLabel("Goal objective")
                 HStack {
+                    Text("Token budget").font(Theme.caption).foregroundStyle(.secondary)
                     TextField("Token budget", text: $budget)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 110)
+                        .labelsHidden()
                         .accessibilityLabel("Goal token budget")
                     Spacer()
+                    Button("Cancel") { isComposing = false }
                     Button("Pin Goal") { pin() }
                         .disabled(!canPin)
                 }
+                .controlSize(.small)
                 if let error = controller.readFailures["goal_get"] {
                     Quiet(error)
                 }
@@ -111,5 +124,6 @@ struct GoalSection: View {
             "token_budget": .int(Int64(budget) ?? 0),
         ])
         objective = ""
+        isComposing = false
     }
 }

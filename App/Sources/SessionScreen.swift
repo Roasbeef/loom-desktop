@@ -856,13 +856,13 @@ private struct SessionInspector: View {
     let controller: SessionController
     let placement: Placement?
 
+    /// Four tabs. The strand's notes and its evolution candidates are sections
+    /// of the Session tab, which already held the session's other boards.
     enum Tab: String, CaseIterable, Identifiable {
         case changes = "Changes"
         case agents = "Strands"
+        case trace = "Programs"
         case details = "Session"
-        case trace = "Trace"
-        case notes = "Notes"
-        case evolution = "Evolution"
         var id: Self { self }
 
         /// The symbol drawn when the column is too narrow for titled segments.
@@ -870,10 +870,8 @@ private struct SessionInspector: View {
             switch self {
             case .changes: return "plusminus"
             case .agents: return "person.2"
-            case .details: return "info.circle"
             case .trace: return "curlybraces"
-            case .notes: return "note.text"
-            case .evolution: return "arrow.triangle.branch"
+            case .details: return "info.circle"
             }
         }
     }
@@ -882,8 +880,8 @@ private struct SessionInspector: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Segments never shrink below their contents, so six titled ones held
-            // the column at about 540 points however narrow a person dragged it.
+            // Segments never shrink below their contents, so six titled ones once
+            // held the column at about 540 points however narrow it was dragged.
             // The tabs are titled segments when they fit the width offered, then
             // segments of symbols, which keep their titles for VoiceOver and as
             // tooltips, and a pop-up menu only below that.
@@ -909,8 +907,6 @@ private struct SessionInspector: View {
                     case .agents: StrandsPane(controller: controller)
                     case .details: DetailsPane(record: record, controller: controller, placement: placement)
                     case .trace: TracePane(controller: controller)
-                    case .notes: NotesPane(controller: controller)
-                    case .evolution: EvolutionPane(controller: controller)
                     }
                 }
                 .padding(14)
@@ -1082,6 +1078,7 @@ private struct DetailsPane: View {
                     CopyButton(text: record.id, label: "Copy session ID")
                 }
                 row("Created", record.createdAt.formatted(date: .abbreviated, time: .shortened))
+                CoreStatusSection(controller: controller)
             }
         }
     }
