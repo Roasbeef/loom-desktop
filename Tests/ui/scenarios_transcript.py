@@ -230,7 +230,9 @@ def markdown_alerts_footnotes_and_links(c):
     names = [n["name"] for n in links]
     check("the Loom site" in names, f"a plain https address is a link: {names}")
     check("a script" not in names, f"a javascript: address must not be a link: {names}")
-    c.app.see(r"mermaid", 5)
+    # The fixture's mermaid fence draws as a diagram, with its source and its copy
+    # control behind Show Source.
+    c.app.press("Show Source")
     c.app.see(r"Copy code", 5)
 
 
