@@ -297,7 +297,7 @@ def a_subagent_is_started_and_reports(c):
     c.app.open_session("Delegate")
     c.app.transcript_has("The subagent has reported", 60)
     settle(c)
-    c.app.see(r"^Started agent survey-files: survey files", 5)
+    c.app.see(r"^Started agent survey-files: survey files, model fake$", 5)
     report = name_starting(c, "Report from survey-files")
     check("completed" in report, report)
     c.app.press(report)
@@ -545,8 +545,8 @@ def escape_leaves_a_strands_page(c):
 
 
 @scenario("ST-10", needs_display=True)
-def a_card_names_its_model_where_it_differs_from_main(c):
-    """Once main runs another model, a card for a strand on the first model says which."""
+def every_card_names_its_model(c):
+    """Each strand card names its own model, main's included, after main switches."""
     c.app.dispatch("Model on card", WORKSPACE)
     c.app.open_session("Model on card")
     c.app.transcript_has("scripted", 30)
@@ -558,7 +558,7 @@ def a_card_names_its_model_where_it_differs_from_main(c):
     c.app.press("Strands")
     c.app.press("Settled strands")
     c.app.see(r"Strand advisor.*model fake$", 10)
-    c.app.not_see(r"Strand main.*model ")
+    c.app.see(r"Strand main.*model fake2$", 10)
 
 
 @scenario("KB-07", needs_display=True)

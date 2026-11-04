@@ -715,19 +715,27 @@ struct DecisionLine: View {
 struct SpawnedLine: View {
     let child: String
     let purpose: String
+    @Environment(\.strandModels) private var models
 
     var body: some View {
+        // The model comes from the strand list rather than the spawn call, so a
+        // row names it once the child's strand is known and follows a later
+        // switch.
+        let model = models[child]
         HStack(spacing: 8) {
             Image(systemName: "person.badge.plus").foregroundStyle(.secondary).frame(width: 14)
             Text("Started").font(Theme.label).foregroundStyle(.secondary)
             Text(StrandName.display(child)).font(Theme.code)
+            if let model {
+                Text(model).font(Theme.meta).foregroundStyle(.secondary).lineLimit(1).layoutPriority(1)
+            }
             if !purpose.isEmpty {
                 Text(purpose).font(Theme.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Started agent \(StrandName.display(child)): \(purpose)")
+        .accessibilityLabel("Started agent \(StrandName.display(child)): \(purpose)" + (model.map { ", model \($0)" } ?? ""))
     }
 }
 

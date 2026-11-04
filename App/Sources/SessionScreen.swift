@@ -215,6 +215,15 @@ private struct TranscriptView: View {
         return names.count
     }
 
+    /// The model of each strand that names one, by strand id.
+    private static func models(of lines: [StrandLine]) -> [String: String] {
+        var models: [String: String] = [:]
+        for line in lines {
+            if let model = line.model { models[line.id] = model }
+        }
+        return models
+    }
+
     /// One row of the lazy stack: a whole block, or one markdown block of a long reply.
     private enum Item: Identifiable {
         case block(TranscriptBlock)
@@ -308,6 +317,7 @@ private struct TranscriptView: View {
             // is a minimum, so a long transcript still has its full height to scroll.
             .frame(minHeight: viewport, alignment: .top)
             .environment(\.transcriptShowsAuthors, Self.authors(in: controller.blocks) > 1)
+            .environment(\.strandModels, Self.models(of: controller.strandLines))
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
@@ -1133,4 +1143,8 @@ extension EnvironmentValues {
     /// Whether a message names its author, which it does once more than one
     /// person has written in the transcript.
     @Entry var transcriptShowsAuthors = true
+
+    /// The model each strand runs on, by strand id, so a row that names a
+    /// strand can say what it runs on.
+    @Entry var strandModels: [String: String] = [:]
 }

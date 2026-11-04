@@ -15,7 +15,6 @@ struct StrandsPane: View {
     @State private var isForking = false
 
     private var lines: [StrandLine] { controller.strandLines }
-    private var main: StrandLine? { lines.first { $0.id == "main" } }
 
     var body: some View {
         Group {
@@ -112,22 +111,31 @@ struct StrandsPane: View {
                         HStack(spacing: 6) {
                             Text(line.name)
                                 .font(.system(size: 13, weight: isFocused ? .semibold : .regular))
-                            // The model is named only where it differs from the
-                            // main strand's, since otherwise it is the same news
-                            // on every card.
-                            if let model = line.model, model != main?.model {
-                                Text(model).font(Theme.meta).foregroundStyle(.secondary)
-                            }
+                                .lineLimit(1)
+                                .truncationMode(.middle)
                             Spacer(minLength: 4)
                             if let tokens = line.contextTokens {
                                 Text(PanelWords.count(tokens)).font(Theme.meta).foregroundStyle(.tertiary)
                             }
                         }
-                        Text(line.statusLine(elapsed: nil))
-                            .font(Theme.caption)
-                            .foregroundStyle(line.status == .needsApproval ? Theme.attention : Color.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                        // Every card names its model, so which strand runs on what
+                        // reads down the column. The status gives way first when
+                        // the pane is narrow, since the page has the whole of it.
+                        HStack(spacing: 6) {
+                            Text(line.statusLine(elapsed: nil))
+                                .font(Theme.caption)
+                                .foregroundStyle(line.status == .needsApproval ? Theme.attention : Color.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                            Spacer(minLength: 4)
+                            if let model = line.model {
+                                Text(model)
+                                    .font(Theme.meta)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .layoutPriority(1)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 8)
@@ -137,7 +145,7 @@ struct StrandsPane: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Strand \(line.name)")
-            .accessibilityValue(line.statusLine(elapsed: nil) + (line.model.flatMap { $0 != main?.model ? ", model \($0)" : nil } ?? ""))
+            .accessibilityValue(line.statusLine(elapsed: nil) + (line.model.map { ", model \($0)" } ?? ""))
 
             IconButton(symbol: "info.circle", label: "Details for \(line.name)") { detail = line.id }
                 .foregroundStyle(.tertiary)
