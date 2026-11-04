@@ -941,8 +941,8 @@ def notes_are_searched_and_opened(c):
     """The Notes tab lists the strand's notes, searches them and shows one readable or raw."""
     run_session(c, "Notes", "todoboard", "first task is finished")
     open_tab(c, "Session")
-    c.app.see(r"Note todo", 10)
     c.app.press("Refresh notes")
+    c.app.see(r"Note todo", 10)
     c.app.press("Note todo")
     c.app.see(r"All Notes", 5)
     c.app.see(r"Write the parser", 5)
@@ -980,8 +980,13 @@ def schedules_are_listed_and_retired(c):
     """A schedule a strand created is listed with its timing and can be retired."""
     run_session(c, "Beats", "heartbeat", "heartbeat is scheduled")
     open_tab(c, "Session")
-    c.app.press("Refresh schedules")
-    c.app.see(r"heartbeat", 10)
+
+    # The tab may read the schedules before the daemon has one, and an empty
+    # board has no section, so read again by whichever refresh is drawn.
+    def listed():
+        c.app.cmd("press Refresh schedules") == "ok" or c.app.cmd("press Refresh empty sections")
+        return any("heartbeat" in t for t in c.app.texts())
+    wait_for(listed, 15, "the schedule")
     c.app.see(r"fired \d", 5)
     c.app.press("Retire schedule heartbeat")
     c.app.press("Retire Schedule")
