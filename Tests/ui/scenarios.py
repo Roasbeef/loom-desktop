@@ -81,7 +81,10 @@ def appearance_and_size_matrix(c):
             c.app.resize(width, height)
             for where in screens:
                 c.app.go(where)
-                time.sleep(0.5)
+
+                # An approval card arms its buttons 600 ms after it appears, and a
+                # capture inside that window draws "Arming…" instead of the answers.
+                time.sleep(0.9)
                 name = f"{where}-{appearance}-{width}"
                 shot = c.app.shot(c.out / "matrix" / f"{name}.png")
                 changed = visual.compare(
