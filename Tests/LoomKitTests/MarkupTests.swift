@@ -236,6 +236,13 @@ final class TranscriptBlockTests: XCTestCase {
         XCTAssertTrue(fold.title.hasPrefix("Working"))
     }
 
+    func testALoadedSkillIsNamed() {
+        let loaded = StepWords.of(name: "load_skill", arguments: ["name": "incremental-commit", "arguments": ""], isRunning: false)
+        XCTAssertEqual(loaded.verb, "Loaded skill")
+        XCTAssertEqual(loaded.subject, "incremental-commit")
+        XCTAssertEqual(StepWords.of(name: "load_skill", arguments: ["name": "x"], isRunning: true).verb, "Loading skill")
+    }
+
     func testStepWordsCountLinesAndNameTheSubject() {
         let edit = StepWords.of(
             name: "fs_edit",

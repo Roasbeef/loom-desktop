@@ -55,6 +55,9 @@ public struct StepWords: Sendable, Equatable {
             return StepWords(verb: word("Waited for agents", "Waiting for agents"), subject: "", added: nil, removed: nil, file: nil)
         case "agent_spawn":
             return StepWords(verb: word("Started an agent", "Starting an agent"), subject: first(["purpose"]), added: nil, removed: nil, file: nil)
+        case "load_skill":
+            // The skill's name is what a reader scans for; the tool's name says nothing.
+            return StepWords(verb: word("Loaded skill", "Loading skill"), subject: first(["name", "skill"]), added: nil, removed: nil, file: nil)
         default:
             return StepWords(verb: word("Used", "Using"), subject: name, added: nil, removed: nil, file: nil)
         }
