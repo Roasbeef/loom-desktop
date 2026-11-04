@@ -135,7 +135,7 @@ private struct SessionFigures: View {
     let controller: SessionController
 
     var body: some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 3) {
+        VStack(alignment: .leading, spacing: 3) {
             if let model = controller.strand?.model {
                 row("Model", model, label: "Model")
             }
@@ -154,13 +154,14 @@ private struct SessionFigures: View {
     }
 
     private func row(_ name: String, _ value: String, label: String) -> some View {
-        GridRow {
-            Text(name).foregroundStyle(.secondary)
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(name).foregroundStyle(.secondary).frame(width: 48, alignment: .leading)
             Text(value).textSelection(.enabled)
+            Spacer(minLength: 0)
         }
+        // The value is in the label: a combined static row does not report its value.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(label)
-        .accessibilityValue(value)
+        .accessibilityLabel("\(label): \(value)")
     }
 }
 

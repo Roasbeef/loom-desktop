@@ -17,17 +17,34 @@ struct SessionExtras: View {
     let controller: SessionController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        // The stack adds no spacing of its own: a collapsed section is a zero-height
+        // row, and spacing around each would leave a gap where it is not drawn.
+        // Every drawn section carries its own gap below instead.
+        VStack(alignment: .leading, spacing: 0) {
             GoalSection(board: GoalBoard(controller.surfaces["goal"]?["board"]), controller: controller)
+                .padding(.bottom, Collapsing<EmptyView>.gap)
             JobsSection(controller: controller)
             SchedulesSection(controller: controller)
             RememberedSection(controller: controller)
             ProposalsSection(board: ProposalBoard(controller.surfaces["proposals"]?["board"]), controller: controller)
             NotesPane(controller: controller)
+                .padding(.bottom, Collapsing<EmptyView>.gap)
             EvolutionPane(controller: controller)
             MemorySection(controller: controller)
+                .padding(.bottom, Collapsing<EmptyView>.gap)
             if !emptySections.isEmpty {
-                Quiet("No " + ListFormatter.localizedString(byJoining: emptySections).replacingOccurrences(of: " and ", with: " or ") + ".")
+                // A collapsed section has no refresh button of its own, so this
+                // line reads all of them again.
+                HStack(alignment: .firstTextBaseline) {
+                    Quiet("No " + ListFormatter.localizedString(byJoining: emptySections).replacingOccurrences(of: " and ", with: " or ") + ".")
+                    Spacer(minLength: 6)
+                    IconButton(symbol: "arrow.clockwise", label: "Refresh empty sections") {
+                        controller.read("live_jobs", body: ["strand": .string(controller.focusedStrand)])
+                        controller.read("schedules")
+                        controller.read("permissions")
+                        controller.read("proposals_get")
+                    }
+                }
             }
         }
         .task { controller.read("goal_get") }
@@ -68,11 +85,14 @@ struct Collapsing<Content: View>: View {
     let isEmpty: Bool
     @ViewBuilder var content: Content
 
+    /// The space below a drawn section.
+    static var gap: CGFloat { 16 }
+
     var body: some View {
         if isEmpty {
             Color.clear.frame(height: 0).accessibilityHidden(true)
         } else {
-            content
+            content.padding(.bottom, Self.gap)
         }
     }
 }

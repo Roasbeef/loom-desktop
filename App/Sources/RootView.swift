@@ -410,39 +410,65 @@ extension Date {
 
 /// How the sidebar groups and which machine it shows, behind one button beside
 /// the daemon line. Both are set rarely, so they cost no rows of their own; an
-/// active machine filter is shown above the button as a removable chip.
+/// active machine filter is shown above the button as a removable chip. The
+/// choices open in a popover rather than a menu, because a menu drawn as a plain
+/// button gives VoiceOver no name for it.
 private struct SidebarFilterMenu: View {
     let groupings: [SidebarGrouping]
     @Binding var grouping: SidebarGrouping
     let machines: [(name: String, count: Int)]
     let total: Int
     @Binding var machineFilter: String
+    @State private var isOpen = false
 
     var body: some View {
-        Menu {
-            Picker("Group By", selection: $grouping) {
-                ForEach(groupings) { Text($0.rawValue).tag($0) }
-            }
-            if !machines.isEmpty {
-                Picker("Machine", selection: $machineFilter) {
-                    Text("All Machines (\(total))").tag("")
-                    ForEach(machines, id: \.name) { machine in
-                        Text("\(machine.name.split(separator: "@").first.map(String.init) ?? machine.name) (\(machine.count))")
-                            .tag(machine.name)
+        Button { isOpen.toggle() } label: {
+            Label("Group and Filter", systemImage: "line.3.horizontal.decrease")
+                .labelStyle(.iconOnly)
+                .font(Theme.caption)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .help("Group and filter the sessions")
+        .popover(isPresented: $isOpen, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Group by").font(Theme.label)
+                Picker("Group by", selection: $grouping) {
+                    ForEach(groupings) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                if !machines.isEmpty {
+                    Text("Machine").font(Theme.label)
+                    VStack(alignment: .leading, spacing: 2) {
+                        choice("All Machines", count: total, value: "")
+                        ForEach(machines, id: \.name) { machine in
+                            choice(machine.name.split(separator: "@").first.map(String.init) ?? machine.name, count: machine.count, value: machine.name)
+                        }
                     }
                 }
             }
-        } label: {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(Theme.caption)
+            .padding(14)
+            .frame(width: 240)
         }
-        .menuStyle(.button)
-        .menuIndicator(.hidden)
+    }
+
+    private func choice(_ title: String, count: Int, value: String) -> some View {
+        Button {
+            machineFilter = value
+        } label: {
+            HStack {
+                Image(systemName: "checkmark").opacity(machineFilter == value ? 1 : 0)
+                Text(title)
+                Spacer()
+                Text("\(count)").monospacedDigit().foregroundStyle(.secondary)
+            }
+            .font(Theme.caption)
+            .contentShape(Rectangle())
+        }
         .buttonStyle(.plain)
-        .foregroundStyle(.secondary)
-        .fixedSize()
-        .help("Group and filter the sessions")
-        .accessibilityLabel("Group and Filter")
+        .accessibilityLabel("\(title) \(count)")
+        .accessibilityAddTraits(machineFilter == value ? .isSelected : [])
     }
 }
 
