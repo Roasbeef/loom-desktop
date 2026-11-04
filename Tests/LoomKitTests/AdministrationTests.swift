@@ -174,3 +174,16 @@ final class UnopenedWordsTests: XCTestCase {
         XCTAssertFalse(words.contains("start_failed"))
     }
 }
+
+final class CreationPinTests: XCTestCase {
+    func testRolesAreSentOnlyWhenAPinIsChosen() {
+        var plain: [String: JSONValue] = [:]
+        CreationOptions(model: "flash").add(to: &plain)
+        XCTAssertNil(plain["roles"], "a daemon before protocol-change/108 refuses the field")
+        XCTAssertEqual(plain["model"], "flash")
+
+        var pinned: [String: JSONValue] = [:]
+        CreationOptions(model: "flash", pins: ["vision": "opus", "main": "ignored", "summarize": ""]).add(to: &pinned)
+        XCTAssertEqual(pinned["roles"], ["vision": "opus"], "main goes by model, and an empty choice is no pin")
+    }
+}

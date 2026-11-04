@@ -106,6 +106,17 @@ public actor ControlClient {
         return record
     }
 
+    /// The models and profiles a configuration defines, and which models read
+    /// images (`models.list`). A daemon that predates the command answers
+    /// `unsupported`, which the caller turns into a fallback.
+    public func listModels(configuration: String) async throws -> ModelCatalogue {
+        let body = try await request("models.list", body: ["configuration": .string(configuration)])
+        guard let catalogue = ModelCatalogue(reply: body) else {
+            throw LoomError.protocolViolation("models.list returned no catalogue")
+        }
+        return catalogue
+    }
+
     /// Opens a saved session and waits until it is resident, which a session
     /// upgrade requires (protocol section 3.8).
     public func openUntilResident(sessionID: String, timeout: Duration = .seconds(60)) async throws -> SessionState {

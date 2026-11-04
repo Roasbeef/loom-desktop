@@ -19,18 +19,83 @@ public struct CreationOptions: Sendable, Equatable {
     /// A shareable session keeps its memory to itself, which is what lets the
     /// owner invite someone later (`domain_scope: session_only`).
     public var isShareable: Bool
+    /// Roles other than `main` pinned to one `[models.<key>]` entry each
+    /// (Loom's protocol-change/108), such as `vision`. `main` is pinned by `model`.
+    public var pins: [String: String]
 
-    public init(profile: String? = nil, model: String? = nil, isShareable: Bool = false) {
+    public init(profile: String? = nil, model: String? = nil, isShareable: Bool = false, pins: [String: String] = [:]) {
         self.profile = profile
         self.model = model
         self.isShareable = isShareable
+        self.pins = pins
     }
 
     func add(to fields: inout [String: JSONValue]) {
         if let profile, !profile.isEmpty { fields["profile"] = .string(profile) }
         if let model, !model.isEmpty { fields["model"] = .string(model) }
         if isShareable { fields["domain_scope"] = .string("session_only") }
+
+        // Sent only when a pin was chosen: a daemon from before protocol-change/108
+        // refuses the field as malformed, so a plain creation must not carry it.
+        let chosen = pins.filter { !$0.value.isEmpty && $0.key != "main" }
+        if !chosen.isEmpty {
+            fields["roles"] = .object(chosen.mapValues { .string($0) })
+        }
     }
+}
+
+/// The models a configuration defines and which of them read images, as the
+/// daemon's `models.list` answers, or as far as a local file can say.
+///
+/// Whether an entry reads images is decided by Loom's catalogue, not by a line
+/// in the file, so only the daemon's answer carries it. Read from a file, every
+/// entry's `readsImages` is nil and the form offers no vision choice.
+public struct ModelCatalogue: Sendable, Equatable {
+    public struct Entry: Sendable, Equatable, Identifiable {
+        public let key: String
+        public let modelID: String?
+        public let readsImages: Bool?
+        public let roles: [String]
+        public var id: String { key }
+
+        public init(key: String, modelID: String? = nil, readsImages: Bool? = nil, roles: [String] = []) {
+            self.key = key
+            self.modelID = modelID
+            self.readsImages = readsImages
+            self.roles = roles
+        }
+    }
+
+    public let models: [Entry]
+    public let profiles: [String]
+
+    public init(models: [Entry] = [], profiles: [String] = []) {
+        self.models = models
+        self.profiles = profiles
+    }
+
+    /// The daemon's reply. A body that is not the documented shape gives nil,
+    /// never a partial list, so the form falls back rather than offering half.
+    public init?(reply body: JSONValue) {
+        guard let rows = body["models"]?.array, let names = body["profiles"]?.array else { return nil }
+        var models: [Entry] = []
+        for row in rows {
+            guard let key = row["key"]?.string, !key.isEmpty, case .bool(let vision)? = row["vision"] else { return nil }
+            let roles = row["roles"]?.array?.compactMap(\.string) ?? []
+            models.append(Entry(key: key, modelID: row["model_id"]?.string, readsImages: vision, roles: roles))
+        }
+        let profiles = names.compactMap(\.string)
+        guard profiles.count == names.count else { return nil }
+        self.init(models: models, profiles: profiles)
+    }
+
+    /// What a local file's headers name, with nothing said about images.
+    public init(file choices: ConfigurationChoices) {
+        self.init(models: choices.models.map { Entry(key: $0) }, profiles: choices.profiles)
+    }
+
+    /// The entries a vision pin may name. Empty unless the daemon said which read images.
+    public var imageReaders: [Entry] { models.filter { $0.readsImages == true } }
 }
 
 /// The profiles and models a configuration file defines. The daemon judges the
