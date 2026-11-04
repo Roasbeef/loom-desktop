@@ -341,6 +341,10 @@ final class AppModel {
     /// Bumped by the UI driver to scroll the transcript to its top through SwiftUI,
     /// as a person scrolling up would, rather than behind its back in AppKit.
     var debugScrollToTop = 0
+
+    /// Bumped by the UI driver to scroll the transcript from top to bottom at a
+    /// steady speed, for measuring frames while scrolling.
+    var debugScrollSweep = 0
     #endif
 
     /// Whether the inspector column is open, kept across launches with the rest of

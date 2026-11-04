@@ -211,6 +211,8 @@ enum DebugDriver {
             // scrolling up does. Moving AppKit's clip view directly went behind
             // SwiftUI's back, and SwiftUI put its own position back on next layout.
             model.debugScrollToTop += 1
+        case "sweep":
+            model.debugScrollSweep += 1
         case "detach" where parts.count > 1:
             // Ends the session's socket so the daemon connection attaches a fresh
             // lane, which opens on the recent window and not on everything held.
