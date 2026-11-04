@@ -508,6 +508,9 @@ def long_reasoning_carries_the_summarizers_label(c):
 def the_strands_tab_counts_the_approvals_waiting(c):
     """While a strand waits on a person, the Strands tab's title carries the count."""
     pending_approval(c, "Badge count")
+
+    # Wide enough for the tabs to be segments, whose titles carry the count.
+    c.app.resize(1400, 800)
     if not c.app.snap()["showsInspector"]:
         c.app.menu("Toggle Inspector")
         wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")

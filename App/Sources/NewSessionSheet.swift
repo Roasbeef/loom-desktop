@@ -192,6 +192,13 @@ struct DispatchSheet: View {
             workspace = ""
             requestKey = UUID().uuidString
         }
+        #if DEBUG
+        .onChange(of: model.debugPlacement) {
+            if let option = options.first(where: { describe($0).hasPrefix(model.debugPlacement) }) {
+                placement = option.choice
+            }
+        }
+        #endif
         .onChange(of: profile) { requestKey = UUID().uuidString }
         .onChange(of: modelKey) { requestKey = UUID().uuidString }
         .onChange(of: isShareable) { requestKey = UUID().uuidString }

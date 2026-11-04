@@ -3,7 +3,7 @@ the loss, and later scenarios find the executor already gone."""
 from loomui import wait_for
 from scenarios import WORKSPACE, check, scenario
 from scenarios_admin import close_form, open_form, second_daemon
-from scenarios_lifecycle import find_box_label
+from scenarios_lifecycle import find_box_label, choose_placement
 
 
 @scenario("NS-05", "NS-11", "NS-21", "MA-03")
@@ -22,7 +22,7 @@ def a_down_machine_is_named_and_may_still_be_chosen(c):
         open_form(c)
         try:
             c.app.see(r"other · unavailable")
-            c.app.press(find_box_label(c, "box ·"))
+            choose_placement(c, "box ·")
             c.app.see(r"box is down\. The session will wait")
             c.app.focus("Prompt")
             c.app.type("Down executor check demo")

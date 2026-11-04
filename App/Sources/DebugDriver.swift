@@ -153,6 +153,12 @@ enum DebugDriver {
             // Presses a control by its accessibility label, through the action a
             // screen reader uses, so it needs neither coordinates nor focus.
             reply = AccessibilityAudit.press(label: rest) ? "ok" : "not-found"
+        case "place":
+            // Chooses where a new agent's tools run, by the start of the option's
+            // title, for when the form draws the choice as a pop-up menu. Its menu
+            // cannot be opened from here without blocking the app.
+            model.debugPlacement = rest
+            reply = "ok"
         case "activate":
             NSApp.activate()
             window?.makeKeyAndOrderFront(nil)
@@ -779,3 +785,4 @@ enum AccessibilityAudit {
     }
 }
 #endif
+

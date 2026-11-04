@@ -748,6 +748,11 @@ def open_tab(c, name):
     if not c.app.snap()["showsInspector"]:
         c.app.menu("Toggle Inspector")
         wait_for(lambda: c.app.snap()["showsInspector"], 3, "the inspector")
+
+    # A narrow inspector draws its tabs as a pop-up menu, which the driver cannot
+    # open without blocking the app, so the window is made wide enough for segments.
+    c.app.resize(1400, 800)
+    wait_for(lambda: any(n["role"] == "AXRadioButton" and n["name"].startswith(name) for n in c.app.tree()), 5, f"the {name} segment")
     c.app.press(name)
 
 

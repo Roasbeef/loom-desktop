@@ -190,6 +190,17 @@ def a_session_is_created_with_a_profile_model_name_and_box(c):
     c.app.session_id("Named by the form")
 
 
+def choose_placement(c, prefix):
+    """Chooses where tools run, as a segment or, when the titles are too long for
+    segments, from the pop-up menu the form draws instead."""
+    def segment():
+        return next((n["name"] for n in c.app.tree() if n["role"] == "AXRadioButton" and n["name"].startswith(prefix) and " · " in n["name"]), None)
+    if wait_for(lambda: segment() or c.app.enabled("Tools run on"), what="the placement choice") and segment():
+        c.app.press(segment())
+        return
+    assert c.app.cmd(f"place {prefix}") == "ok", f"no placement starts with {prefix!r}"
+
+
 def find_box_label(c, prefix="box"):
     """A placement segment's name, which carries its platform and free scopes.
 

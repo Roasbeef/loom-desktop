@@ -345,6 +345,9 @@ final class AppModel {
     /// Bumped by the UI driver to scroll the transcript from top to bottom at a
     /// steady speed, for measuring frames while scrolling.
     var debugScrollSweep = 0
+
+    /// Set by the UI driver to choose a new agent's placement by title prefix.
+    var debugPlacement = ""
     #endif
 
     /// Whether the inspector column is open, kept across launches with the rest of
