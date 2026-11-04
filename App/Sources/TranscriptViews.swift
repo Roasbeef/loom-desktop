@@ -275,6 +275,14 @@ struct StepRow: View {
     var body: some View {
         if let parts {
             let words = StepWords.of(name: parts.name, arguments: parts.arguments, isRunning: parts.result == nil)
+
+            // A finished program is titled with what it did, which its result
+            // records, rather than its first line of source.
+            let program = parts.name == "code_mode" && parts.result != nil
+                ? ProgramCard.read(arguments: parts.arguments, result: parts.result, isError: parts.isError, details: row.details)
+                : nil
+            let verb = program?.outcome ?? words.verb
+            let subject = program == nil ? words.subject : ""
             VStack(alignment: .leading, spacing: 6) {
                 Button {
                     withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
@@ -284,12 +292,12 @@ struct StepRow: View {
                             .font(.system(size: 11))
                             .foregroundStyle(parts.isError ? Theme.failure : .secondary)
                             .frame(width: 14)
-                        Text(words.verb)
+                        Text(verb)
                             .font(Theme.label)
                             .foregroundStyle(parts.isError ? Theme.failure : .secondary)
                             .layoutPriority(1)
-                        if !words.subject.isEmpty {
-                            Text(words.subject)
+                        if !subject.isEmpty {
+                            Text(subject)
                                 .font(Theme.code)
                                 .foregroundStyle(parts.isError ? Theme.failure : .primary)
                                 .lineLimit(1)
@@ -317,7 +325,7 @@ struct StepRow: View {
                 }
                 .buttonStyle(.plain)
                 .help(parts.name)
-                .accessibilityLabel(words.subject.isEmpty ? words.verb : "\(words.verb) \(words.subject)")
+                .accessibilityLabel(subject.isEmpty ? verb : "\(verb) \(subject)")
                 .accessibilityValue(changeValue(words) + (isOpen ? "Expanded" : "Collapsed"))
 
                 if parts.isError, parts.name != "code_mode" {
@@ -356,8 +364,9 @@ struct StepRow: View {
                 ))
             }
         case "bash":
-            // The whole command, which the line shows only the first row of.
-            if let command = parts.arguments["command"]?.string {
+            // The whole command, which the line shows only the first row of. A
+            // short one-line command is already all there in the title.
+            if let command = parts.arguments["command"]?.string, command.contains("\n") || command.count > 70 {
                 OutputBlock(text: "$ " + command, tint: .secondary, language: "sh")
             }
         case "fs_read", "grep":
@@ -498,16 +507,31 @@ private struct StepClock: View {
 struct ProgramCardView: View {
     let card: ProgramCard
 
+    /// The program's source, closed until asked for: the result is what a reader
+    /// opened the step for.
+    @State private var showsProgram = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
+            // The step's own title already says what the program did, so the card
+            // leads with the figures, and a status word only when it is not plain
+            // success.
             HStack(spacing: 8) {
-                Text(card.outcome).font(Theme.label)
-                Text(card.statusWord).font(Theme.meta).foregroundStyle(card.state == .completed || card.state == .running ? Color.secondary : Theme.failure)
+                if card.state != .completed {
+                    Text(card.statusWord).font(Theme.meta).foregroundStyle(card.state == .running ? Color.secondary : Theme.failure)
+                }
+                if card.calls.count == 1, let call = card.calls.first {
+                    Text(call.count > 1 ? "\(call.capability) ×\(call.count)" : call.capability)
+                        .font(Theme.meta)
+                        .foregroundStyle(call.failed ? Theme.failure : .secondary)
+                }
                 Spacer()
                 if let count = card.countWords { Text(count).font(Theme.meta).foregroundStyle(.secondary) }
                 if let elapsed = card.elapsedMs { Text(StepWords.duration(ms: elapsed)).font(Theme.meta).foregroundStyle(.secondary) }
             }
-            if !card.calls.isEmpty {
+
+            // A timeline says something only once there are calls to compare.
+            if card.calls.count > 1 {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(card.calls) { call in
                         HStack(spacing: 8) {
@@ -526,15 +550,24 @@ struct ProgramCardView: View {
                     }
                 }
             }
-            if !card.program.isEmpty {
-                Text("Program · \(card.lines) lines").font(Theme.caption).foregroundStyle(.secondary)
-                OutputBlock(text: card.program, tint: .primary, language: "gleam")
-            }
             if let failure = card.failure, !failure.isEmpty {
                 OutputBlock(text: failure, tint: Theme.failure)
             } else if let value = card.value, !value.isEmpty {
                 Text("Result").font(Theme.caption).foregroundStyle(.secondary)
                 OutputBlock(text: value, tint: .primary)
+            }
+            if !card.program.isEmpty {
+                // A running program has no result yet, so its source is the content.
+                if card.state == .running {
+                    Text("Program · \(card.lines) lines").font(Theme.caption).foregroundStyle(.secondary)
+                    OutputBlock(text: card.program, tint: .primary, language: "gleam")
+                } else {
+                    DisclosureGroup("Program · \(card.lines) lines", isExpanded: $showsProgram) {
+                        OutputBlock(text: card.program, tint: .primary, language: "gleam")
+                    }
+                    .font(Theme.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
         }
         .accessibilityElement(children: .contain)
@@ -553,20 +586,24 @@ struct OutputBlock: View {
         return Text(HighlightCache.attributed(text, language: language, isStreaming: false))
     }
 
+    /// The block's own width. A scroll view that scrolls both ways gives a spacer
+    /// no width, so short output was centred; the content is made at least this
+    /// wide and left-aligned instead, and longer lines still scroll sideways.
+    @State private var width: CGFloat = 0
+
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
-            HStack(spacing: 0) {
-                styled
-                    .font(Theme.code)
-                    .foregroundStyle(tint)
-                    .lineSpacing(2)
-                    .multilineTextAlignment(.leading)
-                    .textSelection(.enabled)
-                    .fixedSize()
-                Spacer(minLength: 0)
-            }
-            .padding(10)
+            styled
+                .font(Theme.code)
+                .foregroundStyle(tint)
+                .lineSpacing(2)
+                .multilineTextAlignment(.leading)
+                .textSelection(.enabled)
+                .fixedSize()
+                .padding(10)
+                .frame(minWidth: width, alignment: .leading)
         }
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
         .frame(maxHeight: 260)
         .fixedSize(horizontal: false, vertical: true)
         .surface(radius: Theme.radiusInner)

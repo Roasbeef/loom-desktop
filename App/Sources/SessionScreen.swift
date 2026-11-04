@@ -156,8 +156,15 @@ enum StrandName {
     static func display(_ id: String) -> String {
         guard id.hasPrefix("sub:") else { return id }
         let last = id.split(separator: "/").last.map(String.init) ?? id
-        if let dash = last.lastIndex(of: "-"), last.distance(from: dash, to: last.endIndex) <= 6 {
-            return String(last[..<dash])
+
+        // The daemon suffixes a child's name with a hexadecimal id, short in some
+        // builds and sixteen characters in others. Any such suffix of four or more
+        // hexadecimal characters is dropped; a word after a dash is kept.
+        if let dash = last.lastIndex(of: "-") {
+            let suffix = last[last.index(after: dash)...]
+            if suffix.count >= 4, suffix.allSatisfy(\.isHexDigit), suffix.contains(where: \.isNumber) {
+                return String(last[..<dash])
+            }
         }
         return last
     }
@@ -197,6 +204,15 @@ private struct TranscriptView: View {
     private var visibleBlocks: [TranscriptBlock] {
         guard !query.isEmpty else { return controller.blocks }
         return controller.blocks.filter { $0.contains(query) }
+    }
+
+    /// How many people wrote the messages in the transcript.
+    private static func authors(in blocks: [TranscriptBlock]) -> Int {
+        var names = Set<String>()
+        for block in blocks {
+            if case .row(let row) = block, case .user(_, let author) = row.kind, let author { names.insert(author) }
+        }
+        return names.count
     }
 
     /// One row of the lazy stack: a whole block, or one markdown block of a long reply.
@@ -291,6 +307,7 @@ private struct TranscriptView: View {
             // it overflows, so a new session does not float under empty space. This
             // is a minimum, so a long transcript still has its full height to scroll.
             .frame(minHeight: viewport, alignment: .top)
+            .environment(\.transcriptShowsAuthors, Self.authors(in: controller.blocks) > 1)
         }
         .scrollPosition($position)
         .defaultScrollAnchor(.bottom)
@@ -460,6 +477,7 @@ private struct BlockView: View {
 struct RowView: View {
     let row: TranscriptRow
     @State private var isHovering = false
+    @Environment(\.transcriptShowsAuthors) private var showsAuthors
 
     var body: some View {
         switch row.kind {
@@ -482,11 +500,10 @@ struct RowView: View {
                             .foregroundStyle(.secondary)
                         PictureStrip(pictures: row.pictures)
                     }
-                    if let author {
-                        // The role is the same fixed word for every message, because only a
-                        // person who may operate can send one, and the record does not say
-                        // in which capacity the sender was attached.
-                        Text("\(author) · operator").font(Theme.meta).foregroundStyle(.secondary)
+                    // Who wrote it is said only once more than one person has written
+                    // in the session; with one, every message would carry the same name.
+                    if let author, showsAuthors {
+                        Text(author).font(Theme.meta).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1111,3 +1128,9 @@ enum TranscriptDebug {
     static var geometry = ""
 }
 #endif
+
+extension EnvironmentValues {
+    /// Whether a message names its author, which it does once more than one
+    /// person has written in the transcript.
+    @Entry var transcriptShowsAuthors = true
+}
