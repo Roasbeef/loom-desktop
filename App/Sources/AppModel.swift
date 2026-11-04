@@ -304,7 +304,7 @@ final class DaemonConnection: Identifiable {
             placement: placement,
             options: options
         )
-        lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") shareable=\(options.isShareable)"
+        lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") vision=\(options.pins["vision"] ?? "") shareable=\(options.isShareable)"
 
         // From here the session exists, so a failure must say so and name it.
         do {

@@ -186,7 +186,7 @@ def a_session_is_created_with_a_profile_model_name_and_box(c):
         wait_for(lambda: not c.app.snap()["isDispatching"], 60, "the form to close after creating")
     finally:
         close_form(c)
-    wait_for(lambda: c.app.snap()["daemons"][0]["lastCreation"] == "profile=review model=fake2 shareable=true", what="the daemon to accept the choices")
+    wait_for(lambda: c.app.snap()["daemons"][0]["lastCreation"] == "profile=review model=fake2 vision= shareable=true", what="the daemon to accept the choices")
     c.app.session_id("Named by the form")
 
 
