@@ -55,7 +55,18 @@ struct Composer: View {
                 .lineLimit(1...12)
                 .focused($isFocused)
                 .onKeyPress(keys: [.return]) { press in
-                    if press.modifiers.contains(.shift) || press.modifiers.contains(.option) { return .ignored }
+                    // A vertical field ends editing on Return and does not take a
+                    // modified one as a new line, so the line is inserted in the
+                    // field's editor, which puts it at the caret and not at the end
+                    // of the draft.
+                    if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
+                        if let editor = NSApp.keyWindow?.firstResponder as? NSTextView {
+                            editor.insertText("\n", replacementRange: editor.selectedRange())
+                        } else {
+                            composer.draft += "\n"
+                        }
+                        return .handled
+                    }
                     if let chosen = chosen(rows, composer.selection) {
                         composer.accept(chosen)
                         if !chosen.takesArgument { composer.submit(requested: .send, controller: controller) }

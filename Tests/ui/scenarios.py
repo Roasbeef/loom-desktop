@@ -263,6 +263,22 @@ def send_line(c, text, mods=""):
     c.app.key("return", mods)
 
 
+@scenario("CM-12", needs_display=True)
+def shift_return_adds_a_line_and_return_sends(c):
+    """Shift-Return and Option-Return put a new line in the draft, and Return still sends it."""
+    c.app.dispatch("Newline demo", WORKSPACE)
+    c.app.open_session("Newline demo")
+    settle(c)
+    c.app.type("first")
+    c.app.key("return", "shift")
+    c.app.type("second")
+    c.app.key("return", "option")
+    c.app.type("third")
+    wait_for(lambda: c.app.session()["draft"] == "first\nsecond\nthird", 5, "the draft to hold three lines")
+    c.app.key("return")
+    wait_for(lambda: c.app.session()["draft"] == "", 10, "Return to send the draft")
+
+
 def busy_session(c, title):
     c.app.dispatch(f"{title} hang", WORKSPACE)
     c.app.open_session(title)
