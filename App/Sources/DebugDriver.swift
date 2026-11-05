@@ -730,11 +730,15 @@ enum AccessibilityAudit {
         return String(decoding: data, as: UTF8.self)
     }
 
-    /// The window, its sheet and its child windows. A popover is a child window,
-    /// so its controls are part of what a person sees.
+    /// The window, its sheet and their child windows. A popover is a child window,
+    /// of the sheet when it opens from one, so its controls are part of what a
+    /// person sees.
     private static func searchRoots(_ window: NSWindow) -> [Any] {
         var roots: [Any] = [window]
-        if let sheet = window.attachedSheet { roots.append(sheet) }
+        if let sheet = window.attachedSheet {
+            roots.append(sheet)
+            roots.append(contentsOf: (sheet.childWindows ?? []) as [Any])
+        }
         roots.append(contentsOf: (window.childWindows ?? []) as [Any])
         return roots
     }

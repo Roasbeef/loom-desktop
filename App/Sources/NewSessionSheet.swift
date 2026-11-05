@@ -58,6 +58,7 @@ struct DispatchSheet: View {
     @State private var visionKey = ""
     @State private var catalogue = ModelCatalogue()
     @State private var isShareable = false
+    @State private var isListingProjects = false
     @State private var error: String?
     @State private var createdID: String?
     @State private var isSending = false
@@ -261,6 +262,56 @@ struct DispatchSheet: View {
         return Array(all.filter { $0 != workspace && $0.localizedCaseInsensitiveContains(query) }.prefix(6))
     }
 
+    /// Every place already used, as a menu of project names, so a person can pick
+    /// one without typing and without the field's current text hiding the rest.
+    /// Each item names the folder and shows where it is.
+    @ViewBuilder
+    private var projectsMenu: some View {
+        let places: [String] = switch placement {
+        case .local: daemon.map { model.recentPlaces(on: $0, forgotten: forgotten) } ?? []
+        case .executor: remoteWorkspaces
+        case .pool: []
+        }
+        if !places.isEmpty {
+            Button {
+                isListingProjects = true
+            } label: {
+                Label("Projects", systemImage: "chevron.down").labelStyle(.titleAndIcon)
+            }
+            .accessibilityLabel("Projects")
+            .help("Folders used lately")
+            .popover(isPresented: $isListingProjects, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(places.prefix(15), id: \.self) { place in
+                        Button {
+                            workspace = place
+                            isListingProjects = false
+                        } label: {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text((place as NSString).lastPathComponent)
+                                if placement == .local {
+                                    Text((place as NSString).deletingLastPathComponent)
+                                        .font(Theme.meta)
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                        .truncationMode(.head)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Project \(place)")
+                    }
+                }
+                .padding(6)
+                .frame(width: 340)
+            }
+        }
+    }
+
     @ViewBuilder
     private var workspaceField: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -273,6 +324,7 @@ struct DispatchSheet: View {
                         .font(.system(size: 12).monospaced())
                         .frame(minWidth: 120, maxWidth: .infinity)
                         .accessibilityLabel("Folder")
+                    projectsMenu
                     if placement == .local, daemon?.isRemote != true {
                         Button("Choose…", action: choose)
                     }

@@ -144,6 +144,10 @@ def the_folder_field_searches_recent_places_and_judges_typing(c):
     open_form(c)
     try:
         c.app.focus("Folder")
+        c.app.press("Projects")
+        c.app.see(f"Project {keep}")
+        c.app.see(f"Project {gone}")
+        c.app.key("escape")
         c.app.see(f"Use folder {keep}")
         c.app.see(f"Use folder {gone}")
 
