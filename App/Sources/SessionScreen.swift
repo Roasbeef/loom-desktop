@@ -144,12 +144,21 @@ private struct LiveSession: View {
             .toolbar {
                 if controller.strands.count > 1 {
                     ToolbarItem {
-                        Picker("Agent", selection: $controller.focusedStrand) {
-                            ForEach(controller.strands) { strand in
-                                Text(StrandName.display(strand.id)).tag(strand.id)
+                        // A menu rather than a picker, whose pill sets its title at the
+                        // left with the arrows after it, off the centre of the pill.
+                        Menu {
+                            Picker("Agent", selection: $controller.focusedStrand) {
+                                ForEach(controller.strands) { strand in
+                                    Text(StrandName.display(strand.id)).tag(strand.id)
+                                }
                             }
+                            .pickerStyle(.inline)
+                        } label: {
+                            Text(StrandName.display(controller.focusedStrand))
                         }
                         .help("Choose which agent's transcript to read")
+                        .accessibilityLabel("Agent")
+                        .accessibilityValue(StrandName.display(controller.focusedStrand))
                     }
                     ToolbarSpacer(.fixed)
                 }
