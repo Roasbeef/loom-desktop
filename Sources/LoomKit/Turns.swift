@@ -243,7 +243,7 @@ public enum TranscriptBlock: Sendable, Equatable, Identifiable {
             blocks.append(contentsOf: fold(turn, inputAt: inputAt, isLive: isLast && running))
             turn = []
         }
-        for row in rows {
+        for row in Self.collapsingRepeatedFailures(rows) {
             // The memory context follows the prompt it was attached to, so it joins
             // that turn and opens none of its own, since nobody asked for it.
             if row.kind.opensTurn {
@@ -256,6 +256,23 @@ public enum TranscriptBlock: Sendable, Equatable, Identifiable {
         }
         flush(isLast: true)
         return blocks
+    }
+
+    /// Merges failures that follow one another with the same words into one row
+    /// that says how many there were and when the last came. A provider that
+    /// refuses each retry otherwise fills the page with the same line.
+    static func collapsingRepeatedFailures(_ rows: [TranscriptRow]) -> [TranscriptRow] {
+        var result: [TranscriptRow] = []
+        for row in rows {
+            if case .failure(let text) = row.kind,
+               let last = result.last, case .failure(let previous) = last.kind, previous == text {
+                result[result.count - 1].repeats += row.repeats
+                result[result.count - 1].lastAt = row.lastAt ?? row.at
+            } else {
+                result.append(row)
+            }
+        }
+        return result
     }
 
     private static func isWork(_ row: TranscriptRow) -> Bool {

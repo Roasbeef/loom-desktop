@@ -168,6 +168,11 @@ public struct TranscriptRow: Sendable, Equatable, Identifiable {
     /// What the request that wrote this message read and wrote of the prompt cache.
     /// Only the first row of an assistant message carries it.
     public var cache: CacheUse?
+    /// How many identical failures in a row this row stands for, which a provider
+    /// refusing every retry would otherwise draw once each. Its `at` is the first,
+    /// and `lastAt` is the last.
+    public var repeats = 1
+    public var lastAt: Int?
 
     public init(id: String, kind: Kind, callID: String? = nil, at: Int? = nil) {
         self.id = id

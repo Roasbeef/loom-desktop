@@ -581,7 +581,21 @@ struct RowView: View {
             }
         case .failure(let text):
             Label {
-                Text(text).textSelection(.enabled)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(text).textSelection(.enabled)
+                    if row.repeats > 1 {
+                        // The same failure again and again is one line that counts them.
+                        Text("×\(row.repeats)")
+                            .font(Theme.label)
+                            .foregroundStyle(Theme.failure)
+                            .accessibilityLabel("\(row.repeats) times")
+                        if let first = row.at, let last = row.lastAt, last > first {
+                            Text("over \(StepWords.duration(ms: last - first))")
+                                .font(Theme.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             } icon: {
                 Image(systemName: "exclamationmark.octagon").foregroundStyle(Theme.failure)
             }

@@ -241,6 +241,29 @@ final class TranscriptBlockTests: XCTestCase {
         XCTAssertEqual(TranscriptBlock.group(rows).count, 2)
     }
 
+    func testRepeatedFailuresAreOneRowThatCountsThem() {
+        func failure(_ id: String, _ text: String, at: Int) -> TranscriptRow {
+            TranscriptRow(id: id, kind: .failure(text: text), at: at)
+        }
+        let rows = [
+            TranscriptRow(id: "u", kind: .user(text: "go", author: nil)),
+            failure("f1", "provider returned http 429", at: 1_000),
+            failure("f2", "provider returned http 429", at: 61_000),
+            failure("f3", "provider returned http 429", at: 121_000),
+            failure("f4", "a different failure", at: 130_000),
+            failure("f5", "provider returned http 429", at: 140_000),
+        ]
+        let blocks = TranscriptBlock.group(rows)
+        let failures = blocks.compactMap { block -> TranscriptRow? in
+            if case .row(let row) = block, case .failure = row.kind { return row }
+            return nil
+        }
+        XCTAssertEqual(failures.map(\.repeats), [3, 1, 1])
+        XCTAssertEqual(failures[0].id, "f1")
+        XCTAssertEqual(failures[0].at, 1_000)
+        XCTAssertEqual(failures[0].lastAt, 121_000)
+    }
+
     func testARunningTurnStaysLive() {
         let rows = [TranscriptRow(id: "u", kind: .user(text: "go", author: nil)), tool("a", "bash")]
         guard case .fold(let fold) = TranscriptBlock.group(rows, running: true)[1] else { return XCTFail("expected a fold") }
