@@ -8,6 +8,13 @@ struct SessionScreen: View {
     @Environment(AppModel.self) private var model
     let sessionID: String
 
+    /// Set while a session that was running has stopped being resident for a
+    /// short while, which is what a configuration reload or a profile switch looks
+    /// like from here: the daemon closes the session and opens it again. The page
+    /// stays on the session it was showing instead of falling back to the saved
+    /// session screen and losing its scroll, its tab and its draft.
+    @State private var isReopening = false
+
     private var record: SessionRecord? {
         model.sessions.first { $0.id == sessionID }
     }
@@ -18,7 +25,7 @@ struct SessionScreen: View {
 
     var body: some View {
         Group {
-            if let record, record.state.isResident, let controller = model.controller(for: sessionID) {
+            if let record, record.state.isResident || isReopening, let controller = model.controller(for: sessionID) {
                 LiveSession(record: record, controller: controller, placement: model.placement(of: record))
             } else if let record {
                 NotRunning(record: record)
@@ -28,7 +35,14 @@ struct SessionScreen: View {
         }
         .task(id: record?.state.isResident) {
             if record?.state.isResident == true {
+                isReopening = false
                 daemon?.attach(sessionID)
+            } else if model.controller(for: sessionID) != nil, record != nil {
+                // A session that does not come back within the wait was stopped,
+                // and the saved session screen is the honest page for it.
+                isReopening = true
+                try? await Task.sleep(for: .seconds(10))
+                isReopening = false
             }
         }
     }

@@ -233,7 +233,7 @@ final class DaemonConnection: Identifiable {
         // attached to is reattached. Nothing unsent is carried across, as the
         // protocol requires (section 6.7).
         for (id, controller) in attached where !controller.isLive && resident.contains(id) {
-            attach(id)?.focusedStrand = controller.focusedStrand
+            attach(id)?.inherit(from: controller)
         }
 
         if ticks % Self.deploymentEvery == 0 {
@@ -737,6 +737,32 @@ final class SessionController {
 
     func connect() {
         pump = Task { await self.run() }
+    }
+
+    /// Takes over what the previous attachment to this session was showing, for a
+    /// lane that was dropped and made again, which a configuration reload or a
+    /// profile switch does. Until the new lane's first cut arrives the window keeps
+    /// the transcript, the panels and the draft it had, so the reopen does not
+    /// blank the page, move the scroll or lose what was being typed. The first cut
+    /// replaces all of it with what the daemon reports.
+    func inherit(from previous: SessionController) {
+        // The strand is set first because choosing one rebuilds the transcript.
+        focusedStrand = previous.focusedStrand
+        blocks = previous.blocks
+        hasOlder = previous.hasOlder
+        strands = previous.strands
+        strandLines = previous.strandLines
+        context = previous.context
+        todo = previous.todo
+        surfaces = previous.surfaces
+        summaries = previous.summaries
+        trace = previous.trace
+        branch = previous.branch
+        worktree = previous.worktree
+        usage = previous.usage
+        role = previous.role
+        showsSideQuestion = previous.showsSideQuestion
+        composer.draft = previous.composer.draft
     }
 
     func detach() {

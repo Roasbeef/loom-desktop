@@ -352,7 +352,16 @@ def effort_and_profile_are_changed_on_a_running_session(c):
     time.sleep(1)
     c.app.press("review")
     c.app.press("Switch Profile")
-    wait_for(lambda: c.app.session().get("profile") == "review", 60, "the session to restart under the review profile")
+
+    # The restart closes and reopens the session. The page stays on it, with its
+    # transcript, instead of falling back to the saved session screen.
+    def restarted():
+        texts = c.app.texts()
+        check(not any(t.startswith("Resume Session") for t in texts), "the page left the session while it restarted")
+        return c.app.session().get("profile") == "review"
+
+    wait_for(restarted, 60, "the session to restart under the review profile")
+    c.app.see(r"Settings subject", 5)
     c.app.press("Done")
 
 
