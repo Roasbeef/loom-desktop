@@ -1,15 +1,44 @@
 import LoomKit
 import SwiftUI
 
-/// The figures in the composer's bar: how full the model's window is, the
-/// cache outlook when it applies, and the connection when it is lost. The
-/// model, tokens, speed and cost are behind the context figure, and the side
+/// The figures in the composer's bar: the model the focused strand runs, the
+/// session's tokens, how full the window is, the output speed, the estimated
+/// cost, the cache outlook when it applies, and the connection when it is lost.
+/// The model gives way first when the bar is narrow, and the speed and cost
+/// appear only once there is a figure to show, so a new session's bar is short.
+/// The same figures are at the top of the context breakdown, and the side
 /// question is on the Session menu and `/btw`.
 struct ComposerFigures: View {
     let controller: SessionController
 
     var body: some View {
+        if let model = controller.strand?.model {
+            Text(model)
+                .layoutPriority(-1)
+                .truncationMode(.middle)
+                .help("The model the focused agent runs")
+                .accessibilityLabel("Model")
+                .accessibilityValue(model)
+        }
+        if let tokens = controller.totalTokens, tokens > 0 {
+            Text("\(tokens.formatted(.number.notation(.compactName))) tokens")
+                .help("Tokens the session has used, across agents")
+                .accessibilityLabel("Tokens")
+        }
         ContextFigure(controller: controller)
+        if let rate = controller.outputRate {
+            Text("\(rate) tok/s")
+                .help("Output tokens a second of the last timed generation on this agent")
+                .accessibilityLabel("Output speed")
+                .accessibilityValue("\(rate) tokens a second")
+        }
+        let cost = UsageWords.estimate(usage: controller.usage)
+        if !cost.hasSuffix("—") {
+            Text(cost)
+                .help("Estimated cost of the session, across agents")
+                .accessibilityLabel("Estimated cost")
+                .accessibilityValue(cost)
+        }
         CacheOutlookFigure(controller: controller)
         // Being connected is the normal state, so the bar spends words only on losing it.
         Text(controller.isLive ? "" : "Disconnected")

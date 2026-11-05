@@ -776,14 +776,15 @@ def run_session(c, title, prompt, wait="scripted"):
 
 @scenario("PA-01", "PA-07", "PA-08", needs_display=True)
 def bar_figures_and_tabs(c):
-    """The composer's context figure opens to the model, tokens and an estimated cost, and the inspector has four tabs."""
+    """The composer's bar shows the model, tokens and an estimated cost beside the context figure, which opens to them too, and the inspector has four tabs."""
     run_session(c, "Figures", "check", "scripted")
     c.app.not_see(r"Disconnected")
     wait_for(lambda: c.app.session().get("context", "").startswith("ctx ~"), 20, "the context figure")
 
-    # The fake model reports tokens and the cluster prices them, so the figures
-    # behind the context figure say how much, as an estimate and not as a bill.
-    c.app.not_see(r"^Estimated cost")
+    # The fake model reports tokens and the cluster prices them, so the bar says
+    # how much, as an estimate and not as a bill, and which model ran it.
+    c.app.see(r"^Model fake$", 10)
+    c.app.see(r"Estimated cost.*est \$0\.0", 10)
     c.app.press("Context window")
     c.app.see(r"Estimated cost.*est \$0\.0", 10)
     c.app.see(r"^Model: fake$", 5)
