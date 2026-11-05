@@ -922,6 +922,12 @@ def proposals_are_reviewed(c):
     c.app.see(r"proposes a rule", 40)
     c.app.see(r"Run make check before pushing", 5)
     c.app.shot(c.out / "panels" / "proposal-dock.png")
+    # The dock clips a change to a few lines, and opening it shows where it came from.
+    c.app.not_see(r"^From session")
+    c.app.press("Expand rule")
+    c.app.see(r"^From session", 5)
+    c.app.press("Collapse rule")
+    wait_for(lambda: not any(t.startswith("From session") for t in c.app.texts()), 5, "the change to clip again")
     open_tab(c, "Session")
     c.app.see(r"1 proposals waiting", 10)
     c.app.press("Reject rule")

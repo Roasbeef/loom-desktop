@@ -12,6 +12,12 @@ struct ProposalCard: View {
     let controller: SessionController
     let compact: Bool
     @State private var confirms = false
+    @State private var isExpanded = false
+
+    /// A compact card clips the change to a few lines until it is opened, so the
+    /// dock above the composer stays short. Opening it shows every line, why it
+    /// was proposed and where from, in a pane that scrolls past its own height.
+    private var isClipped: Bool { compact && !isExpanded }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -21,6 +27,17 @@ struct ProposalCard: View {
                     .font(Theme.label)
                 Text("for \(row.target)").font(Theme.meta).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 6)
+                if compact {
+                    Button {
+                        withAnimation(.smooth(duration: 0.15)) { isExpanded.toggle() }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    }
+                    .buttonStyle(.borderless)
+                    .help(isExpanded ? "Show less" : "Show the whole change")
+                    .accessibilityLabel(isExpanded ? "Collapse \(row.kindWords)" : "Expand \(row.kindWords)")
+                }
                 if row.canDecide {
                     Button("Reject") { decide("reject") }
                         .accessibilityLabel("Reject \(row.kindWords)")
@@ -32,17 +49,26 @@ struct ProposalCard: View {
                     Text(row.state).font(Theme.caption).foregroundStyle(.secondary)
                 }
             }
-            if !row.old.isEmpty {
-                Text(row.old).font(Theme.code).foregroundStyle(Theme.removedText)
-                    .lineLimit(compact ? 2 : nil)
+            ScrollView(isClipped ? [] : .vertical) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !row.old.isEmpty {
+                        Text(row.old).font(Theme.code).foregroundStyle(Theme.removedText)
+                            .lineLimit(isClipped ? 2 : nil)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text(row.new).font(Theme.code).foregroundStyle(row.old.isEmpty ? Color.primary : Theme.addedText)
+                        .lineLimit(isClipped ? 3 : nil)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-            Text(row.new).font(Theme.code).foregroundStyle(row.old.isEmpty ? Color.primary : Theme.addedText)
-                .lineLimit(compact ? 3 : nil)
-                .textSelection(.enabled)
-            if !compact, !row.rationale.isEmpty {
+            .frame(maxHeight: isClipped ? nil : 360)
+            .fixedSize(horizontal: false, vertical: isClipped)
+            if !isClipped, !row.rationale.isEmpty {
                 Quiet("Why: " + PanelWords.oneLine(row.rationale))
             }
-            if !compact {
+            if !isClipped {
                 Quiet("From session \(row.session.prefix(8))" + (row.entry.map { ", entry \($0.prefix(8))" } ?? ""))
             }
         }
