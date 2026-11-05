@@ -292,10 +292,15 @@ struct StepRow: View {
                             .font(.system(size: 11))
                             .foregroundStyle(parts.isError ? Theme.failure : .secondary)
                             .frame(width: 14)
+
+                        if parts.name == "code_mode" {
+                            ProgramBadge(isError: parts.isError)
+                        }
                         Text(verb)
                             .font(Theme.label)
                             .foregroundStyle(parts.isError ? Theme.failure : .secondary)
-                            .layoutPriority(1)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                         if !subject.isEmpty {
                             Text(subject)
                                 .font(Theme.code)
@@ -306,6 +311,10 @@ struct StepRow: View {
                         Spacer(minLength: 4)
                         if words.added != nil || words.removed != nil {
                             ChangeCounts(added: words.added ?? 0, removed: words.removed ?? 0)
+                        }
+
+                        if let program {
+                            ProgramFigures(card: program)
                         }
                         if parts.result == nil {
                             if let started = row.at {
@@ -326,7 +335,7 @@ struct StepRow: View {
                 .buttonStyle(.plain)
                 .help(parts.name)
                 .accessibilityLabel(subject.isEmpty ? verb : "\(verb) \(subject)")
-                .accessibilityValue(changeValue(words) + (isOpen ? "Expanded" : "Collapsed"))
+                .accessibilityValue(changeValue(words) + programValue(program) + (isOpen ? "Expanded" : "Collapsed"))
 
                 if parts.isError, parts.name != "code_mode" {
                     Text(StepWords.failure(name: parts.name, arguments: parts.arguments, result: parts.result))
@@ -388,6 +397,12 @@ struct StepRow: View {
         }
     }
 
+    /// A program's name and call count, spoken ahead of the open state.
+    private func programValue(_ program: ProgramCard?) -> String {
+        guard let program else { return "" }
+        return "code_mode" + (program.countWords.map { ", " + $0 } ?? "") + ". "
+    }
+
     /// The change counts, spoken ahead of the open state.
     private func changeValue(_ words: StepWords) -> String {
         var parts: [String] = []
@@ -415,6 +430,40 @@ struct StepRow: View {
         case "code_mode": return "curlybraces"
         case _ where name.hasPrefix("agent_"): return "person.2"
         default: return "wrench.and.screwdriver"
+        }
+    }
+}
+
+/// The name that marks a step as a program, so a line of them reads as code and
+/// not as the shell commands its sentence counts.
+private struct ProgramBadge: View {
+    let isError: Bool
+
+    var body: some View {
+        Text("code_mode")
+            .font(Theme.meta)
+            .foregroundStyle(isError ? Theme.failure : Color.secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(Theme.tint, in: .rect(cornerRadius: 4))
+            .fixedSize()
+    }
+}
+
+/// What a program did in numbers, without opening it: how many calls it made,
+/// how many failed, and how long it took.
+private struct ProgramFigures: View {
+    let card: ProgramCard
+
+    var body: some View {
+        if let count = card.countWords {
+            Text(count)
+                .font(Theme.meta)
+                .foregroundStyle(card.calls.contains { $0.failed } ? Theme.failure : Color.secondary)
+                .fixedSize()
+        }
+        if let elapsed = card.elapsedMs {
+            Text(StepWords.duration(ms: elapsed)).font(Theme.meta).foregroundStyle(.secondary).fixedSize()
         }
     }
 }
@@ -513,21 +562,21 @@ struct ProgramCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            // The step's own title already says what the program did, so the card
-            // leads with the figures, and a status word only when it is not plain
-            // success.
-            HStack(spacing: 8) {
-                if card.state != .completed {
-                    Text(card.statusWord).font(Theme.meta).foregroundStyle(card.state == .running ? Color.secondary : Theme.failure)
+            // The step's own line already says what the program did and its figures,
+            // so the card adds a status word only when it is not plain success, and
+            // the capability when the whole program was one call.
+            if card.state != .completed || card.calls.count == 1 {
+                HStack(spacing: 8) {
+                    if card.state != .completed {
+                        Text(card.statusWord).font(Theme.meta).foregroundStyle(card.state == .running ? Color.secondary : Theme.failure)
+                    }
+                    if card.calls.count == 1, let call = card.calls.first {
+                        Text(call.count > 1 ? "\(call.capability) ×\(call.count)" : call.capability)
+                            .font(Theme.meta)
+                            .foregroundStyle(call.failed ? Theme.failure : .secondary)
+                    }
+                    Spacer()
                 }
-                if card.calls.count == 1, let call = card.calls.first {
-                    Text(call.count > 1 ? "\(call.capability) ×\(call.count)" : call.capability)
-                        .font(Theme.meta)
-                        .foregroundStyle(call.failed ? Theme.failure : .secondary)
-                }
-                Spacer()
-                if let count = card.countWords { Text(count).font(Theme.meta).foregroundStyle(.secondary) }
-                if let elapsed = card.elapsedMs { Text(StepWords.duration(ms: elapsed)).font(Theme.meta).foregroundStyle(.secondary) }
             }
 
             // A timeline says something only once there are calls to compare.

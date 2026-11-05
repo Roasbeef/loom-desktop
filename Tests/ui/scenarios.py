@@ -621,12 +621,14 @@ def a_program_draws_as_a_card(c):
     c.app.transcript_has("The program has run", 40)
     settle(c)
     c.app.press(fold_titles(c)[0])
+
+    # The closed line names the program and gives its figures before it is opened.
+    c.app.see(r"Ran 1 command.*code_mode, 1 call\. Collapsed")
     c.app.press(name_starting(c, "Ran 1 command"))
     c.app.see(r"Program: Ran 1 command")
 
     # Plain success has no status word, and one call has no timeline: it is named.
     c.app.not_see(r"^completed$")
-    c.app.see(r"^1 call$")
     c.app.see(r"^proc\.run$")
     c.app.see(r"program-ran")
     c.app.press(name_starting(c, "Program · "))
