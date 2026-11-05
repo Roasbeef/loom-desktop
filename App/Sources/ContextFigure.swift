@@ -26,7 +26,8 @@ struct ContextFigure: View {
         Group {
             if let board {
                 button(board.footer)
-            } else if controller.focusedStrand != "main" {
+            } else {
+                // A failed or missing reading leaves a dash, so the figure never vanishes.
                 button("ctx —")
             }
         }

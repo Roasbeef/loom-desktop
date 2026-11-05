@@ -45,7 +45,7 @@ struct ComposerFigures: View {
             .foregroundStyle(Theme.attention)
             .accessibilityLabel("Connection")
             .accessibilityValue(controller.isLive ? "Connected" : "Disconnected")
-            .debouncedTask(id: ContextFigure.Trigger(strand: controller.focusedStrand, isBusy: controller.isBusy, blocks: controller.blocks.count)) {
+            .debouncedTask(id: ContextFigure.Trigger(strand: controller.focusedStrand, isBusy: controller.isBusy, blocks: controller.blocks.count / 8)) {
                 controller.read("context", body: ["strand": .string(controller.focusedStrand)])
             }
     }
