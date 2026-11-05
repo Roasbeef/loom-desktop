@@ -101,8 +101,15 @@ public struct TraceBoard: Sendable, Equatable {
                 break
             }
         }
-        let all = calls.enumerated().map { index, call in program(call.arguments, results[call.id], position: index + 1) }
-        return TraceBoard(programs: Array(all.suffix(maxPrograms)), omitted: max(0, all.count - maxPrograms))
+
+        // Only the newest programs are drawn, so only they are read. Reading every
+        // program on each update made a long session's refresh cost grow with
+        // everything it had ever run, on the main thread.
+        let first = max(0, calls.count - maxPrograms)
+        let shown = calls.enumerated().dropFirst(first).map { index, call in
+            program(call.arguments, results[call.id], position: index + 1)
+        }
+        return TraceBoard(programs: Array(shown), omitted: first)
     }
 
     private static func program(_ arguments: JSONValue, _ result: JSONValue?, position: Int) -> Program {
@@ -172,7 +179,9 @@ public struct TraceBoard: Sendable, Equatable {
         return "Program \(position)"
     }
 
+    /// A program's value or message can be a whole file, so only the start of it
+    /// is collapsed to one line. The window is far wider than the line it fills.
     private static func clip(_ text: String) -> String {
-        PanelWords.clip(PanelWords.oneLine(text), maxCharacters)
+        PanelWords.clip(PanelWords.oneLine(String(text.prefix(maxCharacters * 25))), maxCharacters)
     }
 }

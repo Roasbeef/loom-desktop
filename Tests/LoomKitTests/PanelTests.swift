@@ -154,6 +154,31 @@ final class PanelTests: XCTestCase {
         XCTAssertEqual(trace.programs[0].calls.first?.capability, "fs.list")
     }
 
+    func testTraceKeepsTheNewestProgramsAndNumbersThemFromTheStart() {
+        var chain: [JSONValue] = []
+        for number in 1...30 {
+            chain.append(json(#"{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c\#(number)","name":"code_mode","arguments":{"program":"// program \#(number)\nreturn 1"}}]}}"#))
+        }
+        let trace = TraceBoard.fold(chain: chain)
+        XCTAssertEqual(trace.programs.count, TraceBoard.maxPrograms)
+        XCTAssertEqual(trace.omitted, 30 - TraceBoard.maxPrograms)
+        XCTAssertEqual(trace.programs.first?.id, 19)
+        XCTAssertEqual(trace.programs.first?.label, "program 19")
+        XCTAssertEqual(trace.programs.last?.id, 30)
+    }
+
+    func testTraceExcerptOfAHugeValueIsOneClippedLine() {
+        let huge = String(repeating: "word  \n", count: 50_000)
+        let chain = [
+            json(#"{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","id":"c1","name":"code_mode","arguments":{"program":"x"}}]}}"#),
+            json(#"{"type":"message","message":{"role":"toolResult","toolName":"code_mode","toolCallId":"c1","isError":false,"content":[],"details":{"status":"completed","value":"\#(huge.replacingOccurrences(of: "\n", with: "\\n"))"}}}"#),
+        ]
+        let excerpt = TraceBoard.fold(chain: chain).programs.first?.excerpt ?? ""
+        XCTAssertEqual(excerpt.count, TraceBoard.maxCharacters)
+        XCTAssertTrue(excerpt.hasSuffix("…"))
+        XCTAssertFalse(excerpt.contains("\n"))
+    }
+
     func testConversationKeepsTheLastReadyContextAcrossARefresh() {
         var conversation = Conversation(sessionID: "s")
         func push(_ board: String) {
