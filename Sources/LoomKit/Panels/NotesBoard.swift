@@ -53,9 +53,16 @@ public struct NotesBoard: Sendable, Equatable {
         /// wraps, and only a value with structure of its own keeps the JSON form.
         public var fields: [Field]? {
             guard !isExcerpt, let data = text.data(using: .utf8),
-                  case .object(let object)? = try? JSONDecoder().decode(JSONValue.self, from: data),
-                  !object.isEmpty else { return nil }
-            return object.keys.sorted().map { key in Field(key: key, value: Self.value(object[key] ?? .null)) }
+                  let value = try? JSONDecoder().decode(JSONValue.self, from: data) else { return nil }
+            return Self.fields(of: value)
+        }
+
+        /// The entries of a JSON object in key order, or nil when the value is not an
+        /// object or has no keys. A note's text and an `agent_note` call's value
+        /// share this reading.
+        public static func fields(of json: JSONValue) -> [Field]? {
+            guard case .object(let object) = json, !object.isEmpty else { return nil }
+            return object.keys.sorted().map { key in Field(key: key, value: value(object[key] ?? .null)) }
         }
 
         private static func value(_ json: JSONValue) -> Field.Value {

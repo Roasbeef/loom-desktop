@@ -290,6 +290,24 @@ def memory_context_is_a_closed_row(c):
     c.app.see(r"Retry budget lives in fetch", 5)
 
 
+@scenario()
+def an_agent_note_opens_to_its_fields(c):
+    """A note an agent writes names its key on the line and opens to labelled fields, not the call's JSON."""
+    c.app.dispatch("Note fields agentnote", WORKSPACE)
+    c.app.open_session("Note fields")
+    c.app.transcript_has("The note is written", 40)
+    settle(c)
+    c.app.press(fold_titles(c)[0])
+    c.app.see(r"^Noted work/review-plan", 5)
+    c.app.press(name_starting(c, "Noted work/review-plan"))
+
+    # Each entry is a label and its value, and nothing of the call's JSON shows.
+    c.app.see(r"^task, Review the cache branch", 5)
+    c.app.see(r"^next, ", 5)
+    c.app.not_see(r'"key"')
+    c.app.not_see(r"^noted work/review-plan")
+
+
 @scenario("TR-23", "TR-24")
 def a_subagent_is_started_and_reports(c):
     """The transcript shows the agent a turn started, and its report opens to what the agent said."""

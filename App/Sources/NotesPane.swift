@@ -136,7 +136,7 @@ struct NotesPane: View {
 
 /// A note that is a JSON object, one labelled entry per key, so sentences wrap
 /// in a narrow pane instead of running off its edge.
-private struct NoteFields: View {
+struct NoteFields: View {
     let fields: [NotesBoard.Note.Field]
 
     var body: some View {

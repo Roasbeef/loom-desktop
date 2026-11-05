@@ -383,6 +383,21 @@ struct StepRow: View {
             }
         case "fs_read", "grep":
             EmptyView()
+        case "agent_note":
+            // The note as the Notes tab draws it: a value of fields reads as
+            // labelled entries, and text as markdown, not as the call's JSON.
+            if let value = parts.arguments["value"] {
+                if let fields = NotesBoard.Note.fields(of: value) {
+                    NoteFields(fields: fields)
+                } else if let text = value.string {
+                    MarkdownView(source: text)
+                        .textSelection(.enabled)
+                        .padding(10)
+                        .surface()
+                } else {
+                    OutputBlock(text: value.compactText, tint: .secondary)
+                }
+            }
         case "code_mode":
             ProgramCardView(card: ProgramCard.read(
                 arguments: parts.arguments, result: parts.result, isError: parts.isError, details: row.details
@@ -392,7 +407,7 @@ struct StepRow: View {
                 OutputBlock(text: parts.arguments.compactText, tint: .secondary)
             }
         }
-        if parts.name != "code_mode", let result = parts.result, !result.isEmpty {
+        if parts.name != "code_mode", parts.name != "agent_note" || parts.isError, let result = parts.result, !result.isEmpty {
             OutputBlock(text: result, tint: parts.isError ? Theme.failure : .primary)
         }
         if !row.pictures.isEmpty {

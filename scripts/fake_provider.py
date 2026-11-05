@@ -352,6 +352,18 @@ def script(messages):
             yield from text_stream("The plan is recorded and the first task is finished.")
         return
 
+    if "agentnote" in prompt:
+        if steps == 0:
+            yield call(0, "agent_note", {"key": "work/review-plan", "value": {
+                "task": "Review the cache branch and tighten its threat model.",
+                "next": ["read the diff", "list the invariants"],
+                "state": {"files": 3, "blocked": False},
+            }})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The note is written.")
+        return
+
     if "writenote" in prompt:
         if steps == 0:
             yield call(0, "remember", {

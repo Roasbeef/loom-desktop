@@ -179,6 +179,18 @@ final class PanelTests: XCTestCase {
         XCTAssertFalse(excerpt.contains("\n"))
     }
 
+    func testAgentNoteIsWordedByItsKeyAndItsValueReadsAsFields() throws {
+        let call = json(#"{"key":"work/plan","value":{"task":"Review it","next":["a","b"],"state":{"files":3}}}"#)
+        let words = StepWords.of(name: "agent_note", arguments: call, isRunning: false)
+        XCTAssertEqual(words.verb, "Noted")
+        XCTAssertEqual(words.subject, "work/plan")
+        let fields = try XCTUnwrap(NotesBoard.Note.fields(of: try XCTUnwrap(call["value"])))
+        XCTAssertEqual(fields.map(\.key), ["next", "state", "task"])
+        XCTAssertEqual(fields[0].value, .items(["a", "b"]))
+        XCTAssertEqual(fields[2].value, .text("Review it"))
+        XCTAssertNil(NotesBoard.Note.fields(of: .string("plain text")))
+    }
+
     func testConversationKeepsTheLastReadyContextAcrossARefresh() {
         var conversation = Conversation(sessionID: "s")
         func push(_ board: String) {
