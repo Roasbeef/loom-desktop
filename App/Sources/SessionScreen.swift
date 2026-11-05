@@ -241,7 +241,7 @@ private struct TranscriptView: View {
     /// One row of the lazy stack: a whole block, or one markdown block of a long reply.
     private enum Item: Identifiable {
         case block(TranscriptBlock)
-        case answerPart(id: String, part: MarkdownBlock, text: String, isFirst: Bool)
+        case answerPart(id: String, part: MarkdownRun, text: String, isFirst: Bool)
 
         var id: String {
             switch self {
@@ -251,7 +251,7 @@ private struct TranscriptView: View {
         }
     }
 
-    /// A reply with more blocks than this is laid out a block per row.
+    /// A reply with more runs of blocks than this is laid out a run per row.
     ///
     /// A lazy stack lays out a whole row once any of it is on screen, and estimates
     /// the rows it has not built. A long report as one row was ten thousand points
@@ -462,16 +462,16 @@ private final class SweepNotes {
 }
 #endif
 
-/// One markdown block of a long reply, as its own row. The first carries the
+/// One run of markdown blocks of a long reply, as its own row. The first carries the
 /// reply's copy control; the rest close the stack's spacing to the reply's own.
 private struct AnswerPart: View {
-    let part: MarkdownBlock
+    let part: MarkdownRun
     let text: String
     let isFirst: Bool
     @State private var isHovering = false
 
     var body: some View {
-        MarkdownView(source: "").view(for: part)
+        MarkdownView(source: "").view(forRun: part)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, isFirst ? 0 : -8)
             .overlay(alignment: .topTrailing) {

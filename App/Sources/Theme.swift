@@ -222,6 +222,39 @@ struct CopyButton: View {
 /// Parsing runs in the initializer's body on each change of `source`. It is linear
 /// in the reply and the controller paces streamed updates, so this stays well
 /// under a frame for any reply a person would read.
+/// What the transcript lays out for a reply: a run of paragraphs and lists drawn
+/// as one selectable text, or a block that has a shape of its own. A heading keeps
+/// its own view, since a text cannot mark part of itself as a heading and a reader
+/// who jumps between headings would lose them.
+enum MarkdownRun: Equatable {
+    case prose([MarkdownBlock])
+    case block(MarkdownBlock)
+
+    /// A run is cut at this many blocks, so one row stays a bounded height.
+    static let proseLimit = 8
+
+    static func group(_ blocks: [MarkdownBlock]) -> [MarkdownRun] {
+        var runs: [MarkdownRun] = []
+        var open: [MarkdownBlock] = []
+        func close() {
+            if !open.isEmpty { runs.append(.prose(open)) }
+            open = []
+        }
+        for block in blocks {
+            switch block {
+            case .paragraph, .list:
+                open.append(block)
+                if open.count == proseLimit { close() }
+            default:
+                close()
+                runs.append(.block(block))
+            }
+        }
+        close()
+        return runs
+    }
+}
+
 struct MarkdownView: View {
     let source: String
     var isStreaming = false
@@ -240,26 +273,70 @@ struct MarkdownView: View {
     /// height to measure, and it draws nothing.
     @ViewBuilder
     var blocks: some View {
-        ForEach(Array(Markdown.parse(source).enumerated()), id: \.offset) { _, block in
-            view(for: block)
+        ForEach(Array(MarkdownRun.group(Markdown.parse(source)).enumerated()), id: \.offset) { _, run in
+            view(forRun: run)
         }
     }
 
     /// Remembers the blocks of settled replies. The transcript splits a long reply
     /// into one row per block and asks for them on every update of the list, so a
     /// reply that has not changed is parsed once.
-    @MainActor private static var parseCache: [String: [MarkdownBlock]] = [:]
+    @MainActor private static var parseCache: [String: [MarkdownRun]] = [:]
 
     @MainActor
-    static func parsed(_ source: String) -> [MarkdownBlock] {
+    static func parsed(_ source: String) -> [MarkdownRun] {
         if let hit = parseCache[source] { return hit }
-        let blocks = Markdown.parse(source)
+        let blocks = MarkdownRun.group(Markdown.parse(source))
         if parseCache.count > 500 { parseCache.removeAll() }
         parseCache[source] = blocks
         return blocks
     }
 
-    /// One block on its own, for a reply the transcript lays out a block per row.
+    /// One run on its own, for a reply the transcript lays out a run per row.
+    @ViewBuilder
+    func view(forRun run: MarkdownRun) -> some View {
+        switch run {
+        case .prose(let blocks):
+            // One text, so a selection can cross from one paragraph to the next.
+            Text(Self.prose(blocks))
+                .font(Theme.body)
+                .lineSpacing(3.5)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        case .block(let block):
+            view(for: block)
+        }
+    }
+
+    /// Paragraphs and lists as one attributed text, a small gap between them. Lists lose their hanging indent, which a text cannot draw, and keep
+    /// their markers and nesting.
+    @MainActor
+    static func prose(_ blocks: [MarkdownBlock]) -> AttributedString {
+        var result = AttributedString()
+        for (index, block) in blocks.enumerated() {
+            if index > 0 {
+                var gap = AttributedString("\n\n")
+                gap.font = .system(size: 6)
+                result += AttributedString("\n") + gap
+            }
+            switch block {
+            case .paragraph(let text):
+                result += inline(text)
+            case .list(_, let items):
+                for (number, item) in items.enumerated() {
+                    if number > 0 { result += AttributedString("\n") }
+                    var marker = AttributedString(String(repeating: "\u{2007}\u{2007}", count: item.depth) + item.marker + "  ")
+                    marker.foregroundColor = .secondary
+                    result += marker + inline(item.text)
+                }
+            default:
+                break
+            }
+        }
+        return result
+    }
+
+    /// One block on its own.
     @ViewBuilder
     func view(for block: MarkdownBlock) -> some View {
         switch block {

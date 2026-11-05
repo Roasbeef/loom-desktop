@@ -595,7 +595,7 @@ def the_end_stays_in_view_when_the_width_changes(c):
     for toggle in range(4):
         c.app.menu("Toggle Inspector")
         time.sleep(1.2)
-        wait_for(lambda: c.app.fully_on_screen("point 4 about the cloned index in finding 23"), 5,
+        wait_for(lambda: c.app.end_on_screen("point 4 about the cloned index in finding 23"), 5,
                  f"the end of the reply on screen after toggle {toggle}")
 
 

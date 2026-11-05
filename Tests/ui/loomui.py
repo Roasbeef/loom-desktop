@@ -198,6 +198,20 @@ class App:
             x >= wx and y >= wy and x + w <= wx + ww and y + h <= wy + wh for x, y, w, h in found
         )
 
+    def end_on_screen(self, suffix):
+        """Whether an element whose text ends with `suffix` has its bottom edge inside the window.
+
+        A run of paragraphs is one element, so a reply's last line is the end of a longer
+        text, and the element can be taller than the window while its end is in view.
+        """
+        wx, wy, ww, wh = self.snap()["windowFrame"]
+        for n in self.tree():
+            if (n["name"].strip().endswith(suffix) or n["value"].strip().endswith(suffix)):
+                x, y, w, h = n["frame"]
+                if wy < y + h <= wy + wh and x >= wx and x + w <= wx + ww:
+                    return True
+        return False
+
     def texts(self):
         return [" ".join([n["name"], n["value"]]).strip() for n in self.tree()]
 
