@@ -154,6 +154,18 @@ final class DiffTests: XCTestCase {
         XCTAssertEqual(lines.last?.newNumber, 23)
     }
 
+    func testAnchoredEditsDrawAsAddedLinesUnderTheirHeaders() {
+        let diff = Diff.inserting([
+            (header: "replace lines 242–248", firstLine: 242, lines: ["# one", "# two"]),
+            (header: "insert after line 9", firstLine: 10, lines: ["three"]),
+        ])
+        XCTAssertEqual(diff.added, 3)
+        XCTAssertEqual(diff.removed, 0)
+        XCTAssertEqual(diff.hunks.map(\.header), ["replace lines 242–248", "insert after line 9"])
+        XCTAssertEqual(diff.hunks[0].lines.map(\.newNumber), [242, 243])
+        XCTAssertTrue(diff.hunks.flatMap(\.lines).allSatisfy { $0.kind == .added && $0.oldNumber == nil })
+    }
+
     func testAPatchWithNoHunksKeepsItsLines() {
         XCTAssertEqual(Diff.parse("+only").added, 1)
         XCTAssertEqual(Diff.parse("").hunks.count, 0)

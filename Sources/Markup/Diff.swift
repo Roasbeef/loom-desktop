@@ -119,6 +119,26 @@ public enum Diff {
         )
     }
 
+    /// Builds a diff from edits that name where text goes and carry only the new
+    /// lines, as an anchored edit does. The text it replaces is not in the call, so
+    /// the diff has added lines under a header that says what they replace, and the
+    /// lines are numbered from `firstLine` when the edit names one.
+    public static func inserting(_ edits: [(header: String, firstLine: Int?, lines: [String])]) -> DiffSummary {
+        var hunks: [DiffHunk] = []
+        var id = 0
+        var added = 0
+        for (index, edit) in edits.enumerated() {
+            var lines: [DiffHunk.Line] = []
+            for (offset, text) in edit.lines.enumerated() {
+                lines.append(.init(id: id, kind: .added, oldNumber: nil, newNumber: edit.firstLine.map { $0 + offset }, text: text))
+                id += 1
+            }
+            added += lines.count
+            hunks.append(.init(id: index, header: edit.header, lines: lines))
+        }
+        return DiffSummary(hunks: hunks, added: added, removed: 0)
+    }
+
     private static func isFileHeader(_ line: String) -> Bool {
         ["diff --git", "index ", "--- ", "+++ ", "new file", "deleted file", "similarity ", "rename ", "commit ", "Author:", "Date:"]
             .contains { line.hasPrefix($0) }

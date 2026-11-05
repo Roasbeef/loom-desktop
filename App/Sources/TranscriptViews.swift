@@ -61,6 +61,9 @@ struct FoldView: View {
                 .transition(.opacity)
             }
         }
+        // The fold opens as its turn starts and closes when it ends. Closing a
+        // tall run of steps in one frame moves everything below it, so it eases.
+        .animation(.smooth(duration: 0.25), value: fold.isLive)
     }
 
     @ViewBuilder
@@ -365,7 +368,7 @@ struct StepRow: View {
             DiffView(summary: Diff.between(old: "", new: parts.arguments["content"]?.string ?? ""))
         case "fs_edit":
             if let hunks = parts.arguments["hunks"]?.array {
-                OutputBlock(text: hunks.map(Self.hunkText).joined(separator: "\n"), tint: .secondary)
+                DiffView(summary: Diff.inserting(hunks.map(Self.anchoredEdit)))
             } else {
                 DiffView(summary: Diff.between(
                     old: parts.arguments["old"]?.string ?? parts.arguments["old_string"]?.string ?? "",
@@ -411,14 +414,18 @@ struct StepRow: View {
         return parts.isEmpty ? "" : parts.joined(separator: ", ") + ". "
     }
 
-    /// One anchored hunk as the lines it removes and adds.
-    private static func hunkText(_ hunk: JSONValue) -> String {
+    /// One anchored hunk as a header saying what it does and where, and the lines
+    /// it puts there.
+    private static func anchoredEdit(_ hunk: JSONValue) -> (header: String, firstLine: Int?, lines: [String]) {
         let op = hunk["op"]?.string ?? "edit"
         let from = hunk["from"]?["line"]?.int ?? hunk["at"]?["line"]?.int
         let to = hunk["to"]?["line"]?.int
         let place = from.map { start in to.map { "lines \(start)–\($0)" } ?? "after line \(start)" } ?? "at the start"
-        let lines = (hunk["lines"]?.array ?? []).compactMap(\.string).map { "+ " + $0 }
-        return (["\(op) \(place)"] + lines).joined(separator: "\n")
+        let lines = (hunk["lines"]?.array ?? []).compactMap(\.string)
+
+        // Inserted after a line, the new text starts on the next one.
+        let isAfter = hunk["from"] == nil && hunk["at"] != nil
+        return ("\(op) \(place)", from.map { isAfter ? $0 + 1 : $0 } ?? 1, lines)
     }
 
     private func icon(_ name: String) -> String {
