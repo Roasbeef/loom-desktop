@@ -217,6 +217,14 @@ private struct TranscriptView: View {
     #endif
     @State private var width: CGFloat = 0
 
+    // Whether the reader is within reach of the top, or what is loaded does not
+    // yet fill the window. It is read from the scroll geometry and not from the
+    // stack building the "Load Older Turns" button: a lazy stack that lost its
+    // place can build the top of a long transcript while the view is at the end,
+    // and each page that landed then asked for the next until the whole history
+    // was held, which is what made a long session crawl.
+    @State private var wantsOlder = false
+
     /// What changes when a reply settles: the live tail ends and its committed
     /// rows replace it, often at a different height. Older turns paging in at the
     /// top leave both parts alone, so they never pull the reader to the end.
@@ -270,6 +278,9 @@ private struct TranscriptView: View {
     /// a streaming reply out this way.
     private static let splitAbove = 6
 
+    /// How close to the top of the transcript, in points, counts as near it.
+    private static let nearTop: CGFloat = 800
+
     private var items: [Item] {
         visibleBlocks.flatMap { block -> [Item] in
             guard case .row(let row) = block, case .assistant(let text) = row.kind else { return [.block(block)] }
@@ -296,10 +307,6 @@ private struct TranscriptView: View {
                     .buttonStyle(.link)
                     .frame(maxWidth: .infinity)
 
-                    // The button is built only once the reader scrolls to it, so
-                    // its appearing is the request, and each page that lands
-                    // changes the first block and asks for the next while it shows.
-                    .task(id: controller.blocks.first?.id) { controller.loadOlder() }
                 } else if controller.isAdopted, query.isEmpty, !controller.blocks.isEmpty {
                     Text("Beginning of the conversation")
                         .font(Theme.caption)
@@ -350,6 +357,20 @@ private struct TranscriptView: View {
             geometry.visibleRect.maxY >= geometry.contentSize.height - 40
         } action: { _, atBottom in
             isAtBottom = atBottom
+        }
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.visibleRect.minY < Self.nearTop
+                || geometry.contentSize.height <= geometry.containerSize.height + Self.nearTop
+        } action: { _, near in
+            wantsOlder = near
+        }
+
+        // A page that lands changes the first block, which restarts this and asks
+        // for the next while the reader is still near the top, so the history
+        // arrives a turn at a time as far as the reader goes and no further.
+        .task(id: "\(wantsOlder)|\(controller.hasOlder)|\(controller.blocks.first?.id ?? "")") {
+            guard wantsOlder, query.isEmpty, controller.hasOlder else { return }
+            controller.loadOlder()
         }
         .onScrollPhaseChange { _, phase, context in
             guard phase == .idle else { return }
