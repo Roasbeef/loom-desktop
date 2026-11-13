@@ -107,11 +107,11 @@ struct FoldRow: View {
             ReasoningRow(text: text, tookMs: row.tookMs, summary: summary)
         case .assistant(let text):
             // Prose the strand wrote between steps is narration, so it is drawn
-            // quieter than the answer.
-            Text(text)
-                .font(.callout)
+            // quieter than the answer. It is still markdown, and a long one can
+            // hold headings, lists and fences, so it is laid out block by block
+            // like any reply rather than as one raw text.
+            MarkdownView(source: text)
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
         default:
             RowView(row: row)
         }
