@@ -89,7 +89,7 @@ public enum JSONValue: Sendable, Equatable, Hashable, Codable {
 
     /// Parses one JSON document.
     public static func parse(_ data: Data) throws -> JSONValue {
-        try JSONDecoder().decode(JSONValue.self, from: data)
+        try JSONParser.parse(data)
     }
 }
 
