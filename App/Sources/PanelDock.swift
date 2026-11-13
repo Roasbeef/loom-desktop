@@ -24,7 +24,7 @@ struct PanelDock: View {
                 }
             }
             if let todo = controller.todo, !todo.isEmpty {
-                TodoDock(board: todo, isBusy: controller.isBusy)
+                TodoDock(board: todo)
             }
             if controller.showsSideQuestion {
                 SideQuestionPanel(controller: controller)

@@ -844,7 +844,7 @@ def todo_board_follows_the_agent(c):
     run_session(c, "Plan", "todoboard now", "first task is finished")
     wait_for(lambda: c.app.session().get("todo") == "1/4 done", 15, "the board")
     c.app.see(r"Todo board.*Add the tests", 5)
-    # The board remembers whether it was left open, so open it only if it is not.
+    # The board starts closed, and a run does not open it.
     try:
         c.app.see(r"Wire the metrics, pending", 1)
     except Failure:
