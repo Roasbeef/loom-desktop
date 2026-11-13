@@ -507,6 +507,61 @@ private struct BlockView: View {
     }
 }
 
+/// A message a person wrote. A long one is shown as a preview with the rest one
+/// press away, and opened in a box that scrolls.
+///
+/// One `Text` taller than the renderer's largest layer draws as nothing, and a
+/// large paste is enough to make one: the page went blank around it and came
+/// back only when a pane was opened or closed. Bounding what is laid out keeps
+/// the row drawable however much was pasted. The copy button beside the message
+/// still copies all of it.
+private struct UserText: View {
+    let text: String
+    @State private var isOpen = false
+
+    private static let previewLines = 24
+    private static let previewCharacters = 3_000
+    private static let openCharacters = 60_000
+
+    /// The first lines of the message, and whether any of it was left out.
+    private var preview: (text: String, isCut: Bool) {
+        let head = text.prefix(Self.previewCharacters)
+        let lines = head.split(separator: "\n", omittingEmptySubsequences: false)
+        let kept = lines.prefix(Self.previewLines).joined(separator: "\n")
+        return (kept, kept.count < text.count)
+    }
+
+    var body: some View {
+        let shown = preview
+        VStack(alignment: .trailing, spacing: 6) {
+            if isOpen, shown.isCut {
+                ScrollView {
+                    Text(String(text.prefix(Self.openCharacters)))
+                        .font(Theme.body).lineSpacing(3)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 420)
+            } else {
+                Text(shown.text)
+                    .font(Theme.body).lineSpacing(3)
+                    .textSelection(.enabled)
+            }
+            if shown.isCut {
+                Button(isOpen ? "Show less" : "Show all \(text.count.formatted()) characters") { isOpen.toggle() }
+                    .buttonStyle(.link)
+                    .font(Theme.caption)
+                if isOpen, text.count > Self.openCharacters {
+                    Quiet("Showing the first \(Self.openCharacters.formatted()) characters. Copy has all of it.")
+                }
+            }
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 9)
+        .background(Theme.tintStrong, in: .rect(cornerRadius: Theme.radius))
+    }
+}
+
 struct RowView: View {
     let row: TranscriptRow
     @State private var isHovering = false
@@ -520,13 +575,7 @@ struct RowView: View {
                 CopyButton(text: text, label: "Copy message")
                     .opacity(isHovering ? 1 : 0)
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(text)
-                        .font(Theme.body)
-                        .lineSpacing(3)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 9)
-                        .background(Theme.tintStrong, in: .rect(cornerRadius: Theme.radius))
+                    UserText(text: text)
                     if row.images > 0 {
                         Label("\(row.images) image\(row.images == 1 ? "" : "s")", systemImage: "photo")
                             .font(Theme.caption)

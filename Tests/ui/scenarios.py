@@ -1304,3 +1304,17 @@ def a_daemon_loss_recovers(c):
     if not c.app.snap()["showsSidebar"]:
         c.app.menu("Toggle Sidebar")
     c.app.see("unavailable")
+
+
+@scenario(needs_display=True)
+def a_huge_paste_stays_drawable(c):
+    """A very large message is a bounded preview that opens, so the page never goes blank."""
+    c.app.dispatch("Paste one", WORKSPACE)
+    c.app.open_session("Paste one")
+    sid = c.app.session_id("Paste one")
+    paste = " ".join(f"line{i} " + "word " * 12 for i in range(4000))
+    c.app.prompt(sid, paste)
+    c.app.see(r"Show all [\d,]+ characters", 40)
+    c.app.not_see(r"line3999")
+    c.app.press(f"Show all {len(paste):,} characters")
+    c.app.see(r"Show less", 5)
