@@ -326,6 +326,12 @@ public struct Conversation: Sendable, Equatable {
     private var entries: [String: JSONValue] = [:]
     private var lastMetadata: JSONValue?
 
+    /// Where each strand sits in `strands`, so a strand is found without a scan.
+    private var strandIndex: [String: Int] = [:]
+
+    /// What was worked out for strands already, shared by every copy of this value.
+    private let memo = ProjectionMemo()
+
     public init(sessionID: String) {
         self.sessionID = sessionID
     }
@@ -571,8 +577,19 @@ public struct Conversation: Sendable, Equatable {
 
     private mutating func applyMetadata(_ metadata: JSONValue) {
         let cells = metadata["cells"]?.array ?? []
+
+        // One pass indexes every cell by namespace and key. Looking each strand's
+        // cells up with a scan of the whole list made building the strands cost
+        // the square of their number, which at a few thousand strands was seconds
+        // for each change.
+        var index: [CellKey: JSONValue] = [:]
+        index.reserveCapacity(cells.count)
+        for cell in cells {
+            guard let namespace = cell["namespace"]?.string, let key = cell["key"]?.string else { continue }
+            index[CellKey(namespace: namespace, key: key)] = cell["value"]
+        }
         func value(_ namespace: String, _ key: String) -> JSONValue? {
-            cells.first { $0["namespace"]?.string == namespace && $0["key"]?.string == key }?["value"]
+            index[CellKey(namespace: namespace, key: key)]
         }
 
         strands = cells
@@ -590,6 +607,7 @@ public struct Conversation: Sendable, Equatable {
                 )
             }
             .sorted { lhs, rhs in lhs.id == "main" ? true : (rhs.id == "main" ? false : lhs.id < rhs.id) }
+        strandIndex = Dictionary(strands.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         escalations = cells
             .filter {
@@ -697,15 +715,8 @@ public struct Conversation: Sendable, Equatable {
     /// rather than sorting by sequence is what keeps another strand's entries
     /// and an abandoned branch out of this transcript.
     public func rows(strand: String, clearedThrough: Int? = nil) -> [TranscriptRow] {
-        guard let leaf = strands.first(where: { $0.id == strand })?.leaf else { return [] }
-
-        var chain: [JSONValue] = []
-        var cursor: String? = leaf
-        while let id = cursor, let entry = entries[id] {
-            chain.append(entry)
-            cursor = entry["parentId"]?.string
-        }
-        var rows = Self.withoutRepeatedMemory(Self.rows(ordered: Array(chain.reversed())))
+        guard let tip = leaf(of: strand) else { return [] }
+        var rows = chainRows(from: tip)
 
         // `/clear` hides what this client had already drawn. The records stay in
         // the session, so another client and a reopened window still show them.
@@ -728,6 +739,23 @@ public struct Conversation: Sendable, Equatable {
             }
         }
         return rows
+    }
+
+    /// The leaf entry of a strand, found without a scan.
+    private func leaf(of strand: String) -> String? {
+        strandIndex[strand].flatMap { strands[$0].leaf }
+    }
+
+    /// The rows of the chain that ends at `leaf`, oldest first, before any
+    /// decision is placed among them. A strand's summary needs only these.
+    private func chainRows(from leaf: String) -> [TranscriptRow] {
+        var chain: [JSONValue] = []
+        var cursor: String? = leaf
+        while let id = cursor, let entry = entries[id] {
+            chain.append(entry)
+            cursor = entry["parentId"]?.string
+        }
+        return Self.withoutRepeatedMemory(Self.rows(ordered: Array(chain.reversed())))
     }
 
     /// Drops a memory context row whose text is the same as the last one drawn.
@@ -782,7 +810,7 @@ public struct Conversation: Sendable, Equatable {
     /// only the distance to the last call. A strand whose chain holds none has
     /// no board here, and the caller may seed one from the strand's notes.
     public func todoBoard(strand: String) -> TodoBoard? {
-        var cursor = strands.first { $0.id == strand }?.leaf
+        var cursor = leaf(of: strand)
         while let id = cursor, let entry = entries[id] {
             if let board = TodoBoard.from(toolResult: entry["message"]) { return board }
             cursor = entry["parentId"]?.string
@@ -793,25 +821,58 @@ public struct Conversation: Sendable, Equatable {
     /// The `code_mode` programs on the strand's chain, for the Trace tab.
     public func traceBoard(strand: String) -> TraceBoard {
         var chain: [JSONValue] = []
-        var cursor = strands.first { $0.id == strand }?.leaf
+        var cursor = leaf(of: strand)
         while let id = cursor, let entry = entries[id] {
             chain.append(entry)
             cursor = entry["parentId"]?.string
         }
-        return TraceBoard.fold(chain: chain.reversed())
+
+        // The fold reads every program on the chain, and a revision moves for many
+        // reasons that leave the chain alone, so it is kept for the chain it read.
+        let key = ProjectionMemo.TraceKey(strand: strand, leaf: leaf(of: strand), oldest: chain.last?["id"]?.string, count: chain.count)
+        if let hit = memo.trace(for: key) { return hit }
+        let board = TraceBoard.fold(chain: chain.reversed())
+        memo.keep(trace: board, for: key)
+        return board
     }
 
     /// One line for each strand, in the order the strands are held.
+    ///
+    /// An entry is never rewritten, so a strand's line is a function of the strand
+    /// (which names its leaf), its glance, how many approvals wait on it and
+    /// whether it holds input. A line is worked out again only when one of those
+    /// moved, so a pass over thousands of idle strands is a lookup for each and
+    /// not a walk of every chain. The approvals and held inputs are counted once
+    /// for the pass, not searched for each strand.
     public func strandLines() -> [StrandLine] {
-        strands.map { strand in
-            StrandLine.make(
-                strand: strand,
-                glance: glances[strand.id],
-                rows: rows(strand: strand.id),
-                approvals: escalations.filter { $0.strand == strand.id }.count,
-                hasHeldInput: pendingInputs.contains { $0.strand == strand.id }
+        var waiting: [String: Int] = [:]
+        for escalation in escalations { waiting[escalation.strand, default: 0] += 1 }
+        let held = Set(pendingInputs.map(\.strand))
+        let previous = memo.lines()
+        var next: [String: ProjectionMemo.Line] = [:]
+        next.reserveCapacity(strands.count)
+
+        let lines = strands.map { strand -> StrandLine in
+            let key = ProjectionMemo.LineKey(
+                strand: strand, glance: glances[strand.id],
+                approvals: waiting[strand.id] ?? 0, hasHeldInput: held.contains(strand.id)
             )
+            if let hit = previous[strand.id], hit.key == key {
+                next[strand.id] = hit
+                return hit.line
+            }
+            let line = StrandLine.make(
+                strand: strand,
+                glance: key.glance,
+                rows: strand.leaf.map { chainRows(from: $0) } ?? [],
+                approvals: key.approvals,
+                hasHeldInput: key.hasHeldInput
+            )
+            next[strand.id] = .init(key: key, line: line)
+            return line
         }
+        memo.keep(lines: next)
+        return lines
     }
 
     /// Whether this strand's chain continues below what is held. Asking the
@@ -825,7 +886,7 @@ public struct Conversation: Sendable, Equatable {
     /// Nil when the chain is complete, or when a record too large to decode
     /// hides its parent.
     public func olderAnchor(strand: String) -> String? {
-        var cursor = strands.first { $0.id == strand }?.leaf
+        var cursor = leaf(of: strand)
         while let id = cursor {
             guard let entry = entries[id] else { return id }
             if entry["unknownParent"]?.bool == true { return nil }
@@ -835,7 +896,7 @@ public struct Conversation: Sendable, Equatable {
     }
 
     private func oldestIsOpaque(strand: String) -> Bool {
-        var cursor = strands.first { $0.id == strand }?.leaf
+        var cursor = leaf(of: strand)
         while let id = cursor, let entry = entries[id] {
             if entry["unknownParent"]?.bool == true { return true }
             cursor = entry["parentId"]?.string
@@ -1028,4 +1089,75 @@ public struct Conversation: Sendable, Equatable {
     private static func text(of blocks: [JSONValue]) -> String {
         blocks.compactMap { $0["type"]?.string == "text" ? $0["text"]?.string : nil }.joined(separator: "\n")
     }
+}
+
+
+/// The key of one cell in a metadata document.
+private struct CellKey: Hashable {
+    let namespace: String
+    let key: String
+}
+
+/// Work already done for a conversation's strands, kept beside the value.
+///
+/// The conversation is a value that is copied freely, and each copy can be asked
+/// for the same summary. What is kept here is a pure function of the inputs that
+/// are stored with it, so a hit is always the answer a recomputation would give,
+/// and sharing the box between copies is safe. Equality ignores it for that reason.
+final class ProjectionMemo: @unchecked Sendable, Equatable {
+    /// What a strand's line was worked out from.
+    struct LineKey: Equatable {
+        let strand: Strand
+        let glance: Glance?
+        let approvals: Int
+        let hasHeldInput: Bool
+    }
+
+    struct Line {
+        let key: LineKey
+        let line: StrandLine
+    }
+
+    /// The chain a trace board was folded from: its strand and tip, how far back
+    /// it was held, and how long. Entries are never rewritten, so equal keys are
+    /// equal chains.
+    struct TraceKey: Equatable {
+        let strand: String
+        let leaf: String?
+        let oldest: String?
+        let count: Int
+    }
+
+    private let lock = NSLock()
+    private var cached: [String: Line] = [:]
+    private var traced: (key: TraceKey, board: TraceBoard)?
+
+    func trace(for key: TraceKey) -> TraceBoard? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let traced, traced.key == key else { return nil }
+        return traced.board
+    }
+
+    func keep(trace board: TraceBoard, for key: TraceKey) {
+        lock.lock()
+        defer { lock.unlock() }
+        traced = (key, board)
+    }
+
+    func lines() -> [String: Line] {
+        lock.lock()
+        defer { lock.unlock() }
+        return cached
+    }
+
+    /// Replaces the cache with the lines of the strands now held, which drops
+    /// the lines of any strand that has gone.
+    func keep(lines: [String: Line]) {
+        lock.lock()
+        defer { lock.unlock() }
+        cached = lines
+    }
+
+    static func == (_: ProjectionMemo, _: ProjectionMemo) -> Bool { true }
 }
