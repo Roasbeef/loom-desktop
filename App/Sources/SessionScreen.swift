@@ -652,7 +652,7 @@ struct RowView: View {
         case .failure(let text):
             Label {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(text).textSelection(.enabled)
+                    Text(OutputBlock.cut(text)).textSelection(.enabled)
                     if row.repeats > 1 {
                         // The same failure again and again is one line that counts them.
                         Text("×\(row.repeats)")

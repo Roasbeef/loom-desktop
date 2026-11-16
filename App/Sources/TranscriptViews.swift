@@ -172,7 +172,7 @@ struct PeerCard: View {
                 Spacer(minLength: 8)
                 Text("Origin checked by the daemon").font(Theme.meta).foregroundStyle(.tertiary)
             }
-            Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Text(OutputBlock.cut(text)).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Button("Reply to Peer") {
                     model.currentSession?.composer.draft = "Reply to \(name) (session \(session), strand \(strand)): "
@@ -204,7 +204,7 @@ struct SiblingCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("From strand \(StrandName.display(strand))").font(Theme.label).foregroundStyle(.secondary)
-            Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Text(OutputBlock.cut(text)).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             if let trailer {
                 Text(trailer).font(Theme.caption).foregroundStyle(.tertiary).textSelection(.enabled).lineLimit(6)
             }
@@ -251,7 +251,7 @@ struct AdvisorLine: View {
                     Image(systemName: "eye").font(.system(size: 11)).foregroundStyle(.tertiary)
                     Text(frame.label).font(Theme.label).foregroundStyle(.secondary)
                 }
-                Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(OutputBlock.cut(text)).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(12)
@@ -652,9 +652,25 @@ struct OutputBlock: View {
     /// The language to colour the text as. Output with none is drawn in the tint alone.
     var language: String?
 
+    /// Output past this many lines or characters is cut for drawing. One `Text` taller
+    /// than the renderer's layer limit draws blank, and takes its neighbours with it.
+    static let previewLines = 300
+    static let previewCharacters = 20_000
+
+    private var shown: String { OutputBlock.cut(text) }
+
+    private var isCut: Bool { shown.count < text.count }
+
+    static func cut(_ text: String) -> String {
+        let head = text.prefix(previewCharacters)
+        let lines = head.split(separator: "\n", maxSplits: previewLines, omittingEmptySubsequences: false)
+        if lines.count <= previewLines, head.count == text.count { return text }
+        return lines.prefix(previewLines).joined(separator: "\n")
+    }
+
     private var styled: Text {
-        guard let language else { return Text(text) }
-        return Text(HighlightCache.attributed(text, language: language, isStreaming: false))
+        guard let language else { return Text(shown) }
+        return Text(HighlightCache.attributed(shown, language: language, isStreaming: false))
     }
 
     /// The block's own width. A scroll view that scrolls both ways gives a spacer
@@ -678,6 +694,15 @@ struct OutputBlock: View {
         .frame(maxHeight: 260)
         .fixedSize(horizontal: false, vertical: true)
         .surface(radius: Theme.radiusInner)
+        .overlay(alignment: .bottomTrailing) {
+            if isCut {
+                Text("Cut to the first \(Self.previewLines) lines")
+                    .font(Theme.meta).foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.thinMaterial, in: .capsule)
+                    .padding(6)
+            }
+        }
     }
 }
 
