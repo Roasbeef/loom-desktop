@@ -769,11 +769,51 @@ struct ReasoningRow: View {
             }
 
             if isOpen {
-                MarkdownView(source: text)
+                // A long thought is one row, so it is laid out a slice at a time.
+                // A row taller than the renderer's layer limit draws blank, and takes
+                // the whole transcript with it.
+                let slice = ThoughtSlice.head(of: text, shown: shownCharacters)
+                MarkdownView(source: slice.text)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if slice.hiddenCharacters > 0 {
+                    Button("Show more (\(slice.hiddenCharacters.formatted()) characters left)") {
+                        shownCharacters += ThoughtSlice.step
+                    }
+                    .buttonStyle(.link)
+                    .font(Theme.caption)
+                }
             }
         }
+    }
+
+    @State private var shownCharacters = ThoughtSlice.step
+}
+
+/// How much of a thought one row lays out. Cut on a paragraph break, so a slice
+/// never ends inside a code fence's opening line or a word.
+enum ThoughtSlice {
+    static let step = 6_000
+
+    struct Cut {
+        let text: String
+        let hiddenCharacters: Int
+    }
+
+    static func head(of text: String, shown: Int) -> Cut {
+        guard text.count > shown else { return Cut(text: text, hiddenCharacters: 0) }
+        let head = text.prefix(shown)
+        let end = head.range(of: "\n\n", options: .backwards)?.lowerBound ?? head.endIndex
+        let kept = String(head[..<end])
+        return Cut(text: kept, hiddenCharacters: text.count - kept.count)
+    }
+
+    static func tail(of text: String, shown: Int) -> Cut {
+        guard text.count > shown else { return Cut(text: text, hiddenCharacters: 0) }
+        let tail = text.suffix(shown)
+        let start = tail.range(of: "\n\n")?.upperBound ?? tail.startIndex
+        let kept = String(tail[start...])
+        return Cut(text: kept, hiddenCharacters: text.count - kept.count)
     }
 }
 
@@ -916,6 +956,8 @@ private struct LiveReasoning: View {
 
     /// The section the summary is in now when it has titles, or its newest line.
     private var newest: AttributedString {
+        // Only the end is read, so each streamed token costs the same however long the thought is.
+        let thinking = String(thinking.suffix(4_000))
         if let title = Markdown.sectionTitles(in: thinking).last { return AttributedString(title) }
         let line = thinking.split(separator: "\n", omittingEmptySubsequences: true).last.map(String.init) ?? thinking
         return MarkdownView.inline(line.count > 120 ? "…" + String(line.suffix(120)) : line)
@@ -949,7 +991,14 @@ private struct LiveReasoning: View {
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
 
             if isOpen {
-                MarkdownView(source: thinking, isStreaming: true)
+                // Only the newest part is laid out while it streams: the earlier part
+                // is already settled and one row cannot be arbitrarily tall.
+                let slice = ThoughtSlice.tail(of: thinking, shown: ThoughtSlice.step)
+                if slice.hiddenCharacters > 0 {
+                    Text("Earlier thinking (\(slice.hiddenCharacters.formatted()) characters) shows once it settles.")
+                        .font(Theme.caption).foregroundStyle(.tertiary)
+                }
+                MarkdownView(source: slice.text, isStreaming: true)
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
