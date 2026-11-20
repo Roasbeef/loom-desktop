@@ -37,6 +37,9 @@ final class ThreadReader {
     private(set) var evidenceWords: String?
     private(set) var record: AttentionRecord?
     private(set) var recordWords: String?
+    private(set) var review: ReviewRead?
+    private(set) var reviewWords: String?
+    private(set) var findReads: [String: FindRead] = [:]
 
     /// How long a pane waits before its first read.
     private static let settle: Duration = .milliseconds(350)
@@ -45,6 +48,11 @@ final class ThreadReader {
         guard let control, reads.approval || reads.brief || reads.record != nil else { return }
         try? await Task.sleep(for: Self.settle)
         var last: BriefRead?
+
+        // The worktree is read once: it runs Git on the session's helper pool, which the
+        // agent's own tools share, and the refresh below would repeat it every fifteen
+        // seconds.
+        if reads.review { await readReview(control, session) }
 
         repeat {
             if Task.isCancelled { return }
@@ -90,6 +98,56 @@ final class ThreadReader {
         }
     }
 
+    /// The session's worktree as a review. A refusal for the credential's allowance of
+    /// workspace reads says nothing about the session, so it is waited out and tried
+    /// again, twice at most, the way the scan does; any other failure is the words the
+    /// pane shows beside Read again.
+    func readReview(_ control: ControlClient, _ session: String) async {
+        reviewWords = nil
+        for attempt in 0..<ReviewScan.maxAttempts {
+            do {
+                review = try await control.review(sessionID: session)
+                return
+            } catch is CancellationError {
+                return
+            } catch {
+                let words = ComposerModel.words(error)
+                var code: String?
+                if case LoomError.server(let found, _, _) = error { code = found }
+                let failure = ReviewScan.Failure(code: code, message: words)
+                reviewWords = words
+                guard failure == .busy, attempt + 1 < ReviewScan.maxAttempts else { return }
+                try? await Task.sleep(for: .seconds(4))
+                if Task.isCancelled { return }
+            }
+        }
+    }
+
+    /// The revision of each find the review draws, which a close names. Each is read
+    /// once and in turn, and one that failed says why and is not read again until the
+    /// pane is opened afresh.
+    func readFinds(_ ids: [String], control: ControlClient?, session: String) async {
+        guard let control else { return }
+        for id in ids where findReads[id] == nil {
+            findReads[id] = .reading
+            do {
+                let record = try await control.attentionRecord(sessionID: session, id: id)
+                var mayClose = false
+                if case .find(let find) = record.detail { mayClose = find.mayClose }
+                findReads[id] = .read(revision: record.revision, mayClose: mayClose)
+            } catch is CancellationError {
+                findReads[id] = nil
+                return
+            } catch {
+                findReads[id] = .unread(ComposerModel.words(error))
+            }
+        }
+    }
+
+    /// Forgets a find's revision after the daemon refused a close at it, so the next
+    /// pass reads the find afresh and the owner stages against what is there now.
+    func forgetFind(_ id: String) { findReads[id] = nil }
+
     /// The peer messages the pane may draw: only for an approval whose brief was read
     /// after that approval's own raise time.
     var peers: [BriefPeer] {
@@ -110,6 +168,7 @@ struct InboxPane: View {
     @Binding var draft: String
     @State private var reader = ThreadReader()
     @State private var outcome = SendOutcome.unsent
+    @State private var outbox = ReviewOutbox()
 
     private var sessionID: String { row.sessionID }
 
@@ -164,7 +223,13 @@ struct InboxPane: View {
                 .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if ThreadRule.offersMessage(kind: row.kind, hasStat: hasReviewStat, isObserver: isObserver) {
+            if row.kind == .review, reader.review != nil {
+                OutboxBar(
+                    name: row.name, acting: !isObserver, outbox: outbox,
+                    clear: { outbox.clear() },
+                    send: { sendReview() }
+                )
+            } else if ThreadRule.offersMessage(kind: row.kind, hasReview: reader.review != nil, isObserver: isObserver) {
                 MessageBar(
                     name: row.name, kind: row.kind, draft: $draft, outcome: outcome,
                     send: { choice in send(text: draft, choice: choice, strand: strand) }
@@ -178,6 +243,9 @@ struct InboxPane: View {
         .accessibilityIdentifier("inbox-pane/\(row.id)")
         .task(id: row.id) {
             await reader.run(reads: reads, session: sessionID, control: model.daemon(holding: sessionID)?.control)
+        }
+        .task(id: findIDs) {
+            await reader.readFinds(findIDs, control: model.daemon(holding: sessionID)?.control, session: sessionID)
         }
     }
 
@@ -242,6 +310,12 @@ struct InboxPane: View {
         case .stuck:
             if let stuck = feedRow?.stuck.items.first(where: { $0.strand == strand }) {
                 Text(verbatim: ThreadRule.stuckTitle(reason: stuck.reason))
+            } else {
+                Text(verbatim: row.head)
+            }
+        case .session where row.kind == .review:
+            if let review = reader.review {
+                Text(verbatim: ReviewRule.title(review.stat))
             } else {
                 Text(verbatim: row.head)
             }
@@ -365,16 +439,29 @@ struct InboxPane: View {
 
     private var reviewBody: some View {
         VStack(alignment: .leading, spacing: 18) {
-            PaneSection("To review") {
+            // Until the review is read, the scan's size line says how large the change is.
+            if reader.review == nil {
                 Text(verbatim: reviewWords).font(Theme.body)
-                if let command = reader.brief?.command {
-                    Text(verbatim: ThreadRule.commandWords(command)).font(Theme.code).textSelection(.enabled)
-                        .padding(.horizontal, 8).padding(.vertical, 3).surface(radius: Theme.radiusInner)
-                }
             }
-            LastMessage(activity: activity, brief: reader.brief, working: false)
-            Text("The files and their hunks are on the session's page.").font(Theme.caption).foregroundStyle(.secondary)
+            ReviewThread(
+                review: reader.review, words: reader.reviewWords,
+                commandWords: reader.brief?.command.map { ThreadRule.commandWords($0) },
+                finds: feedRow?.finds.items ?? [], reads: reader.findReads, acting: !isObserver,
+                outbox: $outbox,
+                readAgain: {
+                    let id = sessionID
+                    guard let control = model.daemon(holding: id)?.control else { return }
+                    Task { await reader.readReview(control, id) }
+                }
+            ) {
+                LastMessage(activity: activity, brief: reader.brief, working: false)
+            }
         }
+    }
+
+    /// The ids of the finds the review may draw, which the revisions are read for.
+    private var findIDs: [String] {
+        row.kind == .review ? (feedRow?.finds.items.map(\.id) ?? []) : []
     }
 
     /// The change's size from the worktree scan, or what the scan has not yet said.
@@ -388,12 +475,6 @@ struct InboxPane: View {
     }
 
     private var reviewMessage: String? { activity.flatMap { InboxRule.said($0) } }
-
-    /// Whether the scan has counted the change, which is what takes the message bar
-    /// away from a review thread.
-    private var hasReviewStat: Bool {
-        reviewMessage.flatMap { model.reviewStat(of: sessionID, message: $0) } != nil
-    }
 
     private var sessionBody: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -423,6 +504,61 @@ struct InboxPane: View {
     }
 
     // MARK: Sending
+
+    /// Sends the staged review: each find close in turn, then the one prompt, as
+    /// `ReviewOutbox` asks. A close the daemon refuses halts the Send with nothing
+    /// said to the agent, and its find is read afresh.
+    private func sendReview() {
+        guard let review = reader.review else { return }
+        var step = outbox.send(files: ReviewRule.ordered(review.files).map(\.path))
+        guard step != .halted else { return }
+        let id = sessionID
+        let name = row.name
+        Task {
+            while step != .halted {
+                switch step {
+                case .close(let find, let revision, let found):
+                    let result = await closeFind(session: id, find: find, revision: revision, outcome: found)
+                    if !result.isDone { reader.forgetFind(find) }
+                    step = outbox.closed(result)
+                case .prompt(let text):
+                    outbox.prompted(await deliver(text, session: id, name: name))
+                    step = .halted
+                case .halted:
+                    break
+                }
+            }
+            if let control = model.daemon(holding: id) {
+                await control.readAttentionNow()
+            }
+            await reader.readFinds(findIDs, control: model.daemon(holding: id)?.control, session: id)
+        }
+    }
+
+    private func closeFind(session: String, find: String, revision: Int, outcome: FindOutcome) async -> ReviewCloseResult {
+        guard let control = model.daemon(holding: session)?.control else {
+            return ReviewCloseResult(find: find, outcome: outcome, isDone: false, words: "The session is not running.")
+        }
+        do {
+            try await control.closeFind(sessionID: session, find: find, revision: revision, outcome: outcome)
+            return ReviewCloseResult(find: find, outcome: outcome, isDone: true, words: "Closed as \(outcome.rawValue).")
+        } catch {
+            return ReviewCloseResult(find: find, outcome: outcome, isDone: false, words: ComposerModel.words(error))
+        }
+    }
+
+    /// The review's prompt goes to the session's main strand, which is what the web's
+    /// Send does. A verdict is words in it and not a command of its own.
+    private func deliver(_ text: String, session: String, name: String) async -> ReviewPromptResult {
+        do {
+            let status = try await model.sendMessage(sessionID: session, strand: "main", text: text, choice: .send)
+            return .delivered(ThreadSend.deliveredWords(status: status, choice: .send, name: name))
+        } catch LoomError.outcomeUnknown {
+            return .refused(ThreadSend.unansweredWords)
+        } catch {
+            return .refused(ThreadSend.refusedWords(ComposerModel.words(error)))
+        }
+    }
 
     private func send(text: String, choice: ThreadSend.Choice, strand: String) {
         guard ThreadSend.sendable(text), !outcome.isSending else { return }
@@ -560,7 +696,7 @@ private struct FindActions: View {
 // MARK: Parts
 
 /// A small-caps label over its parts.
-private struct PaneSection<Content: View>: View {
+struct PaneSection<Content: View>: View {
     let label: String
     @ViewBuilder let content: Content
 
@@ -601,7 +737,7 @@ private struct FactsCard: View {
 }
 
 /// A session's own words in a dashed box, under a label that says whose they are.
-private struct QuoteBox: View {
+struct QuoteBox: View {
     let source: String
     let words: String
 
@@ -652,7 +788,7 @@ private struct QuestionBlock: View {
 /// The agent's message. A working session's is the brief's latest, which may belong
 /// to the turn still running; any other is the last finished message, labelled as
 /// not current work.
-private struct LastMessage: View {
+struct LastMessage: View {
     let activity: SessionActivity?
     let brief: SessionBrief?
     let working: Bool

@@ -588,6 +588,10 @@ struct DiffView: View {
     let summary: DiffSummary
     var language: String?
 
+    /// A view drawn under a line, such as a find pinned at it, or nil for none. The
+    /// review thread uses it to put what the agent noticed at the line it names.
+    var below: (DiffHunk.Line) -> AnyView? = { _ in nil }
+
     // Lines fill the pane even when shorter than it, so colour runs edge to edge.
     @State private var paneWidth: CGFloat = 0
 
@@ -606,6 +610,11 @@ struct DiffView: View {
                     }
                     ForEach(hunk.lines) { line in
                         row(line)
+                        if let extra = below(line) {
+                            // The card keeps to the pane's width and does not scroll
+                            // sideways with a long line above it.
+                            extra.frame(width: paneWidth > 0 ? paneWidth : nil, alignment: .leading)
+                        }
                     }
                 }
             }

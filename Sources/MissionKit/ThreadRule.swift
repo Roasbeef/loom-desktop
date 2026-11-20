@@ -58,6 +58,16 @@ public struct ThreadReads: Sendable, Equatable {
     public let brief: Bool
     /// The ask or find to read in full.
     public let record: String?
+    /// The session's worktree as a review, read once when the thread opens. It runs
+    /// Git in the session's sandbox, so it is never repeated on the refresh.
+    public let review: Bool
+
+    public init(approval: Bool, brief: Bool, record: String?, review: Bool = false) {
+        self.approval = approval
+        self.brief = brief
+        self.record = record
+        self.review = review
+    }
 
     public static let none = ThreadReads(approval: false, brief: false, record: nil)
 }
@@ -100,7 +110,8 @@ public enum ThreadRule {
         case .session:
             switch row.kind {
             case .approval: return ThreadReads(approval: true, brief: true, record: nil)
-            case .waiting, .review, .working: return ThreadReads(approval: false, brief: true, record: nil)
+            case .review: return ThreadReads(approval: false, brief: true, record: nil, review: true)
+            case .waiting, .working: return ThreadReads(approval: false, brief: true, record: nil)
             case .failed, .quiet, .ask, .stuck, .find: return .none
             }
         }
@@ -322,12 +333,13 @@ public enum ThreadRule {
 
     /// Whether the pane offers its message bar. An observer watches and sends
     /// nothing, as the rail's buttons are not offered to one. A "To review" thread
-    /// whose size is known is read on the session's page, as on the web; one with no
-    /// size yet, or whose worktree could not be read, still lets the person write to
-    /// the session.
-    public static func offersMessage(kind: InboxKind, hasStat: Bool, isObserver: Bool) -> Bool {
+    /// whose review has been read has the outbox in its place, as on the web, where a
+    /// review has no message box of its own; one whose review is not read, because the
+    /// worktree could not be read or the read is still out, still lets the person write
+    /// to the session.
+    public static func offersMessage(kind: InboxKind, hasReview: Bool, isObserver: Bool) -> Bool {
         if isObserver { return false }
-        return kind != .review || !hasStat
+        return kind != .review || !hasReview
     }
 
     /// What the pane's Retry button does for a stuck strand.

@@ -44,6 +44,14 @@ final class ThreadRuleTests: XCTestCase {
         XCTAssertEqual(ThreadRule.reads(for: row(of: activity("idle", message: "done"), reviewing: ["x"])).brief, true)
     }
 
+    func testOnlyAReviewThreadReadsTheWorktree() {
+        let reviewing = ThreadRule.reads(for: row(of: activity("idle", message: "done"), reviewing: ["x"]))
+        XCTAssertEqual(reviewing, ThreadReads(approval: false, brief: true, record: nil, review: true))
+        XCTAssertFalse(ThreadRule.reads(for: row(of: activity("idle", message: "done"))).review)
+        XCTAssertFalse(ThreadRule.reads(for: row(of: activity("working"))).review)
+        XCTAssertFalse(ThreadRule.reads(for: row(of: activity("needs_you", approvals: 1))).review)
+    }
+
     func testFailedAndQuietThreadsReadNothing() {
         XCTAssertEqual(ThreadRule.reads(for: row(of: activity("needs_you"))), .none)
         XCTAssertEqual(ThreadRule.reads(for: row(of: activity("idle"))), .none)
@@ -71,16 +79,16 @@ final class ThreadRuleTests: XCTestCase {
         XCTAssertEqual(ThreadRule.reviewWords(stat: nil, isUnreadable: true, finds: 0), "The worktree could not be read.")
     }
 
-    func testAReviewThreadWithNoSizeKeepsItsMessageBar() {
-        XCTAssertFalse(ThreadRule.offersMessage(kind: .review, hasStat: true, isObserver: false))
-        XCTAssertTrue(ThreadRule.offersMessage(kind: .review, hasStat: false, isObserver: false))
-        XCTAssertTrue(ThreadRule.offersMessage(kind: .waiting, hasStat: false, isObserver: false))
-        XCTAssertTrue(ThreadRule.offersMessage(kind: .approval, hasStat: true, isObserver: false))
+    func testAReviewThreadWithNoReviewReadKeepsItsMessageBar() {
+        XCTAssertFalse(ThreadRule.offersMessage(kind: .review, hasReview: true, isObserver: false))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .review, hasReview: false, isObserver: false))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .waiting, hasReview: false, isObserver: false))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .approval, hasReview: true, isObserver: false))
     }
 
     func testAnObserverIsOfferedNeitherRetryNorTheMessageBar() {
         for kind in [InboxKind.waiting, .working, .approval, .review, .stuck] {
-            XCTAssertFalse(ThreadRule.offersMessage(kind: kind, hasStat: false, isObserver: true))
+            XCTAssertFalse(ThreadRule.offersMessage(kind: kind, hasReview: false, isObserver: true))
         }
         XCTAssertEqual(ThreadRule.retryOffer(isObserver: true, stuckListed: true, sending: false), .hidden)
     }
