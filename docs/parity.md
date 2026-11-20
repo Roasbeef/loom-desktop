@@ -435,6 +435,23 @@ The web page has no schedule surface beyond these two commands.
 | KB-06 | Composer list: Up, Down, Tab, Enter, Escape | wc:composer_rule.gleam:361 | local | yes (Up, Down, Tab, Return and Escape drive the command list) | 2 |
 | KB-07 | Escape in a note goes back | wc:notes.gleam:114 | local | yes (NotesPane cancel shortcut) | 3 |
 
+## Attention inbox
+
+The inbox the web view redesigned (loom `docs/design-notes/attention-inbox/final/mockup.html`). Rows with state `code` are implemented and unit tested, and no UI scenario drives them yet.
+
+| ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
+|---|---|---|---|---|---|
+| AI-01 | Feed read: asks, finds and stuck strands per running session, polled about every 30 s | attention_feed.gleam:100 | `sessions.attention` | code (ControlClient+Attention.swift, AttentionFeed.swift; DaemonConnection.refreshAttention; decoders unit tested) | 1 |
+| AI-02 | Daemon times on the activity row: last message and turn start | sessions.gleam:243 | `sessions.activity` | code (SessionActivity.lastMessageAt and turnStartedAt; they date an Updates or Waiting row) | 2 |
+| AI-03 | Groups in the design's order: Needs you, To review, Waiting, Finds, Updates, a folded quiet line | inbox_rule.gleam:75 | `sessions.activity`, `sessions.attention` | code (InboxRule.sections; To review holds only sessions the caller names, since no worktree scan exists here) | 1 |
+| AI-04 | Folder rail with counts equal to each band's rows, "Everything, by need", a stale folder falls back to it | view/sidebar.gleam:634 | local | code (FolderRail in MissionViews.swift; it is a column of the inbox and not part of the session sidebar; no Projects folder) | 1 |
+| AI-05 | Row anatomy: name, age, kind chip, one-line head | view/inbox_parts.gleam:263 | `sessions.activity`, `sessions.attention` | code (InboxRowView; model text is drawn with Text(verbatim:)) | 1 |
+| AI-06 | Age from the daemon's times, "40m", "1h 22m", marked from one hour, none when the record has no time | thread_words.gleam:60 | `approval.read`, `sessions.activity`, `sessions.attention` | code (InboxRule.shortAge; an approval is aged only from approval.read's raise time) | 1 |
+| AI-07 | Order within a group: longest wait first for feed items, then by name; same input in any order draws the same list | attention_rule.gleam:350 | local | code (InboxRule.sections; property tested) | 2 |
+| AI-08 | Honest counts: the headline and the rail note say what was read and that saved sessions are not checked | inbox_rule.gleam:543 | local | partial (the web also counts saved sessions from the catalogue summary, which no control command carries, so here they are always "not checked") | 2 |
+| AI-09 | Approve or deny in place from the inbox | view/inbox.gleam:71 | `approve`, `deny` | partial (the app keeps the live card in the inbox, HM-21; the web inbox sends the person to the session's page instead) | 1 |
+| AI-10 | Reading pane per thread kind: ask, stuck, find, update, review | view/inbox.gleam:545 | `attention.read`, `session.brief`, `sessions.review`, `approval.read` | no (decoders and client calls exist; the pane shows a placeholder naming the thread) | 1 |
+
 ## Not applicable natively
 
 | Web item | Source | Why |
