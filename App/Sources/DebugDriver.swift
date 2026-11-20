@@ -594,8 +594,34 @@ enum Snapshot {
             ]
         }
         body["sidebar"] = SidebarSnapshot.encode(model)
+        body["inbox"] = InboxSnapshot.encode(model)
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+/// The inbox's groups, rows and folders as the rule decides them, which the
+/// accessibility tree does not list. The view draws the same values.
+enum InboxSnapshot {
+    @MainActor
+    static func encode(_ model: AppModel) -> [String: Any] {
+        let threads = model.inboxThreads
+        let rows = InboxRule.rows(
+            threads: threads, feed: model.attentionRows, raised: model.approvalRaised,
+            now: Int(Date().timeIntervalSince1970 * 1000)
+        )
+        let sections = InboxRule.sections(rows)
+        return [
+            "groups": sections.map { section -> [String: Any] in
+                [
+                    "title": section.title, "count": section.count,
+                    "rows": section.rows.map { ["id": $0.id, "kind": $0.kind.chip, "name": $0.name, "head": $0.head, "age": $0.age?.words ?? ""] },
+                ]
+            },
+            "folders": InboxRule.folderEntries(sections).map { ["title": $0.folder.title, "count": $0.count ?? -1] as [String: Any] },
+            "headline": InboxRule.headline(InboxRule.tally(threads: threads, feed: model.attentionRows)),
+            "note": InboxRule.countNote(running: threads.filter { $0.activity != nil }.count),
+        ]
     }
 }
 

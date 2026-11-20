@@ -276,105 +276,300 @@ private struct AgentStrip: View {
 
 // MARK: Inbox
 
-/// One place to answer everything, grouped by what each item needs. The list keeps
-/// focus, so a person can move down it and answer with the keyboard.
+/// What the inbox has selected: one of the rule's threads, or a machine that is not
+/// healthy, which only this app lists.
+private enum InboxSelection: Hashable {
+    case thread(InboxSubject)
+    case machine(String)
+}
+
+/// The attention inbox: a rail of folders with counts, a list of what needs a
+/// person grouped by need, and a pane that reads the selected thread. The grouping
+/// is `InboxRule`, which mirrors the web view's rule, so a session sits in the same
+/// group on both. The list keeps focus, so a person can move down it with the arrow
+/// keys and answer an approval with the keyboard.
+///
+/// The pane draws an approval's live card, so an approval is decided here as well as
+/// on the session's page (HM-21). Every other thread shows a plain placeholder naming
+/// it until the reading pane is built.
 struct InboxView: View {
     @Environment(AppModel.self) private var model
-    @State private var selection: AttentionItem.ID?
+    @State private var folder: InboxFolder = .everything
+    @State private var selection: InboxSelection?
 
     var body: some View {
-        let items = model.attention
-        Group {
-            if items.isEmpty {
+        // Ages are counted from the time the list was drawn, so it redraws each
+        // half minute even when nothing the daemon says has changed.
+        TimelineView(.periodic(from: .now, by: 30)) { context in
+            content(now: Int(context.date.timeIntervalSince1970 * 1000))
+        }
+        .navigationTitle("Inbox")
+        .navigationSubtitle(model.attention.isEmpty ? "" : "\(model.attention.count) waiting")
+    }
+
+    private func content(now: Int) -> some View {
+        let threads = model.inboxThreads
+        let feed = model.attentionRows
+        let rows = InboxRule.rows(threads: threads, feed: feed, raised: model.approvalRaised, now: now)
+        let all = InboxRule.sections(rows)
+        let shown = InboxRule.shownFolder(chosen: folder, sections: all)
+        let sections = InboxRule.visible(all, in: shown)
+        let machines = model.attention.filter { $0.kind == .machine }
+        let note = InboxRule.countNote(running: threads.filter { $0.activity != nil }.count)
+        let headline = InboxRule.headline(InboxRule.tally(threads: threads, feed: feed))
+
+        return HStack(spacing: 0) {
+            FolderRail(entries: InboxRule.folderEntries(all), shown: shown, note: note) { folder = $0 }
+                .frame(width: 168)
+
+            Divider()
+
+            if sections.isEmpty && machines.isEmpty {
                 ContentUnavailableView {
                     Label("Nothing needs you", systemImage: "checkmark.circle")
                         .symbolRenderingMode(.hierarchical)
                 } description: {
-                    Text("Approvals, failed runs and unhealthy machines will appear here.")
+                    Text("Approvals, asks, failed runs and unhealthy machines will appear here. \(note)")
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                HStack(spacing: 0) {
-                    List(selection: $selection) {
-                        ForEach(AttentionItem.Kind.allCases, id: \.self) { kind in
-                            let group = items.filter { $0.kind == kind }
-                            if !group.isEmpty {
-                                Section(kind.title) {
-                                    ForEach(group) { item in
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(item.agent).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                                            Text(item.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
-                                        }
-                                        .padding(.vertical, 3)
-                                        .tag(item.id)
-                                    }
-                                }
-                            }
+                InboxList(sections: sections, machines: machines, headline: headline, selection: $selection)
+                    .frame(width: 330)
+
+                Divider()
+
+                pane(sections: sections, machines: machines)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pane(sections: [InboxSection], machines: [AttentionItem]) -> some View {
+        // A selection that is no longer listed falls back to the first thread, so
+        // the pane is never empty while the list is not.
+        let chosen: InboxSubject? = if case .thread(let subject)? = selection { subject } else { nil }
+        let subject = InboxRule.selection(sections, chosen: chosen)
+        if case .machine(let id)? = selection, let item = machines.first(where: { $0.id == id }) {
+            AttentionDetail(items: [item], row: nil).id(item.id)
+        } else if let subject, let row = sections.flatMap(\.rows).first(where: { $0.subject == subject }) {
+            AttentionDetail(
+                items: model.attention.filter { item in
+                    if case .session(let id, _) = item.source { return id == subject.sessionID && item.kind != .machine }
+                    return false
+                },
+                row: row
+            ).id(row.id)
+        } else if let item = machines.first {
+            AttentionDetail(items: [item], row: nil).id(item.id)
+        }
+    }
+}
+
+/// The folders of the rail, each with the number of rows its band draws, and the
+/// note that says what the counts read.
+private struct FolderRail: View {
+    let entries: [(folder: InboxFolder, count: Int?)]
+    let shown: InboxFolder
+    let note: String
+    let pick: (InboxFolder) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(entries, id: \.folder) { entry in
+                Button { pick(entry.folder) } label: {
+                    HStack {
+                        Text(entry.folder.title).font(Theme.body)
+                        Spacer(minLength: 4)
+                        if let count = entry.count {
+                            Text("\(count)")
+                                .font(Theme.caption.monospacedDigit())
+                                .foregroundStyle(entry.folder == .needing ? Theme.attention : .secondary)
                         }
                     }
-                    .listStyle(.inset)
-                    .frame(width: 320)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(entry.folder == shown ? Theme.tintStrong : .clear, in: .rect(cornerRadius: Theme.radiusInner))
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Folder \(entry.folder.title)")
+                .accessibilityAddTraits(entry.folder == shown ? .isSelected : [])
+            }
+            Spacer()
+            Text(note).font(Theme.caption).foregroundStyle(.secondary).padding(8)
+        }
+        .padding(8)
+    }
+}
 
-                    Divider()
+/// The list: a band for each group with its count and its gloss, and under it one
+/// row for each thread. The quiet sessions are folded into one line of names, since
+/// there is nothing to read in them.
+private struct InboxList: View {
+    let sections: [InboxSection]
+    let machines: [AttentionItem]
+    let headline: String
+    @Binding var selection: InboxSelection?
 
-                    if let item = items.first(where: { $0.id == selection }) ?? items.first {
-                        AttentionDetail(item: item)
-                            .id(item.id)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    var body: some View {
+        List(selection: $selection) {
+            Text(headline).font(Theme.caption).foregroundStyle(.secondary).selectionDisabled()
+            ForEach(sections, id: \.group) { section in
+                if section.group == .quiet {
+                    Section {
+                        Text(section.rows.map(\.name).joined(separator: " \u{00B7} "))
+                            .font(Theme.caption).foregroundStyle(.secondary).selectionDisabled()
+                    } header: { band(section) }
+                } else {
+                    Section {
+                        ForEach(section.rows) { row in
+                            InboxRowView(row: row).tag(InboxSelection.thread(row.subject))
+                        }
+                    } header: { band(section) }
+                }
+            }
+            if !machines.isEmpty {
+                Section("Machines") {
+                    ForEach(machines) { item in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.agent).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            Text(item.title).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(2)
+                        }
+                        .padding(.vertical, 3)
+                        .tag(InboxSelection.machine(item.id))
                     }
                 }
             }
         }
-        .navigationTitle("Inbox")
-        .navigationSubtitle(items.isEmpty ? "" : "\(items.count) waiting")
+        .listStyle(.inset)
+    }
+
+    private func band(_ section: InboxSection) -> some View {
+        HStack {
+            Text(section.group == .quiet ? section.title : "\(section.title) \u{00B7} \(section.count)")
+                .foregroundStyle(section.group == .needsYou ? Theme.attention : .secondary)
+            Spacer()
+            Text(section.gloss).font(Theme.caption).foregroundStyle(.tertiary).lineLimit(1)
+        }
     }
 }
 
+/// One thread's row. The first line is the session's name and how long the thread
+/// has waited, marked when it is an hour or more. The second is the kind's chip and
+/// one line of what the thread says, which is model text drawn as plain text.
+private struct InboxRowView: View {
+    let row: InboxRow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack {
+                Text(verbatim: row.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 6)
+                if let age = row.age {
+                    Text(age.words).font(Theme.caption.monospacedDigit())
+                        .foregroundStyle(age.isOverdue ? Theme.attention : .secondary)
+                }
+            }
+            HStack(spacing: 6) {
+                Text(row.kind.chip)
+                    .font(Theme.caption)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Theme.tintStrong, in: .rect(cornerRadius: 4))
+                Text(verbatim: row.head).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier(row.id)
+    }
+}
+
+/// The reading pane. An approval draws its live card with the Allow and Deny
+/// buttons, and every other thread names itself and offers the session's page. The
+/// pane that reads each kind of thread in full is the next piece of the inbox.
 private struct AttentionDetail: View {
     @Environment(AppModel.self) private var model
-    let item: AttentionItem
+    /// What `Mission.attention` holds for the session: its pending approvals, or its
+    /// failed run. A machine's is the machine.
+    let items: [AttentionItem]
+    let row: InboxRow?
 
-    private var sessionRecord: SessionRecord? {
-        if case .session(let id, _) = item.source {
-            return model.sessions.first { $0.id == id }
-        }
-        return nil
-    }
+    private var sessionID: String? { row?.sessionID }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(item.kind.title).font(Theme.caption).foregroundStyle(Theme.attention)
-                    Text(item.title).font(.title3.weight(.semibold)).textSelection(.enabled)
-                    HStack(spacing: 8) {
-                        Text(item.agent)
-                        if let record = sessionRecord, let placement = model.placement(of: record) {
-                            Text("· \(placement.label)")
+                if let row {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(row.kind.chip).font(Theme.caption).foregroundStyle(Theme.attention)
+                        Text(verbatim: row.name).font(.title3.weight(.semibold)).textSelection(.enabled)
+                        HStack(spacing: 8) {
+                            if let record = model.sessions.first(where: { $0.id == row.sessionID }),
+                               let placement = model.placement(of: record) {
+                                Text(placement.label)
+                            }
+                            if let age = row.age { Text("waiting \(age.words)") }
                         }
+                        .font(Theme.meta)
+                        .foregroundStyle(.secondary)
                     }
-                    .font(Theme.meta)
-                    .foregroundStyle(.secondary)
+                    if items.isEmpty || !row.isOwnSession {
+                        // The thread's own words, drawn as text, never as markup.
+                        Text(verbatim: row.head).font(Theme.body).textSelection(.enabled)
+                    }
                 }
 
-                switch item.source {
-                case .session(let sessionID, let escalation):
-                    if let escalation, let controller = model.controller(for: sessionID) {
-                        ApprovalCard(record: escalation, controller: controller)
-                    } else if !item.detail.isEmpty {
-                        MarkdownView(source: item.detail)
-                    }
+                ForEach(items) { item in
+                    AttentionItemBody(item: item)
+                }
+
+                if let sessionID {
                     Button("Open Session") { model.destination = .session(sessionID) }
                         .buttonStyle(.bordered)
                         .keyboardShortcut(.return, modifiers: .command)
-                case .machine:
-                    Text(item.detail).font(Theme.body).textSelection(.enabled)
-                    Button("Open Machines") { model.destination = .machines }
-                        .buttonStyle(.bordered)
                 }
             }
             .padding(24)
             .frame(maxWidth: 680, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+extension InboxRow {
+    /// Whether the row is a session's own thread, as against an item of its feed.
+    fileprivate var isOwnSession: Bool {
+        if case .session = subject { return true }
+        return false
+    }
+}
+
+/// One item of `Mission.attention` in the pane: a pending approval with its live
+/// card, a failed run's last words, or a sick machine.
+private struct AttentionItemBody: View {
+    @Environment(AppModel.self) private var model
+    let item: AttentionItem
+
+    var body: some View {
+        switch item.source {
+        case .session(let sessionID, let escalation):
+            if let escalation, let controller = model.controller(for: sessionID) {
+                ApprovalCard(record: escalation, controller: controller)
+            } else if !item.detail.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.title).font(Theme.label)
+                    MarkdownView(source: item.detail)
+                }
+            }
+        case .machine:
+            VStack(alignment: .leading, spacing: 8) {
+                Text(item.title).font(.title3.weight(.semibold))
+                Text(item.detail).font(Theme.body).textSelection(.enabled)
+                Button("Open Machines") { model.destination = .machines }
+                    .buttonStyle(.bordered)
+            }
         }
     }
 }

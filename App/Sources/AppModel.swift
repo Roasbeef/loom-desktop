@@ -104,6 +104,16 @@ final class DaemonConnection: Identifiable {
     private(set) var activity: [String: SessionActivity] = [:]
     private(set) var attached: [String: SessionController] = [:]
 
+    /// The feed rows the daemon last read, by session: asks, finds and stuck
+    /// strands. A resident session with no entry was not read, which the inbox
+    /// says as "not checked" and never as "nothing waits".
+    private(set) var attentionRows: [String: AttentionRow] = [:]
+
+    /// When each session's oldest pending approval was raised, from `approval.read`.
+    /// A session with no entry has no age, since an approval is never aged from a
+    /// record that carries no raise time.
+    private(set) var approvalRaised: [String: Int] = [:]
+
     /// When this client last saw each session's activity change. The daemon reports
     /// no such time, so this is an observation, absent until a change is seen.
     private(set) var lastChanged: [String: Date] = [:]
@@ -120,6 +130,11 @@ final class DaemonConnection: Identifiable {
     /// The deployment read connects to every node, so it runs far less often
     /// than the catalogue poll.
     private static let deploymentEvery = 8
+
+    /// The attention feed is a fresh observation on every call, and the daemon
+    /// neither caches nor pushes it, so it is read about every 30 seconds beside
+    /// the 2 second catalogue poll.
+    private static let attentionEvery = 15
 
     init(id: String, source: Source) {
         self.id = id
@@ -239,6 +254,9 @@ final class DaemonConnection: Identifiable {
         if ticks % Self.deploymentEvery == 0 {
             await refreshDeployment(control)
         }
+        if ticks % Self.attentionEvery == 0 {
+            await refreshAttention(control, resident: resident, activity: activity)
+        }
         ticks += 1
     }
 
@@ -247,6 +265,24 @@ final class DaemonConnection: Identifiable {
     private func refreshDeployment(_ control: ControlClient) async {
         if let next = try? await control.deployment(), deployment != next { deployment = next }
         if let next = try? await control.sessionsElsewhere(), elsewhere != next { elsewhere = next }
+    }
+
+    /// Reads the attention feed for the resident sessions and the raise time of each
+    /// pending approval. Both are reads that an older daemon refuses, and a refusal
+    /// leaves the last answer in place rather than failing the connection.
+    private func refreshAttention(_ control: ControlClient, resident: [String], activity: [String: SessionActivity]) async {
+        if let rows = try? await control.attention(sessions: resident) {
+            // Only sessions still resident keep a row, so a stopped session's old
+            // asks do not linger.
+            if attentionRows != rows { attentionRows = rows }
+        }
+        var raised: [String: Int] = [:]
+        for row in activity.values where row.approvals > 0 {
+            if let evidence = try? await control.approvalEvidence(sessionID: row.sessionID), let oldest = evidence.oldestRaised {
+                raised[row.sessionID] = oldest
+            }
+        }
+        if approvalRaised != raised { approvalRaised = raised }
     }
 
     // MARK: Sessions
@@ -426,6 +462,24 @@ final class AppModel {
                 Mission.blastRadius(nodes: daemon.deployment?.nodes ?? [], sessions: daemon.sessions)
             }
         )
+    }
+
+    /// The resident sessions as the inbox reads them: the display name beside the
+    /// daemon's activity report, which is nil when it gave none.
+    var inboxThreads: [InboxThread] {
+        daemons.flatMap { daemon in
+            daemon.sessions.filter { $0.state.isResident }.map {
+                InboxThread(id: $0.id, name: $0.title, activity: daemon.activity[$0.id])
+            }
+        }
+    }
+
+    var attentionRows: [String: AttentionRow] {
+        daemons.reduce(into: [:]) { $0.merge($1.attentionRows) { _, new in new } }
+    }
+
+    var approvalRaised: [String: Int] {
+        daemons.reduce(into: [:]) { $0.merge($1.approvalRaised) { _, new in new } }
     }
 
     var cards: [AgentCard] {
