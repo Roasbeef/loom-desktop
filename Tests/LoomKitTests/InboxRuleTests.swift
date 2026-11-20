@@ -494,7 +494,7 @@ final class InboxRuleTests: XCTestCase {
 }
 
 /// A seeded random source, so a property test draws the same cases on every run.
-private struct SeededGenerator: RandomNumberGenerator {
+struct SeededGenerator: RandomNumberGenerator {
     private var state: UInt64
 
     init(seed: UInt64) {

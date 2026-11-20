@@ -90,13 +90,44 @@ final class LiftRuleTests: XCTestCase {
         XCTAssertNil(rows[1].at)
     }
 
+    /// Approvals, asks, stuck strands and finds, with times that repeat and some that
+    /// are missing where the record may lack one, so every tie-break runs. Each case is shuffled afresh.
     func testTheSameInputInAnyOrderGivesTheSameRows() {
-        let approvals = ["a", "b", "c", "d"].map { approval($0) }
-        var generator = SystemRandomNumberGenerator()
-        let expected = LiftRule.rows(approvals: approvals, raised: ["c": 1, "a": 1], feed: nil).map(\.id)
-        for _ in 0..<20 {
-            let shuffled = approvals.shuffled(using: &generator)
-            XCTAssertEqual(LiftRule.rows(approvals: shuffled, raised: ["c": 1, "a": 1], feed: nil).map(\.id), expected)
+        var generator = SeededGenerator(seed: 0x10F7)
+        func time(_ generator: inout SeededGenerator) -> Int? {
+            let pick = Int.random(in: 0..<4, using: &generator)
+            return pick == 0 ? nil : pick * 10
+        }
+        for _ in 0..<60 {
+            let approvals = (0..<Int.random(in: 0...4, using: &generator)).map { approval("p\($0)") }
+            var raised: [String: Int] = [:]
+            for item in approvals { raised[item.id] = time(&generator) }
+            let asks = (0..<Int.random(in: 0...4, using: &generator)).map {
+                AttentionAsk(id: "a\($0)", strand: "main", createdAt: time(&generator) ?? 5, head: "Q\($0)", questions: 1)
+            }
+            let stuck = (0..<Int.random(in: 0...4, using: &generator)).map {
+                AttentionStuck(strand: "s\($0)", failedAt: time(&generator), reason: "timeout")
+            }
+            let finds = (0..<Int.random(in: 0...4, using: &generator)).map {
+                AttentionFind(id: "f\($0)", strand: "main", kind: .bug, createdAt: time(&generator) ?? 5, head: "F\($0)", path: nil, line: nil)
+            }
+
+            func ids(_ approvals: [Escalation], _ asks: [AttentionAsk], _ stuck: [AttentionStuck], _ finds: [AttentionFind]) -> [String] {
+                LiftRule.rows(
+                    approvals: approvals, raised: raised, feed: feed(asks: asks, finds: finds, stuck: stuck), clock: { "t\($0)" }
+                ).map(\.id)
+            }
+            let expected = ids(approvals, asks, stuck, finds)
+            XCTAssertEqual(expected.count, approvals.count + asks.count + stuck.count + finds.count)
+            for _ in 0..<5 {
+                XCTAssertEqual(
+                    ids(
+                        approvals.shuffled(using: &generator), asks.shuffled(using: &generator),
+                        stuck.shuffled(using: &generator), finds.shuffled(using: &generator)
+                    ),
+                    expected
+                )
+            }
         }
     }
 
