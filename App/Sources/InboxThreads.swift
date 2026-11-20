@@ -150,7 +150,7 @@ struct InboxPane: View {
                 .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if row.kind != .review {
+            if ThreadRule.offersMessage(kind: row.kind, hasStat: hasReviewStat) {
                 MessageBar(
                     name: row.name, kind: row.kind, draft: $draft, outcome: outcome,
                     send: { choice in send(text: draft, choice: choice, strand: strand) }
@@ -361,11 +361,20 @@ struct InboxPane: View {
 
     /// The change's size from the worktree scan, or what the scan has not yet said.
     private var reviewWords: String {
-        guard let message = activity.flatMap({ InboxRule.said($0) }) else { return "Nothing to read." }
-        if let stat = model.reviewStat(of: sessionID, message: message) {
-            return ThreadRule.statWords(stat, finds: feedRow?.finds.count ?? 0)
-        }
-        return "Checking the worktree\u{2026}"
+        guard let message = reviewMessage else { return "Nothing to read." }
+        return ThreadRule.reviewWords(
+            stat: model.reviewStat(of: sessionID, message: message),
+            isUnreadable: model.reviewIsUnreadable(of: sessionID, message: message),
+            finds: feedRow?.finds.count ?? 0
+        )
+    }
+
+    private var reviewMessage: String? { activity.flatMap { InboxRule.said($0) } }
+
+    /// Whether the scan has counted the change, which is what takes the message bar
+    /// away from a review thread.
+    private var hasReviewStat: Bool {
+        reviewMessage.flatMap { model.reviewStat(of: sessionID, message: $0) } != nil
     }
 
     private var sessionBody: some View {

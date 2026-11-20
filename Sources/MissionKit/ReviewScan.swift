@@ -228,6 +228,16 @@ public struct ReviewScan: Sendable, Equatable {
         return verdict.stat
     }
 
+    /// Whether every try at the session's current message failed. This is also what
+    /// a daemon that has no `sessions.review` produces, since each try is refused.
+    /// The session stays listed under "To review", since nothing says its tree is
+    /// clean, and the pane says the worktree could not be read instead of saying it
+    /// is being checked for good.
+    public func isUnreadable(_ session: String, message: String) -> Bool {
+        guard case .failed(let read, let attempts)? = seen[session]?.pending else { return false }
+        return read == message && attempts >= Self.maxAttempts
+    }
+
     /// Whether the session's current message has no verdict yet, which the pane
     /// words as being checked.
     public func isChecking(_ session: String, message: String) -> Bool {

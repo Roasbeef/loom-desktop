@@ -64,6 +64,20 @@ final class ThreadRuleTests: XCTestCase {
         XCTAssertTrue(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 1, since: 7))
     }
 
+    func testReviewWordsSayWhenTheWorktreeCouldNotBeRead() {
+        let stat = ReviewStat(files: 1, added: 2, removed: 3)
+        XCTAssertEqual(ThreadRule.reviewWords(stat: stat, isUnreadable: false, finds: 0), "+2 \u{2212}3, 1 file")
+        XCTAssertEqual(ThreadRule.reviewWords(stat: nil, isUnreadable: false, finds: 0), "Checking the worktree\u{2026}")
+        XCTAssertEqual(ThreadRule.reviewWords(stat: nil, isUnreadable: true, finds: 0), "The worktree could not be read.")
+    }
+
+    func testAReviewThreadWithNoSizeKeepsItsMessageBar() {
+        XCTAssertFalse(ThreadRule.offersMessage(kind: .review, hasStat: true))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .review, hasStat: false))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .waiting, hasStat: false))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .approval, hasStat: true))
+    }
+
     func testPeersShownOnlyWhenTheReadNamedTheRaiseTime() {
         XCTAssertTrue(ThreadRule.peersShown(readSince: 7, raised: 7))
         XCTAssertFalse(ThreadRule.peersShown(readSince: 0, raised: 7))

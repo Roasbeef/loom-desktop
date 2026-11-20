@@ -113,6 +113,18 @@ final class ReviewScanTests: XCTestCase {
         XCTAssertEqual(scan.stat("a", message: "m"), ReviewStat(files: 2, added: 3, removed: 1))
     }
 
+    func testASessionWhoseEveryTryFailedIsUnreadableButStillListed() {
+        var scan = ReviewScan()
+        for _ in 0..<ReviewScan.maxAttempts {
+            XCTAssertFalse(scan.isUnreadable("a", message: "m"))
+            scan.started("a", message: "m", now: 0)
+            scan.answered("a", message: "m", read: .failure(.failed))
+        }
+        XCTAssertTrue(scan.isUnreadable("a", message: "m"))
+        XCTAssertFalse(scan.isUnreadable("a", message: "m2"), "a new message is tried afresh")
+        XCTAssertEqual(ids(scan.reviewing([("a", "m")])), ["a"])
+    }
+
     func testTheSessionWithTheFewestAttemptsGoesFirst() {
         var scan = ReviewScan()
         scan.started("a", message: "m", now: 0)

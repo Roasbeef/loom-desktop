@@ -540,6 +540,11 @@ final class AppModel {
         daemon(holding: sessionID)?.reviewScan.stat(sessionID, message: message)
     }
 
+    /// Whether every try at reading a session's worktree for its last message failed.
+    func reviewIsUnreadable(of sessionID: String, message: String) -> Bool {
+        daemon(holding: sessionID)?.reviewScan.isUnreadable(sessionID, message: message) ?? false
+    }
+
     /// Sends a message from the inbox pane to a session's strand: a prompt, or a
     /// steer when the person chose one. It attaches a lane first, as a strip's
     /// message does, and returns the daemon's `admitted` or `queued`.

@@ -312,6 +312,21 @@ public enum ThreadRule {
         }
     }
 
+    /// What a "To review" thread says of its change: the size once the scan has read
+    /// it, the failure when every try at the worktree failed, else that the scan is
+    /// still at it.
+    public static func reviewWords(stat: ReviewStat?, isUnreadable: Bool, finds: Int) -> String {
+        if let stat { return statWords(stat, finds: finds) }
+        return isUnreadable ? "The worktree could not be read." : "Checking the worktree\u{2026}"
+    }
+
+    /// Whether the pane offers its message bar. A "To review" thread whose size is
+    /// known is read on the session's page, as on the web; one with no size yet, or
+    /// whose worktree could not be read, still lets the person write to the session.
+    public static func offersMessage(kind: InboxKind, hasStat: Bool) -> Bool {
+        kind != .review || !hasStat
+    }
+
     // MARK: Eyebrow
 
     /// The time a thread's eyebrow dates: when an ask was asked, when a stuck strand
