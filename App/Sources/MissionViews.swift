@@ -289,13 +289,16 @@ private enum InboxSelection: Hashable {
 /// group on both. The list keeps focus, so a person can move down it with the arrow
 /// keys and answer an approval with the keyboard.
 ///
-/// The pane draws an approval's live card, so an approval is decided here as well as
-/// on the session's page (HM-21). Every other thread shows a plain placeholder naming
-/// it until the reading pane is built.
+/// The pane is `InboxPane` (InboxThreads.swift). It draws an approval's live card under
+/// its evidence, so an approval is decided here as well as on the session's page
+/// (HM-21).
 struct InboxView: View {
     @Environment(AppModel.self) private var model
     @State private var folder: InboxFolder = .everything
     @State private var selection: InboxSelection?
+    /// A draft for each thread, so a message half written survives a move down the
+    /// list.
+    @State private var drafts: [String: String] = [:]
 
     var body: some View {
         // Ages are counted from the time the list was drawn, so it redraws each
@@ -310,7 +313,7 @@ struct InboxView: View {
     private func content(now: Int) -> some View {
         let threads = model.inboxThreads
         let feed = model.attentionRows
-        let rows = InboxRule.rows(threads: threads, feed: feed, raised: model.approvalRaised, now: now)
+        let rows = InboxRule.rows(threads: threads, feed: feed, raised: model.approvalRaised, reviewing: model.reviewing, now: now)
         let all = InboxRule.sections(rows)
         let shown = InboxRule.shownFolder(chosen: folder, sections: all)
         let sections = InboxRule.visible(all, in: shown)
@@ -353,12 +356,13 @@ struct InboxView: View {
         if case .machine(let id)? = selection, let item = machines.first(where: { $0.id == id }) {
             AttentionDetail(items: [item], row: nil).id(item.id)
         } else if let subject, let row = sections.flatMap(\.rows).first(where: { $0.subject == subject }) {
-            AttentionDetail(
+            InboxPane(
+                row: row,
                 items: model.attention.filter { item in
                     if case .session(let id, _) = item.source { return id == subject.sessionID && item.kind != .machine }
                     return false
                 },
-                row: row
+                draft: Binding(get: { drafts[row.id] ?? "" }, set: { drafts[row.id] = $0 })
             ).id(row.id)
         } else if let item = machines.first {
             AttentionDetail(items: [item], row: nil).id(item.id)
@@ -486,9 +490,8 @@ private struct InboxRowView: View {
     }
 }
 
-/// The reading pane. An approval draws its live card with the Allow and Deny
-/// buttons, and every other thread names itself and offers the session's page. The
-/// pane that reads each kind of thread in full is the next piece of the inbox.
+/// The pane of an unhealthy machine, which only this app lists. Every session thread
+/// is drawn by `InboxPane`.
 private struct AttentionDetail: View {
     @Environment(AppModel.self) private var model
     /// What `Mission.attention` holds for the session: its pending approvals, or its
@@ -548,7 +551,7 @@ extension InboxRow {
 
 /// One item of `Mission.attention` in the pane: a pending approval with its live
 /// card, a failed run's last words, or a sick machine.
-private struct AttentionItemBody: View {
+struct AttentionItemBody: View {
     @Environment(AppModel.self) private var model
     let item: AttentionItem
 

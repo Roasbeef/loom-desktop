@@ -607,7 +607,7 @@ enum InboxSnapshot {
     static func encode(_ model: AppModel) -> [String: Any] {
         let threads = model.inboxThreads
         let rows = InboxRule.rows(
-            threads: threads, feed: model.attentionRows, raised: model.approvalRaised,
+            threads: threads, feed: model.attentionRows, raised: model.approvalRaised, reviewing: model.reviewing,
             now: Int(Date().timeIntervalSince1970 * 1000)
         )
         let sections = InboxRule.sections(rows)
