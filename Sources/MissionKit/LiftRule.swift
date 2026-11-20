@@ -97,11 +97,6 @@ public struct LiftedRow: Sendable, Equatable, Identifiable {
 }
 
 public enum LiftRule {
-    /// The words a Retry sends a stuck strand. They are the web's own, fixed
-    /// (`thread_send.retry_prompt`), so a strand is asked the same thing from either
-    /// client, and nothing a person or a model wrote reaches them.
-    public static let retryPrompt = "The last run of this strand failed. Please retry it."
-
     /// The roles that may press a row's buttons: the owner and an operator. An
     /// observer and any role this client does not know read the rail and press
     /// nothing, as on the web.

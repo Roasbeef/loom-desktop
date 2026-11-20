@@ -58,12 +58,10 @@ final class ThreadRuleTests: XCTestCase {
     // MARK: Brief pacing, ported from brief_rule_test
 
     func testBriefDue() {
-        XCTAssertTrue(ThreadRule.briefDue(last: nil, now: 0, since: 0, trigger: .refreshed))
-        XCTAssertFalse(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 14_999, since: 0, trigger: .refreshed))
-        XCTAssertTrue(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 15_000, since: 0, trigger: .refreshed))
-        XCTAssertTrue(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 1, since: 7, trigger: .refreshed))
-        XCTAssertFalse(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 999, since: 0, trigger: .opened))
-        XCTAssertTrue(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 1000, since: 0, trigger: .opened))
+        XCTAssertTrue(ThreadRule.briefDue(last: nil, now: 0, since: 0))
+        XCTAssertFalse(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 14_999, since: 0))
+        XCTAssertTrue(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 15_000, since: 0))
+        XCTAssertTrue(ThreadRule.briefDue(last: BriefRead(started: 0, since: 0), now: 1, since: 7))
     }
 
     func testPeersShownOnlyWhenTheReadNamedTheRaiseTime() {

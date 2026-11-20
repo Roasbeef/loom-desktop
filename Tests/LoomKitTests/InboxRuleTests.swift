@@ -350,10 +350,12 @@ final class InboxRuleTests: XCTestCase {
         XCTAssertEqual(head(nil, 5), "Stopped on a failed run")
     }
 
-    func testTheLocalClockWordsATimeOfDay() {
-        let words = InboxRule.localClock(1_763_400_000_000)
-        XCTAssertEqual(words.count, 5)
-        XCTAssertEqual(words[words.index(words.startIndex, offsetBy: 2)], ":")
+    func testTheDefaultClockIsTheLocalTimeOfDay() {
+        // The zone is the machine's, so the test states the expectation in that zone
+        // and does not depend on what it is.
+        let ms = 1_763_400_000_000
+        XCTAssertEqual(ClockTime.local(ms), ClockTime.words(ms, in: .current))
+        XCTAssertEqual(ThreadRule.render([.clock(ms)]), ClockTime.words(ms, in: .current))
     }
 
     // MARK: Folders

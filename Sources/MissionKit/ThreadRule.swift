@@ -75,14 +75,6 @@ public struct BriefRead: Sendable, Equatable {
     }
 }
 
-/// What asks for a brief read.
-public enum BriefTrigger: Sendable, Equatable {
-    /// The person opened the thread.
-    case opened
-    /// The pane's refresh found the thread still open.
-    case refreshed
-}
-
 /// An instant a thread's eyebrow dates, with the words that say what happened at it.
 public struct ThreadMoment: Sendable, Equatable {
     public let label: String
@@ -93,10 +85,6 @@ public enum ThreadRule {
     /// How old the last read of an open thread's brief must be before the refresh
     /// reads it again, in milliseconds.
     public static let refreshMs = 15_000
-
-    /// How soon after a read a thread's opening reads again: a person pressing the
-    /// same row twice reads once.
-    public static let debounceMs = 1000
 
     // MARK: Which reads fire
 
@@ -120,14 +108,12 @@ public enum ThreadRule {
 
     /// Whether a brief read is worth starting at `now`. A session never read is
     /// always due, and so is one whose last read asked after another time, since its
-    /// peer messages would not be the ones the thread labels.
-    public static func briefDue(last: BriefRead?, now: Int, since: Int, trigger: BriefTrigger) -> Bool {
+    /// peer messages would not be the ones the thread labels. Every other read waits
+    /// for `refreshMs`.
+    public static func briefDue(last: BriefRead?, now: Int, since: Int) -> Bool {
         guard let last else { return true }
         if last.since != since { return true }
-        switch trigger {
-        case .opened: return now - last.started >= debounceMs
-        case .refreshed: return now - last.started >= refreshMs
-        }
+        return now - last.started >= refreshMs
     }
 
     /// Whether the brief's peer messages may be drawn. They are the messages that
@@ -246,8 +232,10 @@ public enum ThreadRule {
         return "\(wait / 3_600_000) h"
     }
 
-    /// The words Retry sends a stuck strand. They are fixed, as the web's are, so a
-    /// strand is asked the same thing from either client.
+    /// The words Retry sends a stuck strand, from the pane and from the session
+    /// page's rail alike. They are the web's own, fixed (`thread_send.retry_prompt`),
+    /// so a strand is asked the same thing from either client, and nothing a person
+    /// or a model wrote reaches them.
     public static let retryPrompt = "The last run of this strand failed. Please retry it."
 
     // MARK: The brief's cards
@@ -340,7 +328,7 @@ public enum ThreadRule {
     }
 
     /// Renders a phrase with `clock` wording each instant.
-    public static func render(_ phrase: [ThreadPart], clock: (Int) -> String = InboxRule.localClock) -> String {
+    public static func render(_ phrase: [ThreadPart], clock: (Int) -> String = ClockTime.local) -> String {
         phrase.map { part in
             switch part {
             case .words(let words): return words

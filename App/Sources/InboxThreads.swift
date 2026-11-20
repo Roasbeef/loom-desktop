@@ -45,14 +45,12 @@ final class ThreadReader {
         guard let control, reads.approval || reads.brief || reads.record != nil else { return }
         try? await Task.sleep(for: Self.settle)
         var last: BriefRead?
-        var trigger = BriefTrigger.opened
 
         repeat {
             if Task.isCancelled { return }
             if reads.approval { await readEvidence(control, session) }
-            if reads.brief { await readBrief(control, session, last: &last, trigger: trigger) }
+            if reads.brief { await readBrief(control, session, last: &last) }
             if let id = reads.record { await readRecord(control, session, id) }
-            trigger = .refreshed
             try? await Task.sleep(for: .milliseconds(ThreadRule.refreshMs))
         } while !Task.isCancelled
     }
@@ -69,10 +67,10 @@ final class ThreadReader {
     /// The brief's peer messages are those after the raise time of the oldest
     /// pending approval, so the read asks after that time, and after the time of the
     /// last read when the evidence is not held.
-    private func readBrief(_ control: ControlClient, _ session: String, last: inout BriefRead?, trigger: BriefTrigger) async {
+    private func readBrief(_ control: ControlClient, _ session: String, last: inout BriefRead?) async {
         let since = evidence?.oldestRaised ?? last?.since ?? 0
         let now = Int(Date().timeIntervalSince1970 * 1000)
-        guard ThreadRule.briefDue(last: last, now: now, since: since, trigger: trigger) else { return }
+        guard ThreadRule.briefDue(last: last, now: now, since: since) else { return }
         last = BriefRead(started: now, since: since)
         do {
             brief = try await control.brief(sessionID: session, since: since)
@@ -200,7 +198,7 @@ struct InboxPane: View {
         if row.kind == .working {
             words += " \u{00B7} " + (row.since.map { "working, " + ThreadRule.turnWords(started: $0, now: Self.nowMs) } ?? "working")
         } else if let moment = ThreadRule.moment(for: row, raised: raised) {
-            words += " \u{00B7} \(moment.label) \(InboxRule.localClock(moment.at))"
+            words += " \u{00B7} \(moment.label) \(ClockTime.local(moment.at))"
         } else {
             words += " \u{00B7} " + Self.stateWords(row.kind)
         }
@@ -303,7 +301,7 @@ struct InboxPane: View {
             if let text = reader.brief?.assistant?.text, !text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let at = reader.brief?.assistant?.at {
                 PaneSection("Where it stopped") {
-                    QuoteBox(source: "The agent's latest message, untrusted text \u{00B7} \(InboxRule.localClock(at))", words: text.text)
+                    QuoteBox(source: "The agent's latest message, untrusted text \u{00B7} \(ClockTime.local(at))", words: text.text)
                 }
             }
             CoordinatorCard(brief: reader.brief)
@@ -592,7 +590,7 @@ private struct PeerQuote: View {
 
     var body: some View {
         QuoteBox(
-            source: "Peer message \u{00B7} \(peer.session) \u{00B7} \(peer.strand) messaged this session at \(InboxRule.localClock(peer.at)) \u{00B7} untrusted text",
+            source: "Peer message \u{00B7} \(peer.session) \u{00B7} \(peer.strand) messaged this session at \(ClockTime.local(peer.at)) \u{00B7} untrusted text",
             words: peer.text.text
         )
     }
@@ -627,10 +625,10 @@ private struct LastMessage: View {
 
     var body: some View {
         if working, let assistant = brief?.assistant, !assistant.text.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            QuoteBox(source: "The agent's latest message, untrusted text \u{00B7} \(InboxRule.localClock(assistant.at))", words: assistant.text.text)
+            QuoteBox(source: "The agent's latest message, untrusted text \u{00B7} \(ClockTime.local(assistant.at))", words: assistant.text.text)
         } else if let activity, let said = InboxRule.said(activity) {
             QuoteBox(
-                source: "The agent's last message, untrusted text" + (activity.lastMessageAt.map { " \u{00B7} " + InboxRule.localClock($0) } ?? ""),
+                source: "The agent's last message, untrusted text" + (activity.lastMessageAt.map { " \u{00B7} " + ClockTime.local($0) } ?? ""),
                 words: said
             )
         }
@@ -644,7 +642,7 @@ private struct StepsCard: View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(InboxRule.localClock(step.at)).font(Theme.meta).foregroundStyle(.secondary)
+                    Text(ClockTime.local(step.at)).font(Theme.meta).foregroundStyle(.secondary)
                     Text(verbatim: step.tool.text).font(Theme.code)
                     Text(verbatim: step.words.text).font(Theme.caption).lineLimit(2)
                     Spacer(minLength: 4)

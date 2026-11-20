@@ -356,13 +356,6 @@ public enum InboxRule {
         }
     }
 
-    /// An instant as a time of day in the reader's zone, "13:52".
-    public static func localClock(_ ms: Int) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
-    }
-
     // MARK: Rows
 
     /// Every row the inputs make, in no particular order: one for each session
@@ -380,7 +373,7 @@ public enum InboxRule {
         raised: [String: Int] = [:],
         reviewing: Set<String> = [],
         now: Int,
-        clock: (Int) -> String = localClock
+        clock: (Int) -> String = ClockTime.local
     ) -> [InboxRow] {
         var rows: [InboxRow] = []
         for thread in threads {

@@ -79,7 +79,7 @@ final class RailModel {
         Task {
             do {
                 _ = try await controller.exchange("prompt", body: [
-                    "strand": .string(strand), "text": .string(LiftRule.retryPrompt),
+                    "strand": .string(strand), "text": .string(ThreadRule.retryPrompt),
                 ])
                 status = "Asked \(StrandName.display(strand)) to retry."
             } catch {
@@ -121,7 +121,7 @@ struct LiftedRail: View {
     let rail: RailModel
     let controller: SessionController
     let control: ControlClient?
-    @State private var opened: Set<String> = []
+    @State private var folded: Set<String> = []
 
     /// The buttons follow the connection's role: the owner and an operator press
     /// them, and an observer reads. The debug override lives in `isObserver`.
@@ -165,10 +165,10 @@ struct LiftedRail: View {
             }
             ForEach(rows) { row in
                 LiftedRowView(
-                    row: row, isFolded: opened.contains(row.id), mayAct: mayAct,
+                    row: row, isFolded: folded.contains(row.id), mayAct: mayAct,
                     isSending: rail.sending != nil, rail: rail, controller: controller, control: control
                 ) {
-                    opened.insert(row.id)
+                    folded.insert(row.id)
                 }
             }
         }
