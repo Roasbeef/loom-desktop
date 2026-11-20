@@ -184,6 +184,11 @@ public struct InboxRow: Sendable, Equatable, Identifiable {
     public let group: InboxGroup
     /// The session's name, which a feed row does not carry.
     public let name: String
+    /// What a session thread is ordered by: the session's own name, untrimmed and
+    /// as the catalogue holds it, which is what the web view orders by. It is not
+    /// the shown name, which trims and fills in an empty one, so an unnamed session
+    /// is listed where the web lists it.
+    let sortName: String
     /// The one line under the name. Model text for an ask, a find and a message.
     public let head: String
     /// Nil when the record has no time, and the row then says none: a time is
@@ -195,11 +200,15 @@ public struct InboxRow: Sendable, Equatable, Identifiable {
     public var id: String { subject.key }
     public var sessionID: String { subject.sessionID }
 
-    init(subject: InboxSubject, kind: InboxKind, group: InboxGroup, name: String, head: String, since: Int?, now: Int) {
+    init(
+        subject: InboxSubject, kind: InboxKind, group: InboxGroup, name: String, sortName: String? = nil, head: String,
+        since: Int?, now: Int
+    ) {
         self.subject = subject
         self.kind = kind
         self.group = group
         self.name = name
+        self.sortName = sortName ?? name
         self.head = head
         self.since = since
 
@@ -380,7 +389,7 @@ public enum InboxRule {
             if let kind = kind(of: thread, reviewing: reviewing), let activity = thread.activity {
                 rows.append(InboxRow(
                     subject: .session(thread.id), kind: kind, group: group(of: kind),
-                    name: shownName(thread), head: threadHead(thread),
+                    name: shownName(thread), sortName: thread.name, head: threadHead(thread),
                     since: sessionSince(kind: kind, activity: activity, raised: raised[thread.id]), now: now
                 ))
             }
@@ -454,7 +463,7 @@ public enum InboxRule {
             }
             return precedes(left.sessionID, right.sessionID, then: left.subject.key, right.subject.key)
         }
-        return precedes(left.name, right.name, then: left.sessionID, right.sessionID)
+        return precedes(left.sortName, right.sortName, then: left.sessionID, right.sessionID)
     }
 
     /// Byte order on the first pair, then on the second, as the web view's string

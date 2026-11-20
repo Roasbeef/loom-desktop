@@ -196,6 +196,19 @@ final class InboxRuleTests: XCTestCase {
         XCTAssertEqual(found.map { ids($0) }, [["4", "3", "6"], ["2"], ["1"], ["5"]])
     }
 
+    /// The web orders session threads by the raw name, so a name with a leading space
+    /// or no name at all is listed where the web lists it, not where its shown name
+    /// would put it.
+    func testThreadsAreOrderedByTheRawNameAsTheWebOrdersThem() {
+        let found = sections([
+            thread("1", "b", activity("working")),
+            thread("2", " c", activity("working")),
+            thread("3", "", activity("working")),
+            thread("4", "a", activity("working")),
+        ])
+        XCTAssertEqual(found.map { ids($0) }, [["3", "2", "4", "1"]])
+    }
+
     /// Ports `an_empty_group_is_not_listed_test`.
     func testAnEmptyGroupIsNotListed() {
         XCTAssertEqual(sections([]), [])
