@@ -90,13 +90,27 @@ final class ReviewScanTests: XCTestCase {
         XCTAssertEqual(scan.due([("a", "m")], now: 1)?.session, "a")
     }
 
-    func testAForbiddenReadStopsTheScanAndListsNoGroup() {
+    func testAForbiddenReadStopsThatSessionAndListsNoRowForIt() {
         var scan = ReviewScan()
         scan.started("a", message: "m", now: 0)
         scan.answered("a", message: "m", read: .failure(.forbidden))
-        XCTAssertTrue(scan.isForbidden)
+        XCTAssertEqual(scan.forbidden, ["a"])
         XCTAssertNil(scan.due([("a", "m")], now: 1))
         XCTAssertEqual(ids(scan.reviewing([("a", "m")])), [])
+    }
+
+    func testAForbiddenSessionDoesNotStopTheOnesTheMemberMayRead() {
+        // An observer on "c" may be an operator on "a": the daemon refuses per session.
+        var scan = ReviewScan()
+        let candidates: [Candidate] = [("c", "m"), ("a", "m")]
+        scan.started("c", message: "m", now: 0)
+        scan.answered("c", message: "m", read: .failure(.forbidden))
+
+        XCTAssertEqual(scan.due(candidates, now: 1)?.session, "a")
+        scan.started("a", message: "m", now: 1)
+        scan.answered("a", message: "m", read: .success(review(files: 2)))
+        XCTAssertEqual(ids(scan.reviewing(candidates)), ["a"])
+        XCTAssertEqual(scan.stat("a", message: "m"), ReviewStat(files: 2, added: 3, removed: 1))
     }
 
     func testTheSessionWithTheFewestAttemptsGoesFirst() {

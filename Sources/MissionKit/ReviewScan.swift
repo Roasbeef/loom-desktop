@@ -56,7 +56,9 @@ public struct ReviewScan: Sendable, Equatable {
     public enum Failure: Error, Sendable, Equatable {
         /// The credential's allowance is spent.
         case busy
-        /// The principal may not read a worktree; the scan then reads no more.
+        /// The principal may not read this session's worktree; the scan then reads
+        /// no more of that session. The daemon decides by session, so the same
+        /// principal may be an operator on another.
         case forbidden
         /// Any other failure.
         case failed
@@ -99,9 +101,10 @@ public struct ReviewScan: Sendable, Equatable {
 
     private(set) var seen: [String: Seen] = [:]
 
-    /// Whether the daemon refused this principal a worktree read. A refused scan
-    /// lists no "To review" group, as a page that cannot read a worktree has none.
-    public private(set) var isForbidden = false
+    /// The sessions whose worktree the daemon refused this principal. A refused
+    /// session is neither read again nor listed under "To review", as a page that
+    /// cannot read a worktree has no such row; other sessions are unaffected.
+    public private(set) var forbidden: Set<String> = []
 
     public init() {}
 
@@ -123,8 +126,6 @@ public struct ReviewScan: Sendable, Equatable {
     /// The one session to read next, or nil when none is due or a read is still
     /// out. A session with fewer attempts goes first.
     public func due(_ candidates: [(session: String, message: String)], now: Int) -> (session: String, message: String)? {
-        guard !isForbidden else { return nil }
-
         // A read that is out and not stale holds the line.
         let busy = seen.values.contains { entry in
             if case .reading(_, let since, _) = entry.pending { return now - since < Self.staleMs }
@@ -133,7 +134,8 @@ public struct ReviewScan: Sendable, Equatable {
         if busy { return nil }
 
         let due = candidates.compactMap { candidate -> (attempts: Int, candidate: (session: String, message: String))? in
-            attempts(of: seen[candidate.session], message: candidate.message).map { ($0, candidate) }
+            if forbidden.contains(candidate.session) { return nil }
+            return attempts(of: seen[candidate.session], message: candidate.message).map { ($0, candidate) }
         }
         // The sort is stable by candidate order for equal attempts.
         return due.enumerated().min { left, right in
@@ -177,7 +179,7 @@ public struct ReviewScan: Sendable, Equatable {
             // if unread, and with one it keeps it.
             if before != nil { seen[session] = Seen(verdict: before, pending: .none) } else { seen[session] = nil }
         case .failure(.forbidden):
-            isForbidden = true
+            forbidden.insert(session)
             seen[session] = Seen(verdict: before, pending: .none)
         case .failure(.failed):
             seen[session] = Seen(verdict: before, pending: .failed(message: message, attempts: failures(session, message) + 1))
@@ -204,13 +206,13 @@ public struct ReviewScan: Sendable, Equatable {
     // MARK: Reading the result
 
     /// The sessions listed under "To review": every candidate except one whose
-    /// verdict for its current message says the tree is clean. A session not yet
-    /// read is listed, since a session that moved to "Waiting" only to jump back
-    /// when its turn came would shuffle the list. A scan the daemon refused lists
-    /// none.
+    /// verdict for its current message says the tree is clean, and one whose
+    /// worktree the daemon refused. A session not yet read is listed, since a
+    /// session that moved to "Waiting" only to jump back when its turn came would
+    /// shuffle the list.
     public func reviewing(_ candidates: [(session: String, message: String)]) -> Set<String> {
-        guard !isForbidden else { return [] }
-        return Set(candidates.compactMap { candidate in
+        Set(candidates.compactMap { candidate in
+            if forbidden.contains(candidate.session) { return nil }
             if let verdict = seen[candidate.session]?.verdict, verdict.message == candidate.message, !verdict.changed {
                 return nil
             }
