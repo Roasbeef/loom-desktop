@@ -326,12 +326,15 @@ final class DaemonConnection: Identifiable {
             // asks do not linger.
             if attentionRows != rows { attentionRows = rows }
         }
-        var raised: [String: Int] = [:]
+        var read: [String: Int] = [:]
         for row in activity.values where row.approvals > 0 {
             if let evidence = try? await control.approvalEvidence(sessionID: row.sessionID), let oldest = evidence.oldestRaised {
-                raised[row.sessionID] = oldest
+                read[row.sessionID] = oldest
             }
         }
+        let raised = InboxRule.raisedTimes(
+            previous: approvalRaised, read: read, approving: Set(activity.values.filter { $0.approvals > 0 }.map(\.sessionID))
+        )
         if approvalRaised != raised { approvalRaised = raised }
     }
 

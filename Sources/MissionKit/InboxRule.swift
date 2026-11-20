@@ -365,6 +365,18 @@ public enum InboxRule {
         }
     }
 
+    // MARK: Raise times
+
+    /// The raise time of each session's oldest pending approval after a refresh.
+    /// A session that still has approvals keeps the time it had when this refresh's
+    /// `approval.read` did not answer (the daemon allows a credential only so many
+    /// reads), so one refused read does not drop a row's age until the next one. A
+    /// session with no approval left keeps no time, and a time read now replaces the
+    /// one before it.
+    public static func raisedTimes(previous: [String: Int], read: [String: Int], approving: Set<String>) -> [String: Int] {
+        previous.filter { approving.contains($0.key) }.merging(read) { _, new in new }
+    }
+
     // MARK: Rows
 
     /// Every row the inputs make, in no particular order: one for each session

@@ -209,6 +209,12 @@ final class InboxRuleTests: XCTestCase {
         XCTAssertEqual(found.map { ids($0) }, [["3", "2", "4", "1"]])
     }
 
+    func testARefusedApprovalReadKeepsTheAgeOfASessionStillWaiting() {
+        let kept = InboxRule.raisedTimes(previous: ["a": 5, "b": 7, "gone": 9], read: ["b": 8], approving: ["a", "b"])
+        XCTAssertEqual(kept, ["a": 5, "b": 8], "a read time replaces the old one, and a session with no approval keeps none")
+        XCTAssertEqual(InboxRule.raisedTimes(previous: ["a": 5], read: [:], approving: []), [:])
+    }
+
     /// Ports `an_empty_group_is_not_listed_test`.
     func testAnEmptyGroupIsNotListed() {
         XCTAssertEqual(sections([]), [])
