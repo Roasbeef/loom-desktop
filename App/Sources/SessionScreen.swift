@@ -110,6 +110,14 @@ private struct LiveSession: View {
     let controller: SessionController
     let placement: Placement?
     @State private var query = ""
+    @State private var rail: RailModel
+
+    init(record: SessionRecord, controller: SessionController, placement: Placement?) {
+        self.record = record
+        self.controller = controller
+        self.placement = placement
+        _rail = State(initialValue: RailModel(sessionID: record.id))
+    }
 
     private var subtitle: String {
         var parts: [String] = []
@@ -122,8 +130,25 @@ private struct LiveSession: View {
         @Bindable var model = model
         @Bindable var controller = controller
         TranscriptView(controller: controller, query: query)
+            .safeAreaBar(edge: .top, spacing: 0) {
+                StreamHead(controller: controller, rail: rail)
+            }
             .safeAreaBar(edge: .bottom, spacing: 0) {
-                ComposerStack(controller: controller)
+                ComposerStack(controller: controller, rail: rail)
+            }
+            // The rail reads the session's feed row and the approval evidence about
+            // every five seconds while the page is open, and approval evidence only
+            // while an approval waits, since the daemon caches neither.
+            .task(id: record.id) {
+                while !Task.isCancelled {
+                    if controller.isLive {
+                        await rail.refresh(
+                            control: model.daemon(holding: record.id)?.control,
+                            hasApprovals: !controller.escalations.isEmpty
+                        )
+                    }
+                    try? await Task.sleep(for: RailModel.refreshEvery)
+                }
             }
             .navigationTitle(record.title)
             .navigationSubtitle(subtitle)
@@ -132,7 +157,10 @@ private struct LiveSession: View {
             }
             .searchable(text: $query, isPresented: $controller.isSearching, placement: .toolbar, prompt: "Find in transcript")
             .inspector(isPresented: $model.showsInspector) {
-                SessionInspector(record: record, controller: controller, placement: placement)
+                SessionInspector(
+                    record: record, controller: controller, placement: placement, rail: rail,
+                    control: model.daemon(holding: record.id)?.control
+                )
                     .inspectorColumnWidth(min: 260, ideal: 460, max: 800)
             }
             .sheet(isPresented: Binding(
@@ -255,6 +283,15 @@ private struct TranscriptView: View {
         return models
     }
 
+    /// The record time of the row whose first part has this id, for a long reply
+    /// laid out a run per row. Only the first run carries the time.
+    private static func time(of id: String, in blocks: [TranscriptBlock]) -> Int? {
+        for block in blocks.reversed() {
+            if case .row(let row) = block, row.id == id { return row.at }
+        }
+        return nil
+    }
+
     /// One row of the lazy stack: a whole block, or one markdown block of a long reply.
     private enum Item: Identifiable {
         case block(TranscriptBlock)
@@ -318,14 +355,17 @@ private struct TranscriptView: View {
                         switch item {
                         case .block(let block):
                             BlockView(block: block, controller: controller)
-                        case .answerPart(_, let part, let text, let isFirst):
-                            AnswerPart(part: part, text: text, isFirst: isFirst)
+                        case .answerPart(let id, let part, let text, let isFirst):
+                            GutterRow(at: isFirst ? Self.time(of: id, in: controller.blocks) : nil) {
+                                AnswerPart(part: part, text: text, isFirst: isFirst)
+                            }
                         }
                     }
                     .id(item.id)
                 }
                 if query.isEmpty {
                     LiveTail(controller: controller)
+                        .padding(.leading, GutterRow<EmptyView>.width)
                 }
                 if !query.isEmpty, visibleBlocks.isEmpty {
                     Text("No matches in what is loaded.")
@@ -336,7 +376,7 @@ private struct TranscriptView: View {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity)
                 }
             }
-            .frame(maxWidth: Theme.contentWidth, alignment: .leading)
+            .frame(maxWidth: Theme.contentWidth + GutterRow<EmptyView>.width, alignment: .leading)
             .padding(.horizontal, 28)
             .padding(.top, 28)
             .padding(.bottom, 14)
@@ -518,12 +558,26 @@ private struct BlockView: View {
     let block: TranscriptBlock
     let controller: SessionController
 
+    private static func showsTime(_ row: TranscriptRow) -> Bool {
+        switch row.kind {
+        case .user, .assistant, .failure, .agentReport, .peer, .sibling, .advisor, .decision: return true
+        case .thinking, .tool, .spawned, .memory, .notice: return false
+        }
+    }
+
     var body: some View {
         switch block {
         case .row(let row):
-            RowView(row: row)
+            // The gutter says when the daemon recorded the row. The rows a reader
+            // scans by time are the people's messages and the replies; a notice,
+            // a step or a memory line would only add noise to the column.
+            GutterRow(at: Self.showsTime(row) ? row.at : nil) {
+                RowView(row: row)
+            }
         case .fold(let fold):
-            FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries)
+            GutterRow(at: nil) {
+                FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries)
+            }
         }
     }
 }
@@ -683,6 +737,7 @@ struct RowView: View {
 /// glass cannot sample other glass and nearby pieces must be drawn together.
 private struct ComposerStack: View {
     let controller: SessionController
+    let rail: RailModel
 
     var body: some View {
         GlassEffectContainer(spacing: 10) {
@@ -706,7 +761,7 @@ private struct ComposerStack: View {
                 // The card is flat, as it is everywhere, on one plain piece of glass
                 // that keeps it legible over the transcript scrolling beneath it.
                 ForEach(controller.escalations) { escalation in
-                    ApprovalCard(record: escalation, controller: controller)
+                    ApprovalCard(record: escalation, controller: controller, evidence: rail.evidence[escalation.id])
                         .glassEffect(.regular, in: .rect(cornerRadius: Theme.radiusFloating))
                 }
                 if !controller.remoteChildren.isEmpty {
@@ -754,14 +809,26 @@ struct ApprovalCard: View {
     @State private var cardWidth: CGFloat = 1000
     let record: Escalation
     let controller: SessionController
+    /// What `approval.read` lent for this record, or nil when it was not read or
+    /// the daemon is older. Every line it adds is left out when it is absent.
+    var evidence: ApprovalEvidenceItem?
     @State private var isArmed = false
+
+    /// The headline: the tool-named title the evidence composes when the call
+    /// wants a write or network grant, and otherwise the card's own sentence.
+    private var headline: String {
+        evidence.flatMap(ApprovalWords.title)
+            ?? record.sentence(asker: StrandName.display(record.strand.isEmpty ? "A strand" : record.strand))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            // Who is asking and what for, in a sentence, before the authority.
-            Text(record.sentence(asker: StrandName.display(record.strand.isEmpty ? "A strand" : record.strand)))
+            // Who is asking and what for, before the authority. The headline can
+            // carry the model's command, so it is drawn as text and never as markup.
+            Text(verbatim: headline)
                 .font(.system(size: 13))
-                .accessibilityLabel(record.sentence(asker: StrandName.display(record.strand.isEmpty ? "A strand" : record.strand)))
+                .accessibilityLabel(headline)
+            evidenceLines
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "hand.raised.fill")
                     .font(.system(size: 12))
@@ -840,6 +907,30 @@ struct ApprovalCard: View {
         .padding(13)
         .background(Theme.attention.opacity(0.09), in: .rect(cornerRadius: Theme.radiusFloating))
         .overlay(RoundedRectangle(cornerRadius: Theme.radiusFloating).strokeBorder(Theme.attention.opacity(0.4), lineWidth: 1))
+    }
+
+    /// The words `approval.read` adds: how long the card has waited, the network the
+    /// call would have and the policy the session runs under now. The wait is aged
+    /// from the daemon's raise time and from nothing else, once a minute.
+    @ViewBuilder
+    private var evidenceLines: some View {
+        if let evidence {
+            let lines = [ApprovalWords.networkLine(evidence), ApprovalWords.policyLine(evidence)].compactMap { $0 }
+            if evidence.raisedAt != nil || !lines.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    if evidence.raisedAt != nil {
+                        TimelineView(.periodic(from: .now, by: 30)) { context in
+                            Text(ApprovalWords.waitingLine(
+                                raisedAt: evidence.raisedAt, now: Int(context.date.timeIntervalSince1970 * 1000)
+                            ) ?? "")
+                        }
+                    }
+                    ForEach(lines, id: \.self) { Text($0).font(Theme.meta) }
+                }
+                .font(Theme.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var sampleNote: some View {
@@ -989,6 +1080,8 @@ private struct SessionInspector: View {
     let record: SessionRecord
     let controller: SessionController
     let placement: Placement?
+    let rail: RailModel
+    let control: ControlClient?
 
     /// Four tabs. The strand's notes and its evolution candidates are sections
     /// of the Session tab, which already held the session's other boards.
@@ -1045,6 +1138,19 @@ private struct SessionInspector: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // What this session has lifted sits under the tabs, as it does on the
+            // web, and is drawn only when something was lifted.
+            let rows = LiftRule.rows(approvals: controller.escalations, raised: rail.raised, feed: rail.feed)
+            if !rows.isEmpty {
+                Divider()
+                ScrollView {
+                    LiftedRail(rows: rows, rail: rail, controller: controller, control: control)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 280)
             }
         }
     }
