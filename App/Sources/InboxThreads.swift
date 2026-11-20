@@ -472,12 +472,14 @@ private struct MessageBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Divider()
-            TextField("Message \(name)\u{2026}", text: $draft, axis: .vertical)
+            // A session's name is text a person or a model wrote, so the prompt and
+            // the label are verbatim and a name is never read as markup.
+            TextField(text: $draft, prompt: Text(verbatim: "Message \(name)\u{2026}"), axis: .vertical) { EmptyView() }
                 .textFieldStyle(.plain)
                 .font(Theme.body)
                 .lineLimit(1...5)
                 .padding(.horizontal, 24)
-                .accessibilityLabel("Message to \(name)")
+                .accessibilityLabel(Text(verbatim: "Message to \(name)"))
             HStack(spacing: 8) {
                 Text(verbatim: statusWords).font(Theme.caption).foregroundStyle(.secondary).lineLimit(3)
                 Spacer(minLength: 8)
@@ -524,7 +526,7 @@ private struct FindActions: View {
                         close("Dismiss", .dismissed, record)
                     }
                 } else if let closure = find.closure {
-                    Text("Closed as \(closure.outcome).").font(Theme.caption).foregroundStyle(.secondary)
+                    Text(verbatim: "Closed as \(closure.outcome).").font(Theme.caption).foregroundStyle(.secondary)
                 } else {
                     Text("Only the owner or an operator can close a find.").font(Theme.caption).foregroundStyle(.secondary)
                 }
