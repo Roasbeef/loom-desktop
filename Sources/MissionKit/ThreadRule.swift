@@ -422,8 +422,11 @@ public enum ThreadSend {
     /// Whether a draft may be sent: it holds something besides whitespace and fits
     /// the daemon's prompt bound of 16,384 bytes.
     public static func sendable(_ draft: String) -> Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.utf8.count <= 16_384
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.utf8.count <= promptLimit
     }
+
+    /// The most bytes of one prompt the daemon takes.
+    public static let promptLimit = 16_384
 
     /// What the bar says after a delivery. `status` is the daemon's `admitted` or
     /// `queued`, which is all it means: it does not say the session read the message.
