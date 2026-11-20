@@ -24,10 +24,10 @@ import LoomKit
 // - No saved-session counts. The web takes them from the catalogue's summary
 //   (loom protocol-change/122), which no control command carries, so the notes
 //   here say saved sessions are not checked.
-// - A "To review" group exists, but only for sessions the caller names in
-//   `reviewing`. The web decides that by reading each idle session's worktree, and
-//   this app has no such scan yet, so an idle session with something to say sits
-//   in "Waiting" until one does.
+// - A "To review" group exists for the sessions the caller names in `reviewing`.
+//   The web decides that by reading each idle session's worktree, and `ReviewScan`
+//   does the same here, so an idle session with something to say sits in
+//   "Waiting" only once a read has found its tree clean.
 
 /// What a thread is about, which the chip on its row says.
 public enum InboxKind: Sendable, Equatable {
@@ -274,7 +274,7 @@ public enum InboxRule {
 
     /// The last message when it has words in it. A message of whitespace is no
     /// message, so the session is not offered as having said something.
-    static func said(_ activity: SessionActivity) -> String? {
+    public static func said(_ activity: SessionActivity) -> String? {
         guard let text = activity.lastMessage, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return text
     }
