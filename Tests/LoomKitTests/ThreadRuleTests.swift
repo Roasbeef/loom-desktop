@@ -72,10 +72,23 @@ final class ThreadRuleTests: XCTestCase {
     }
 
     func testAReviewThreadWithNoSizeKeepsItsMessageBar() {
-        XCTAssertFalse(ThreadRule.offersMessage(kind: .review, hasStat: true))
-        XCTAssertTrue(ThreadRule.offersMessage(kind: .review, hasStat: false))
-        XCTAssertTrue(ThreadRule.offersMessage(kind: .waiting, hasStat: false))
-        XCTAssertTrue(ThreadRule.offersMessage(kind: .approval, hasStat: true))
+        XCTAssertFalse(ThreadRule.offersMessage(kind: .review, hasStat: true, isObserver: false))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .review, hasStat: false, isObserver: false))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .waiting, hasStat: false, isObserver: false))
+        XCTAssertTrue(ThreadRule.offersMessage(kind: .approval, hasStat: true, isObserver: false))
+    }
+
+    func testAnObserverIsOfferedNeitherRetryNorTheMessageBar() {
+        for kind in [InboxKind.waiting, .working, .approval, .review, .stuck] {
+            XCTAssertFalse(ThreadRule.offersMessage(kind: kind, hasStat: false, isObserver: true))
+        }
+        XCTAssertEqual(ThreadRule.retryOffer(isObserver: true, stuckListed: true, sending: false), .hidden)
+    }
+
+    func testRetryStaysOffWhileARetryIsOutAndGoesWhenTheStrandIsNoLongerStuck() {
+        XCTAssertEqual(ThreadRule.retryOffer(isObserver: false, stuckListed: true, sending: false), .enabled)
+        XCTAssertEqual(ThreadRule.retryOffer(isObserver: false, stuckListed: true, sending: true), .disabled)
+        XCTAssertEqual(ThreadRule.retryOffer(isObserver: false, stuckListed: false, sending: false), .hidden)
     }
 
     func testPeersShownOnlyWhenTheReadNamedTheRaiseTime() {

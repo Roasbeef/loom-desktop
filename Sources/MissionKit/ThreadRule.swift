@@ -320,11 +320,34 @@ public enum ThreadRule {
         return isUnreadable ? "The worktree could not be read." : "Checking the worktree\u{2026}"
     }
 
-    /// Whether the pane offers its message bar. A "To review" thread whose size is
-    /// known is read on the session's page, as on the web; one with no size yet, or
-    /// whose worktree could not be read, still lets the person write to the session.
-    public static func offersMessage(kind: InboxKind, hasStat: Bool) -> Bool {
-        kind != .review || !hasStat
+    /// Whether the pane offers its message bar. An observer watches and sends
+    /// nothing, as the rail's buttons are not offered to one. A "To review" thread
+    /// whose size is known is read on the session's page, as on the web; one with no
+    /// size yet, or whose worktree could not be read, still lets the person write to
+    /// the session.
+    public static func offersMessage(kind: InboxKind, hasStat: Bool, isObserver: Bool) -> Bool {
+        if isObserver { return false }
+        return kind != .review || !hasStat
+    }
+
+    /// What the pane's Retry button does for a stuck strand.
+    public enum RetryOffer: Sendable, Equatable {
+        /// Not drawn: the connection only watches, or the feed no longer lists the
+        /// strand as stuck.
+        case hidden
+        /// Drawn and pressable.
+        case enabled
+        /// Drawn and not pressable, while a retry is out.
+        case disabled
+    }
+
+    /// Whether Retry is offered. A retry that was delivered keeps the button off
+    /// until the feed has been read again, and the feed then either no longer lists
+    /// the strand, so the button goes, or still does, so a second press is the
+    /// person's own choice and not a repeat of a stale row.
+    public static func retryOffer(isObserver: Bool, stuckListed: Bool, sending: Bool) -> RetryOffer {
+        if isObserver || !stuckListed { return .hidden }
+        return sending ? .disabled : .enabled
     }
 
     // MARK: Eyebrow

@@ -119,6 +119,20 @@ struct InboxPane: View {
 
     private var feedRow: AttentionRow? { model.attentionRows[sessionID] }
 
+    /// Whether this connection only watches the session, as the rail's gate reads it.
+    /// A session not attached yet has no role to read, and a send attaches it and is
+    /// refused there when the role is an observer's.
+    private var isObserver: Bool { model.controller(for: sessionID)?.isObserver ?? false }
+
+    /// What Retry does for the stuck strand this thread is about.
+    private var retry: ThreadRule.RetryOffer {
+        ThreadRule.retryOffer(
+            isObserver: isObserver,
+            stuckListed: feedRow?.stuck.items.contains { $0.strand == strand } == true,
+            sending: outcome.isSending
+        )
+    }
+
     /// The strand a message goes to: the one the record is about, else main.
     private var strand: String {
         switch row.subject {
@@ -139,10 +153,10 @@ struct InboxPane: View {
                         Button("Open Session") { model.destination = .session(sessionID) }
                             .buttonStyle(.bordered)
                             .keyboardShortcut(.return, modifiers: .command)
-                        if case .stuck(_, let strand) = row.subject {
+                        if case .stuck(_, let strand) = row.subject, retry != .hidden {
                             Button("Retry") { send(text: ThreadRule.retryPrompt, choice: .send, strand: strand) }
                                 .buttonStyle(.bordered)
-                                .disabled(outcome.isSending)
+                                .disabled(retry == .disabled)
                         }
                     }
                 }
@@ -150,11 +164,15 @@ struct InboxPane: View {
                 .frame(maxWidth: 680, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if ThreadRule.offersMessage(kind: row.kind, hasStat: hasReviewStat) {
+            if ThreadRule.offersMessage(kind: row.kind, hasStat: hasReviewStat, isObserver: isObserver) {
                 MessageBar(
                     name: row.name, kind: row.kind, draft: $draft, outcome: outcome,
                     send: { choice in send(text: draft, choice: choice, strand: strand) }
                 )
+            } else if isObserver {
+                Text(verbatim: SessionController.observerWords)
+                    .font(Theme.caption).foregroundStyle(.secondary)
+                    .padding(.horizontal, 24).padding(.vertical, 10)
             }
         }
         .accessibilityIdentifier("inbox-pane/\(row.id)")
@@ -414,6 +432,11 @@ struct InboxPane: View {
         Task {
             do {
                 let status = try await model.sendMessage(sessionID: id, strand: strand, text: text, choice: choice)
+
+                // The feed row may still list the strand as stuck for up to its refresh
+                // period. Reading it before the button comes back keeps a second press
+                // from queueing a duplicate retry against a row the daemon has cleared.
+                if case .stuck = row.subject { await model.daemon(holding: id)?.readAttentionNow() }
                 outcome = .said(ThreadSend.deliveredWords(status: status, choice: choice, name: name))
                 if text == draft { draft = "" }
             } catch LoomError.outcomeUnknown {
