@@ -33,6 +33,11 @@ final class RailModel {
     /// The word on the last action, drawn after the rows. Empty when there is none.
     private(set) var status = ""
 
+    /// Whether the last timed read found an approval pending. A read after an action
+    /// asks for the evidence again on that word, so it does not empty the evidence
+    /// that the approval card draws its words from until the next timed read.
+    private var hadApprovals = false
+
     /// How often the rail reads while the page is open. The daemon caches nothing
     /// and pushes nothing, and the web page reads at the same pace.
     static let refreshEvery: Duration = .seconds(5)
@@ -55,6 +60,7 @@ final class RailModel {
     /// A refusal from an older daemon leaves what was read before in place.
     func refresh(control: ControlClient?, hasApprovals: Bool) async {
         guard let control else { return }
+        hadApprovals = hasApprovals
         if let rows = try? await control.attention(sessions: [sessionID]), let row = rows[sessionID], row != feed {
             feed = row
         }
@@ -86,7 +92,7 @@ final class RailModel {
                 status = error.localizedDescription
             }
             sending = nil
-            await refresh(control: control, hasApprovals: false)
+            await refresh(control: control, hasApprovals: hadApprovals)
         }
     }
 
@@ -109,7 +115,7 @@ final class RailModel {
                 status = error.localizedDescription
             }
             sending = nil
-            await refresh(control: control, hasApprovals: false)
+            await refresh(control: control, hasApprovals: hadApprovals)
         }
     }
 }
