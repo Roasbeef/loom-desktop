@@ -627,6 +627,10 @@ enum InboxSnapshot {
             now: Int(Date().timeIntervalSince1970 * 1000)
         )
         let sections = InboxRule.sections(rows)
+        let tally = model.inboxTally(threads: threads)
+        // The running sessions' part alone, so a scenario can tell its own threads
+        // from saved sessions other scenarios left in the catalogue.
+        let live = InboxRule.tally(threads: threads, feed: model.attentionRows)
         return [
             "groups": sections.map { section -> [String: Any] in
                 [
@@ -635,8 +639,12 @@ enum InboxSnapshot {
                 ]
             },
             "folders": InboxRule.folderEntries(sections).map { ["title": $0.folder.title, "count": $0.count ?? -1] as [String: Any] },
-            "headline": InboxRule.headline(InboxRule.tally(threads: threads, feed: model.attentionRows)),
-            "note": InboxRule.countNote(running: threads.filter { $0.activity != nil }.count),
+            "headline": InboxRule.headline(tally),
+            "needing": tally.needing,
+            "liveNeeding": live.needing,
+            "liveFinds": live.finds,
+            "fromCatalogue": tally.fromCatalogue,
+            "note": InboxRule.countNote(running: threads.filter { $0.activity != nil }.count, fromCatalogue: tally.fromCatalogue),
             "drawn": model.debugInboxDrawn,
             "open": model.debugInboxOpen,
             "paneWidth": model.debugInboxPaneWidth,

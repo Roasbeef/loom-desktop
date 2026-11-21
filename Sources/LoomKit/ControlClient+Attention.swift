@@ -3,11 +3,12 @@ import Foundation
 // The control commands behind the attention inbox (loom docs/client-protocol.md
 // sections 3.34 and 3.35). All of them take the current epoch, and all are reads
 // except `attention.close_find`, which settles one record and sends nothing to any
-// strand. Each reply is one fresh observation: the daemon caches nothing and
+// strand, and `attention.answer`, which delivers one prompt to the asking strand and
+// settles the ask. Each reply is one fresh observation: the daemon caches nothing and
 // pushes nothing, so the caller decides how often to ask.
 //
 // Cadence is the caller's, and three of the reads are rate limited:
-// `sessions.attention` takes at most 24 ids, `session.brief` is six reads in four
+// `sessions.attention` and `sessions.saved_attention` take at most 24 ids, `session.brief` is six reads in four
 // seconds per credential, and `sessions.review` runs Git in the session's sandbox
 // and may wait up to 14 seconds.
 
@@ -44,6 +45,42 @@ extension ControlClient {
             throw LoomError.protocolViolation("attention.read returned no record")
         }
         return record
+    }
+
+    /// Delivers an answer to an open ask at the revision it was read at, and settles
+    /// the ask. The daemon refuses a stale epoch (`stale_epoch`), a record that
+    /// moved or was answered (`conflict`), an answer that fails its check
+    /// (`bad_request`, naming the first failing key), a saved session
+    /// (`not_resident`) and an observer (`forbidden`). Whether the prompt arrived is not
+    /// reliable to read from a refusal: a message may say `delivered` under any code,
+    /// and an `unavailable` may say only that it "may have arrived". After any outcome,
+    /// an error from the transport included, the caller reads the record again before
+    /// offering another answer. A daemon that predates the command is
+    /// `LoomError.isUnknownCommand`.
+    public func answerAsk(sessionID: String, ask: String, revision: Int, answer: AttentionAnswerBody) async throws -> AnswerReceipt {
+        let body = try await request("attention.answer", body: AttentionWire.answerBody(
+            session: sessionID, ask: ask, revision: revision, answer: answer, epoch: try currentEpoch()
+        ))
+        guard let receipt = AnswerReceipt(body) else {
+            throw LoomError.protocolViolation("attention.answer returned no receipt")
+        }
+        return receipt
+    }
+
+    /// What the catalogue keeps of the attention of `sessions`, batched at the
+    /// server's bound of 24. A session with no entry was not read, and the daemon
+    /// gives the same absence for one this credential does not hold, so a caller
+    /// treats it as "not checked" and never as "nothing waits". The rows are a cache
+    /// that can lag the session's own records.
+    public func savedAttention(sessions: [String]) async throws -> [String: SavedAttention] {
+        let epoch = try currentEpoch()
+        var rows: [String: SavedAttention] = [:]
+        for start in stride(from: 0, to: sessions.count, by: AttentionWire.savedBatch) {
+            let batch = Array(sessions[start..<min(start + AttentionWire.savedBatch, sessions.count)])
+            let body = try await request("sessions.saved_attention", body: AttentionWire.savedBody(sessions: batch, epoch: epoch))
+            rows.merge(AttentionWire.savedRows(body)) { _, new in new }
+        }
+        return rows
     }
 
     /// Settles a find at the revision it was read at, and answers the new revision.

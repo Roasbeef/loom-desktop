@@ -10,6 +10,7 @@ import run
 import scenarios
 from loomui import ROOT, wait_for
 from scenarios import WORKSPACE, pending_approval, scenario, settle
+from scenarios_inbox import fresh_repo, open_thread, wait_row
 
 IMAGES = ROOT / "docs/images"
 
@@ -45,6 +46,32 @@ def readme_shots(c):
     c.app.see(r"\d+ changed files?", 20)
     time.sleep(1)
     c.app.shot(IMAGES / "session.png")
+
+    # The inbox: an approval and an ask under Needs you, a finished session to review with a
+    # find pinned in it, and the pane open on the review.
+    repo = fresh_repo("shots-inbox")
+    sid = c.app.dispatch("Retry budget review demo", repo)
+    c.app.open_session("Retry budget review")
+    settle(c)
+    c.app.prompt(sid, "now noticefind")
+    wait_for(lambda: not c.app.session()["isBusy"] and any("noted the risk" in t for t in c.app.session()["transcript"]), 40, "the second turn to end")
+    c.app.dispatch("Cache layout askowner", repo)
+    c.app.go("inbox")
+    review = wait_row(c, "Review", "Retry budget review demo", 90)
+    wait_row(c, "Risk", "Retry budget review demo")
+    ask = wait_row(c, "Ask", "Cache layout askowner")
+    open_thread(c, review)
+    c.app.see(r"^Ready to review: ", 30)
+    time.sleep(1)
+    c.app.shot(IMAGES / "inbox.png")
+
+    # An ask answered from its pane: the form shows each question with its options.
+    open_thread(c, ask)
+    c.app.see(r"^Per host, recommended$", 10)
+    c.app.press("Per host, recommended")
+    c.app.press("No")
+    time.sleep(1)
+    c.app.shot(IMAGES / "answer.png")
 
 
 if __name__ == "__main__":

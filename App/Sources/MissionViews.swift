@@ -355,8 +355,9 @@ struct InboxView: View {
         let shown = InboxRule.shownFolder(chosen: folder, sections: all)
         let sections = InboxRule.visible(all, in: shown)
         let machines = model.attention.filter { $0.kind == .machine }
-        let note = InboxRule.countNote(running: threads.filter { $0.activity != nil }.count)
-        let headline = InboxRule.headline(InboxRule.tally(threads: threads, feed: feed))
+        let tally = model.inboxTally(threads: threads)
+        let note = InboxRule.countNote(running: threads.filter { $0.activity != nil }.count, fromCatalogue: tally.fromCatalogue)
+        let headline = InboxRule.headline(tally)
         let drawn = [shown.title] + sections.map { "\($0.title) \u{00B7} \($0.count)" }
         let chosenSubject: InboxSubject? = if case .thread(let subject)? = selection { subject } else { nil }
         let open = InboxRule.selection(sections, chosen: chosenSubject)?.key ?? ""
@@ -374,10 +375,16 @@ struct InboxView: View {
 
             if sections.isEmpty && machines.isEmpty {
                 ContentUnavailableView {
-                    Label("Nothing needs you", systemImage: "checkmark.circle")
+                    // Saved sessions are counted and not listed, so something can wait on the
+                    // owner under a list with no row, and then the title says so.
+                    Label(InboxRule.lead(tally), systemImage: tally.needing == 0 ? "checkmark.circle" : "tray")
                         .symbolRenderingMode(.hierarchical)
                 } description: {
-                    Text("Approvals, asks, failed runs and unhealthy machines will appear here. \(note)")
+                    if tally.needing == 0 {
+                        Text("Approvals, asks, failed runs and unhealthy machines will appear here. \(note)")
+                    } else {
+                        Text("\(headline). The saved sessions' counts are the catalogue's summary; resume one to read what it holds.")
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
