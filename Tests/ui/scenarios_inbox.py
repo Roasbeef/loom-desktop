@@ -89,6 +89,28 @@ def position(texts, wanted, after=0):
 # Groups and folders.
 
 
+@scenario("AI-01", needs_display=True)
+def the_inbox_keeps_a_readable_pane_at_the_smallest_window(c):
+    """At the narrowest window the folder rail gives way to a toolbar menu and the reading pane keeps its floor, and a wide window has the rail and a wider pane."""
+    repo = fresh_repo("inbox-width")
+    c.app.dispatch("Width approval escalate", repo)
+    c.app.go("inbox")
+    wait_row(c, "Approval", "Width approval escalate")
+    try:
+        c.app.resize(880, 560)
+        wait_for(lambda: c.app.snap()["inbox"]["folderControl"] == "menu", 5, "the rail to give way to the menu")
+        narrow = c.app.snap()["inbox"]["paneWidth"]
+        check(narrow >= 340, f"the reading pane is {narrow} pt wide at 880 pt, under the 340 pt floor")
+        check(not c.app.fully_on_screen("Folder Everything, by need"), "the rail should not be drawn at the narrowest window")
+        c.app.resize(1400, 900)
+        wait_for(lambda: c.app.snap()["inbox"]["folderControl"] == "rail", 5, "the rail to return")
+        wide = c.app.snap()["inbox"]["paneWidth"]
+        check(wide >= 420, f"the reading pane is {wide} pt wide at 1400 pt, under the 420 pt readable width")
+        wait_for(lambda: c.app.fully_on_screen("Folder Everything, by need"), 5, "the rail's folders on screen")
+    finally:
+        c.app.resize(1400, 900)
+
+
 @scenario("AI-01", "AI-03", "AI-04", "AI-05")
 def the_inbox_groups_threads_by_need_and_the_rail_narrows_them(c):
     """Asks, finds and stuck strands reach the inbox, grouped in the design's order, and each folder counts its band."""
