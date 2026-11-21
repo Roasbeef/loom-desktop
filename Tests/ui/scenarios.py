@@ -741,19 +741,23 @@ def deny_clears_an_approval(c):
     wait_for(lambda: not c.app.session()["escalations"], what="the approval to clear")
 
 
-@scenario()
+@scenario(foreground=True)
 def menu_allows_the_first_request(c):
-    """The Session menu's Allow Request answers the first card."""
+    """The Session menu's Allow answers the armed card on screen, and its title names the tool."""
     pending_approval(c, "Menu allow")
-    c.app.menu("Allow Request")
+    c.app.take_focus()
+    wait_for(lambda: c.app.menu_state("Allow fs_write") == "enabled", 10, "the menu's Allow to follow the armed card")
+    c.app.menu("Allow fs_write")
     wait_for(lambda: not c.app.session()["escalations"], what="the approval to clear")
 
 
-@scenario("AP-06")
+@scenario("AP-06", foreground=True)
 def allow_for_session_stops_the_next_prompt(c):
     """Remembering a grant means the same write does not ask again."""
     sid = pending_approval(c, "Remember")
-    c.app.menu("Allow Request for This Session")
+    c.app.take_focus()
+    wait_for(lambda: c.app.menu_state("Allow fs_write for This Session") == "enabled", 10, "the menu's Allow for This Session to arm")
+    c.app.menu("Allow fs_write for This Session")
     wait_for(lambda: not c.app.session()["escalations"], what="the approval to clear")
     folds = len(c.app.session()["folds"])
     c.app.prompt(sid, "escalate again")
@@ -767,23 +771,29 @@ def allow_for_session_stops_the_next_prompt(c):
 
 @scenario("HM-21", "HM-22", "PA-12")
 def approval_appears_in_mission_and_inbox(c):
-    """An approval is answerable from Mission Control and listed in the Inbox."""
-    before = len(c.app.snap()["attention"])
+    """An approval is counted once on every surface, listed in Mission Control without deciding buttons, and decided in the inbox."""
+    before = c.app.snap()["inbox"]["needing"]
     pending_approval(c, "Everywhere")
 
-    # The sidebar's Inbox badge and the Dock tile both count the attention list.
-    wait_for(lambda: len(c.app.snap()["attention"]) == before + 1, 10, "one more item needing a person")
+    # The sidebar's Inbox badge, the window subtitle and the Dock tile all read the board's one count.
+    wait_for(lambda: c.app.snap()["inbox"]["needing"] == before + 1, 10, "one more thing needing a person")
     wait_for(lambda: c.app.snap()["dockBadge"] == str(before + 1), 10, "the Dock badge to count it")
     c.app.go("mission")
     c.app.see("Needs You")
-    c.app.go("inbox")
 
-    # The row sits under "Needs you" with the Approval chip, and its pane carries the live card.
+    # The row opens the thread. It carries no Allow, Deny or Allow for This Session.
+    check(not any(n["name"] in ("Allow", "Deny", "More ways to allow") for n in c.app.tree()), "Mission Control must not decide an approval")
+    label = next(n["name"] for n in c.app.tree() if n["name"].startswith("Open Everywhere") and n["name"].endswith("in the Inbox, Approval"))
+    c.app.press(label)
+    wait_for(lambda: c.app.snap()["destination"] == "inbox", 5, "the row to open the inbox")
+    wait_for(lambda: c.app.snap()["inbox"]["open"].startswith("session/"), 5, "the thread to open")
     wait_for(lambda: any(g["title"] == "Needs you" and any(r["kind"] == "Approval" and r["name"].startswith("Everywhere") for r in g["rows"]) for g in c.app.snap()["inbox"]["groups"]), 15, "an Approval row under Needs you")
     c.app.see("Write to /Users/Shared")
-    c.app.go("mission")
+
+    # The decision is made beside the evidence.
+    wait_for(lambda: c.app.enabled("Allow"), 5, "Allow to arm")
     c.app.press("Allow")
-    wait_for(lambda: len(c.app.snap()["attention"]) == before, 15, "the answered item to leave the list")
+    wait_for(lambda: c.app.snap()["inbox"]["needing"] == before, 15, "the answered item to leave the count")
     wait_for(lambda: c.app.snap()["dockBadge"] == (str(before) if before else ""), 10, "the Dock badge to follow")
 
 
@@ -996,11 +1006,13 @@ def notes_are_searched_and_opened(c):
     c.app.see(r"Search notes", 5)
 
 
-@scenario("PE-01", "PE-02", needs_display=True)
+@scenario("PE-01", "PE-02", needs_display=True, foreground=True)
 def remembered_permissions_can_be_forgotten(c):
     """What Allow for This Session left behind is listed with who approved it, and Forget removes it."""
     pending_approval(c, "Forgetting")
-    c.app.menu("Allow Request for This Session")
+    c.app.take_focus()
+    wait_for(lambda: c.app.menu_state("Allow fs_write for This Session") == "enabled", 10, "the menu's Allow for This Session to arm")
+    c.app.menu("Allow fs_write for This Session")
     wait_for(lambda: not c.app.session()["escalations"], 15, "the approval to clear")
     open_tab(c, "Session")
     # The listing is read when the tab opens, which may be before the daemon has

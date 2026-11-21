@@ -33,7 +33,7 @@ it is an explicit button.
 | Target | Holds | Depends on |
 |---|---|---|
 | `LoomKit` | Wire, transfer assembly, the session lane, the `Conversation` projection | Foundation |
-| `MissionKit` | Placement, the merged attention list, agent cards, blast radius | `LoomKit` |
+| `MissionKit` | Placement, the inbox board (the one count of what needs the owner), the attention items an inbox pane reads, agent cards, blast radius | `LoomKit` |
 | `App/Sources` | SwiftUI views and the objects that own sockets and timers | Both |
 
 The split follows the rule the Loom tree already uses: an engine that decides and
