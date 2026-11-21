@@ -81,7 +81,8 @@ so it captures the web view's intent rather than reading as a port. Method:
 
 ### 3. Open parity rows
 
-- AI-06, AI-15, AI-17 and AI-31 are `code` with no scenario. AI-17 is sending from the message bar.
+- Fix `the_inbox_groups_threads_by_need_and_the_rail_narrows_them`'s headline assertion for counted saved sessions (see the verification state).
+- AI-06, AI-15, AI-17, AI-31 and AI-41 are `code` with no scenario. AI-17 is sending from the message bar.
 - AI-26 stays `code`: "Session state" has an accessibility label that hides the stream-head words, so no scenario can read them.
 - AI-33 and AI-44 differ from the web by design: committed work and the working tree arrive merged on the wire, and saved sessions are counted, not listed.
 
