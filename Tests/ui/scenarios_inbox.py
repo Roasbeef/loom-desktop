@@ -142,9 +142,20 @@ def the_inbox_groups_threads_by_need_and_the_rail_narrows_them(c):
     review = find_row(c, "Review", "Groups review demo")
     check(review["head"].startswith("## Retry budget is now per host"), review)
 
-    # The headline counts what needs the owner and what the read covered.
-    headline = c.app.snap()["inbox"]["headline"]
-    check(headline.startswith("3 need you \u00b7 1 find \u00b7 5 running sessions read live"), headline)
+    # The headline counts what needs the owner and what the read covered. The
+    # running sessions are this scenario's own and are counted exactly; saved
+    # sessions that earlier scenarios left in the catalogue add to the total,
+    # which the headline must then name as read from the catalogue.
+    inbox = c.app.snap()["inbox"]
+    headline = inbox["headline"]
+    check(inbox["liveNeeding"] == 3 and inbox["liveFinds"] == 1, inbox)
+    check(headline.startswith(f"{inbox['needing']} need you"), headline)
+    check(inbox["needing"] >= inbox["liveNeeding"], inbox)
+    check("5 running sessions read live" in headline, headline)
+    if inbox["fromCatalogue"] > 0:
+        check(f"{inbox['fromCatalogue']} saved from the catalogue" in headline, headline)
+    else:
+        check(inbox["needing"] == inbox["liveNeeding"], inbox)
 
     # Each folder's count is the number of rows its band draws.
     snapshot = c.app.snap()["inbox"]
