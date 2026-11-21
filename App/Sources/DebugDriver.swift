@@ -44,6 +44,18 @@ enum DebugDriver {
     static func start(model: AppModel) {
         guard let directory = ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] else { return }
         let commands = URL(fileURLWithPath: directory).appendingPathComponent("commands")
+        // SwiftUI fills its accessibility tree only after the app has been active
+        // once. A copy launched in the background stays hollow (a handful of
+        // unnamed nodes), so every scenario that reads text fails, and that
+        // depends on what else the machine was doing at launch. Activating for a
+        // moment and handing focus back makes the tree the same everywhere, and it
+        // stays filled after the app goes inactive.
+        let previous = NSWorkspace.shared.frontmostApplication
+        NSApp.activate(ignoringOtherApps: true)
+        Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            if let previous, previous != NSRunningApplication.current { previous.activate() }
+        }
         Task {
             while true {
                 try? await Task.sleep(for: .milliseconds(100))
