@@ -2,7 +2,7 @@
 
 A native macOS client for [Loom](https://github.com/roasbeef/loom), the durable, distributed coding agent. It speaks the same protocol as the terminal client to the same `loomd`, and it changes nothing about the daemon.
 
-![A session with its changes open in the inspector](docs/images/session.png)
+![The inbox, grouped by need, with a review open in its reading pane](docs/images/inbox.png)
 
 It answers three questions at a glance: what is one agent doing, what across all my agents needs me now, and where is all of it running.
 
@@ -12,6 +12,8 @@ It answers three questions at a glance: what is one agent doing, what across all
 | **Mission Control.** What needs you comes first and can be answered in place. Then one line per agent, with where it runs. | **Approvals.** The authority requested leads, and the model-written call stays visible with its control characters escaped. |
 | ![Machines](docs/images/machines.png) | ![Light appearance](docs/images/light.png) |
 | **Machines.** Every node a daemon knows, its health, and which sessions depend on it. | **Both appearances.** Normal is grey, amber means a decision is waiting, red means failed, and green appears only in diffs. |
+| ![A session with its changes open in the inspector](docs/images/session.png) | ![An ask answered from the inbox pane](docs/images/answer.png) |
+| **A session.** The transcript, its changes in the inspector, and the composer's figures. | **Answering an ask.** The inbox pane shows each question with its options, and Send answers sends them to the agent. |
 
 ## What it does
 
@@ -21,16 +23,16 @@ It answers three questions at a glance: what is one agent doing, what across all
 - **Renders what agents write.** Markdown, tables, highlighted code, numbered red and green diffs, and each turn's tool calls folded to one line.
 - **Takes input the way the other clients do.** A composer with slash commands and completions, image attachments, queued and steering messages, and panels for the goal, todo board, context window, notes and proposals.
 
-It is an early exploration, and it does not match the web UI yet. [docs/parity.md](docs/parity.md) lists 292 capabilities of Loom's web UI and says, row by row, what this app has. The counts below come from `python3 tests/ui/parity_check.py`.
+It is an early exploration, and it does not match the web UI yet. [docs/parity.md](docs/parity.md) lists 327 capabilities of Loom's web UI and says, row by row, what this app has. The counts below come from `python3 tests/ui/parity_check.py`.
 
 | Native state | Rows | Meaning |
 | --- | --- | --- |
-| `yes` | 218 | A UI scenario proves it against a real daemon. |
-| `code` | 37 | Implemented, with no scenario yet. |
-| `partial` | 16 | Part of it exists. |
-| `no` | 21 | Absent. Some are deliberate differences. |
+| `yes` | 240 | A UI scenario proves it against a real daemon. |
+| `code` | 46 | Implemented, with no scenario yet. |
+| `partial` | 17 | Part of it exists. |
+| `no` | 24 | Absent. Some are deliberate differences. |
 
-The last full run with the screen unlocked passed 119 of 120 scenarios. The one failure, `older_turns_page_in`, came from how the test driver scrolled; the driver now scrolls through SwiftUI and the scenario passes on its own. On a locked screen 22 scenarios report `blocked`, so the rows they alone cover rest on a run made with the screen unlocked.
+The last full run with the screen unlocked passed 133 of 136 scenarios. Two failures were known (`evolution_tab_reads_the_board_and_core` presses a control that does nothing after certain earlier scenarios, and the inbox headline check predates counting saved sessions); the third, a 3.8% pixel difference in one baseline, passed on its own. On a locked screen 22 scenarios report `blocked`, so the rows they alone cover rest on a run made with the screen unlocked.
 
 ## Run it
 
