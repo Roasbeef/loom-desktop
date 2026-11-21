@@ -435,6 +435,16 @@ final class AppModel {
     /// steady speed, for measuring frames while scrolling.
     var debugScrollSweep = 0
 
+    /// Set by the UI driver to open one inbox thread by its row identity, which the
+    /// list's rows do not let an accessibility press reach.
+    var debugInboxPick: String?
+
+    /// What the inbox last drew, written by the view so the driver can read it: the
+    /// folder shown, then each band drawn with its count, and the thread the pane
+    /// reads. The list's rows and headings are not in the accessibility tree.
+    var debugInboxDrawn: [String] = []
+    var debugInboxOpen = ""
+
     /// Set by the UI driver to choose a new agent's placement by title prefix.
     var debugPlacement = ""
     #endif

@@ -239,6 +239,10 @@ enum DebugDriver {
             model.destination = .session(parts[1])
         case "strand" where parts.count > 1:
             model.currentSession?.focusedStrand = parts[1]
+        case "inboxpick" where parts.count > 1:
+            // Opens the inbox thread whose row identity is given, as a click on the row would.
+            model.debugInboxPick = nil
+            model.debugInboxPick = parts[1]
         case "lanedelay" where parts.count > 1:
             // Holds each send before it reaches the lane, so a test can see the
             // pending line that a quick daemon answer would remove at once.
@@ -621,6 +625,8 @@ enum InboxSnapshot {
             "folders": InboxRule.folderEntries(sections).map { ["title": $0.folder.title, "count": $0.count ?? -1] as [String: Any] },
             "headline": InboxRule.headline(InboxRule.tally(threads: threads, feed: model.attentionRows)),
             "note": InboxRule.countNote(running: threads.filter { $0.activity != nil }.count),
+            "drawn": model.debugInboxDrawn,
+            "open": model.debugInboxOpen,
         ]
     }
 }

@@ -307,6 +307,16 @@ struct InboxView: View {
             content(now: Int(context.date.timeIntervalSince1970 * 1000))
         }
         .navigationTitle("Inbox")
+        .onChange(of: model.debugInboxPick) { _, key in
+            // The UI driver opens a thread the list's rows give no way to press.
+            guard let key else { return }
+            let now = Int(Date().timeIntervalSince1970 * 1000)
+            let rows = InboxRule.rows(
+                threads: model.inboxThreads, feed: model.attentionRows, raised: model.approvalRaised,
+                reviewing: model.reviewing, now: now
+            )
+            if let row = rows.first(where: { $0.id == key }) { selection = .thread(row.subject) }
+        }
         .navigationSubtitle(model.attention.isEmpty ? "" : "\(model.attention.count) waiting")
     }
 
@@ -320,6 +330,9 @@ struct InboxView: View {
         let machines = model.attention.filter { $0.kind == .machine }
         let note = InboxRule.countNote(running: threads.filter { $0.activity != nil }.count)
         let headline = InboxRule.headline(InboxRule.tally(threads: threads, feed: feed))
+        let drawn = [shown.title] + sections.map { "\($0.title) \u{00B7} \($0.count)" }
+        let chosenSubject: InboxSubject? = if case .thread(let subject)? = selection { subject } else { nil }
+        let open = InboxRule.selection(sections, chosen: chosenSubject)?.key ?? ""
 
         return HStack(spacing: 0) {
             FolderRail(entries: InboxRule.folderEntries(all), shown: shown, note: note) { folder = $0 }
@@ -345,6 +358,8 @@ struct InboxView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
+        .onChange(of: open, initial: true) { _, now in model.debugInboxOpen = now }
     }
 
     @ViewBuilder
