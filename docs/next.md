@@ -38,7 +38,8 @@ The other `ld-*` worktrees (`ld-inbox`, `ld-pane`, `ld-rail`, `ld-shots`,
 - Answering and saved counts have scenarios: `an_ask_is_read_and_answered_in_its_pane` (AI-10, 12, 40), `an_ask_is_answered_from_the_session_pages_rail` (AI-23, 40, 42) and `saved_sessions_are_counted_from_the_catalogue` (AI-08). They pass alone. AI-41 (refusal words, the held form) and AI-44 stay `code`/`no`; the pane's own observer case has unit tests only, because `asrole` acts on the open session.
 - First full run: 125 passed, 11 failed. Six consecutive scenarios (`evolution_tab_reads_the_board_and_core`, `a_machine_is_read_in_detail`, `two_sessions_are_linked_and_unlinked`, `sidebar_rows_say_what_each_session_is_doing`, `the_sidebar_foot_opens_people_and_mission_control_lists_everyone`, `a_session_starts_on_another_daemon`) timed out on presses, four more died with "Connection closed" after the inbox scenario, and the cause is not found. All six pass together in a fresh run, and the second full run did not repeat it.
 - Second full run: 133 passed, 3 failed. `evolution_tab_reads_the_board_and_core` (known, passes alone); `appearance_and_size_matrix` (`inbox-light-880` differed 3.8%, passes alone, flaky once in three runs); `the_inbox_groups_threads_by_need_and_the_rail_narrows_them`.
-- `the_inbox_groups_threads_by_need_and_the_rail_narrows_them` is red for a real reason, not a flake: it asserts the headline starts "3 need you", but with this branch earlier scenarios' saved sessions are counted from the catalogue ("7 need you ... 119 saved from the catalogue"). The assertion needs to separate the live rows from the saved count; it was not edited here because the rule is to report an assertion that seems wrong. It passes on a fresh daemon with no saved sessions.
+- Third full run, after the fixes below: 134 passed, 2 failed. `evolution_tab_reads_the_board_and_core` (known, passes alone) and `appearance_and_size_matrix`, whose cause was a capture taken before the inbox feed read landed ("2 not checked" in one run and not the next). The matrix now waits for the read, the inbox baselines were retaken in that state (`15e092a`, `0ab2a54`), and the matrix passes.
+- `the_inbox_groups_threads_by_need_and_the_rail_narrows_them` failed in the first two runs because the headline counts saved sessions earlier scenarios left in the catalogue. The inbox snapshot now carries the running sessions' part of the tally, and the scenario checks its own threads exactly and the headline's total and catalogue clause (`be6a231`). It passes in the third full run.
 - `generation_speed_is_timed_from_the_stream` passed in both full runs.
 - README screenshots retaken at 1400 by 900 (`tests/ui/readme_shots.py`), plus `inbox.png` and `answer.png`.
 
@@ -81,7 +82,7 @@ so it captures the web view's intent rather than reading as a port. Method:
 
 ### 3. Open parity rows
 
-- Fix `the_inbox_groups_threads_by_need_and_the_rail_narrows_them`'s headline assertion for counted saved sessions (see the verification state).
+- Check why "Cache layout askowner" drew both under Needs you (an open ask) and under Folded ("no one is waiting on you") in `docs/images/inbox.png`, and why the sidebar said 1 needs you where the inbox said 2.
 - AI-06, AI-15, AI-17, AI-31 and AI-41 are `code` with no scenario. AI-17 is sending from the message bar.
 - AI-26 stays `code`: "Session state" has an accessibility label that hides the stream-head words, so no scenario can read them.
 - AI-33 and AI-44 differ from the web by design: committed work and the working tree arrive merged on the wire, and saved sessions are counted, not listed.
