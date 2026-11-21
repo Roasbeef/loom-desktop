@@ -508,7 +508,12 @@ def the_session_menu_decides_only_the_armed_card_in_view(c):
     # In the inbox's pane the card publishes itself once armed, and the titles name the tool.
     c.app.go("inbox")
     open_thread(c, row)
-    wait_for(lambda: c.app.menu_state("Allow fs_write") == "enabled", 10, "Allow fs_write to follow the armed card")
+    try:
+        wait_for(lambda: c.app.menu_state("Allow fs_write") == "enabled", 10, "Allow fs_write to follow the armed card")
+    except Exception:
+        c.app.cmd("state")
+        print((c.app.dir / "state.txt").read_text(), flush=True)
+        raise
     check(c.app.menu_state("Deny fs_write") == "enabled", "Deny should name the tool and be enabled")
     c.app.menu("Allow fs_write")
     wait_for(lambda: not find_row(c, "Approval", "Menu pane escalate"), 20, "the approval to clear")

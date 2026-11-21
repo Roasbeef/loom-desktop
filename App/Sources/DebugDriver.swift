@@ -127,7 +127,7 @@ enum DebugDriver {
             }
         case "state":
             let session = NSApp.keyWindow?.firstResponder.map { "\(type(of: $0))" } ?? "none"
-            let text = "destination=\(String(describing: model.destination)) responder=\(session) modal=\(NSApp.modalWindow != nil) sheets=\(NSApp.keyWindow?.sheets.count ?? -1) inspector=\(model.showsInspector) palette=\(model.isPaletteOpen) dispatching=\(model.isDispatching) adding=\(model.isAddingDaemon) current=\(model.currentSession != nil) escalations=\(model.currentSession?.escalations.count ?? -1) canApprove=\(model.currentSession?.escalations.first?.canApprove ?? false) grants=\(model.currentSession?.escalations.first?.grants.count ?? -1) live=\(model.currentSession?.isLive ?? false)\n"
+            let text = "destination=\(String(describing: model.destination)) responder=\(session) modal=\(NSApp.modalWindow != nil) sheets=\(NSApp.keyWindow?.sheets.count ?? -1) inspector=\(model.showsInspector) palette=\(model.isPaletteOpen) dispatching=\(model.isDispatching) adding=\(model.isAddingDaemon) current=\(model.currentSession != nil) escalations=\(model.currentSession?.escalations.count ?? -1) canApprove=\(model.currentSession?.escalations.first?.canApprove ?? false) grants=\(model.currentSession?.escalations.first?.grants.count ?? -1) live=\(model.currentSession?.isLive ?? false)\n windows=\(NSApp.windows.filter { $0.isVisible }.map { "\($0.title)|key=\($0.isKeyWindow)|main=\($0.isMainWindow)" }) active=\(NSApp.isActive)\n"
             try? text.write(to: directory.appendingPathComponent("state.txt"), atomically: true, encoding: .utf8)
         case "run" where parts.count > 1:
             // Sends one session command from the current session with a JSON body,
