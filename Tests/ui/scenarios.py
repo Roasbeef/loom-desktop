@@ -247,6 +247,13 @@ def a_failed_run_reaches_the_inbox(c):
     c.app.dispatch("Please explode now", WORKSPACE)
     wait_for(lambda: any(a["kind"] == "Failed runs" and "explode" in a["agent"] for a in c.app.snap()["attention"]), 60, "the failed run")
 
+    # The inbox lists it under "Needs you" with the chip "Failed", and its pane says what a person can do.
+    c.app.go("inbox")
+    row = wait_for(lambda: next((r for g in c.app.snap()["inbox"]["groups"] for r in g["rows"] if r["kind"] == "Failed" and "explode" in r["name"] and g["title"] == "Needs you"), None), 30, "a Failed row under Needs you")
+    c.app.cmd("inboxpick " + row["id"])
+    c.app.see(r"^Failed$", 10)
+    c.app.see(r"^Open Session$", 5)
+
 
 # The composer.
 
@@ -761,6 +768,9 @@ def approval_appears_in_mission_and_inbox(c):
     c.app.go("mission")
     c.app.see("Needs You")
     c.app.go("inbox")
+
+    # The row sits under "Needs you" with the Approval chip, and its pane carries the live card.
+    wait_for(lambda: any(g["title"] == "Needs you" and any(r["kind"] == "Approval" and r["name"].startswith("Everywhere") for r in g["rows"]) for g in c.app.snap()["inbox"]["groups"]), 15, "an Approval row under Needs you")
     c.app.see("Write to /Users/Shared")
     c.app.go("mission")
     c.app.press("Allow")
@@ -1189,6 +1199,7 @@ def machines_lists_each_node(c):
 import scenarios_lifecycle  # noqa: E402,F401
 import scenarios_admin  # noqa: E402,F401
 import scenarios_transcript  # noqa: E402,F401
+import scenarios_inbox  # noqa: E402,F401
 
 
 # Faults. These run last among the functional scenarios, since they damage the cluster.
