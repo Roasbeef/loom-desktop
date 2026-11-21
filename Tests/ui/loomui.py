@@ -304,6 +304,10 @@ class App:
         subprocess.run(["open", "-b", f"com.roasbeef.loom-desktop.uitest{SLOT}"], check=True)
         wait_for(lambda: self.stats()["active"] == "true" and self.stats()["key"] == "true", 8, "the app to be active with a key window")
 
+        # A scene that was deactivated before tells SwiftUI its focus only after its window
+        # is ordered front again.
+        self.cmd("activate")
+
     def menu_state(self, title):
         """`enabled`, `disabled` or `not-found` for the menu item with this title."""
         return self.cmd(f"menuenabled {title}")

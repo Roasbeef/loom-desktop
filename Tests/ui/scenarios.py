@@ -1152,9 +1152,8 @@ def evolution_tab_reads_the_board_and_core(c):
 @scenario(foreground=True)
 def real_keyboard_shortcuts_navigate(c):
     """Real key events reach the menu when the window is key."""
-    import subprocess
-    subprocess.run(["open", "-b", "com.roasbeef.loom-desktop"], check=True)
-    wait_for(lambda: c.app.stats()["active"] == "true", 5, "the app to be active")
+    # The run's app copy has its own bundle identifier, which take_focus opens.
+    c.app.take_focus()
     for key, where in (("1", "inbox"), ("2", "mission"), ("3", "machines")):
         c.app.key(key, "cmd")
         wait_for(lambda: c.app.snap()["destination"] == where, 3, f"⌘{key} to reach {where}")
