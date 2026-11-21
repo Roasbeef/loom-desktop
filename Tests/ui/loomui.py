@@ -80,8 +80,11 @@ class Cluster:
                    LOOM_DISTRIBUTION_OPTFILE=str(self.base / "orch/.loom/distribution/dist.options"))
         env["PATH"] = f"/usr/local/bin:{Path.home()}/.local/bin:" + env["PATH"]
         log = open(self.base / "logs/orch.log", "ab")
+        loomd = os.environ.get("LOOMD_BIN", "loomd")
+        seed = Path(os.environ.get("LOOM_CODEMODE_SEED", Path(loomd).parent.parent / "build/codemode-seed"))
+        seed_flags = ["--codemode-seed", str(seed.resolve())] if seed.is_dir() else []
         proc = subprocess.Popen(
-            [os.environ.get("LOOMD_BIN", "loomd"), "--config", str(self.base / "orch/.loom/loom.toml"),
+            [loomd, "--config", str(self.base / "orch/.loom/loom.toml"), *seed_flags,
              "--bind", f"127.0.0.1:{7441 + SLOT * 10}"],
             env=env, stdout=log, stderr=log, start_new_session=True,
         )
