@@ -799,6 +799,29 @@ private struct ComposerStack: View {
 
 // MARK: Approvals
 
+/// The approval a Session menu command may decide: the card on screen, armed and
+/// first in its session, published by the card itself through a focused scene
+/// value. A decision is made only beside its evidence, so the menu's Allow and
+/// Deny have no target unless a card the person can read is in the focused window.
+@MainActor
+struct ArmedApproval {
+    let record: Escalation
+    let controller: SessionController
+
+    /// The tool as the menu words it, cut so a long name cannot widen the menu. It
+    /// is the daemon's own identifier and is drawn as text.
+    var toolName: String {
+        record.tool.isEmpty ? "Request" : String(record.tool.prefix(40))
+    }
+
+    var canAllow: Bool { record.canApprove }
+    var canRemember: Bool { record.canRemember && controller.role == "owner" }
+}
+
+extension FocusedValues {
+    @Entry var armedApproval: ArmedApproval?
+}
+
 /// The consent surface.
 ///
 /// The layout carries the rules of protocol section 5.10: the tool is always
@@ -907,6 +930,14 @@ struct ApprovalCard: View {
         .padding(13)
         .background(Theme.attention.opacity(0.09), in: .rect(cornerRadius: Theme.radiusFloating))
         .overlay(RoundedRectangle(cornerRadius: Theme.radiusFloating).strokeBorder(Theme.attention.opacity(0.4), lineWidth: 1))
+        // The Session menu decides this card only while it is armed and is the one
+        // the menu would otherwise be ambiguous about: the session's first.
+        .focusedSceneValue(\.armedApproval, isMenuTarget ? ArmedApproval(record: record, controller: controller) : nil)
+    }
+
+    /// Whether the Session menu's Allow and Deny act on this card.
+    private var isMenuTarget: Bool {
+        isArmed && !controller.isObserver && controller.escalations.first?.id == record.id
     }
 
     /// The words `approval.read` adds: how long the card has waited, the network the

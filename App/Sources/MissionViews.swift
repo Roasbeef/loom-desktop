@@ -5,7 +5,8 @@ import SwiftUI
 
 /// The fleet at a glance, laid out as flight strips rather than cards: one line per
 /// agent, in fixed columns, so a person compares many by scanning down. What needs
-/// them leads and can be answered in place, and a healthy fleet stays quiet.
+/// them leads and opens its thread in the inbox, where it is decided beside its
+/// evidence, and a healthy fleet stays quiet.
 struct MissionControlView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("missionShowsSaved") private var showsSaved = false
@@ -19,17 +20,18 @@ struct MissionControlView: View {
         let allCards = model.cards
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                let waiting = model.attention
-                if !waiting.isEmpty {
+                let board = model.board
+                if board.needing > 0 {
                     VStack(alignment: .leading, spacing: 8) {
-                        SectionTitle("Needs You", count: waiting.count)
+                        SectionTitle("Needs You", count: board.needing)
                         VStack(spacing: 8) {
-                            ForEach(waiting.prefix(6)) { item in
-                                NeedsYouRow(item: item)
+                            ForEach(board.needsYou.prefix(6)) { row in
+                                NeedsYouRow(row: row)
                             }
                         }
-                        if waiting.count > 6 {
-                            Button("\(waiting.count - 6) more in the Inbox") { model.destination = .inbox }
+                        let hidden = board.needing - min(board.needsYou.count, 6)
+                        if hidden > 0 {
+                            Button("\(hidden) more in the Inbox") { model.destination = .inbox }
                                 .buttonStyle(.link)
                         }
                     }
@@ -117,66 +119,41 @@ private struct SectionTitle: View {
     }
 }
 
-/// An item waiting on a person. An approval can be answered right here, because
-/// sending someone elsewhere to press one button is the interruption this avoids.
+/// A row of the inbox's "Needs you" group. It carries no deciding controls: an
+/// approval is decided only beside its evidence, so the row opens the thread in the
+/// inbox, where the card, the facts and the arming delay are.
 private struct NeedsYouRow: View {
     @Environment(AppModel.self) private var model
-    let item: AttentionItem
-
-    private var escalation: (record: Escalation, controller: SessionController)? {
-        if case .session(let id, let record?) = item.source, let controller = model.controller(for: id) {
-            return (record, controller)
-        }
-        return nil
-    }
+    let row: InboxRow
 
     var body: some View {
-        HStack(spacing: 12) {
-            StatusDot(liveness: .needsYou)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(item.agent).font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    Text(item.kind.title).font(Theme.caption).foregroundStyle(Theme.attention)
+        Button {
+            model.openInbox(row.subject)
+        } label: {
+            HStack(spacing: 12) {
+                StatusDot(liveness: .needsYou)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(verbatim: row.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        Text(row.kind.chip).font(Theme.caption).foregroundStyle(Theme.attention)
+                    }
+                    Text(verbatim: model.summary(of: row))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
-                Text(summary)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+                Spacer(minLength: 12)
+                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
             }
-            Spacer(minLength: 12)
-            if let escalation {
-                ApprovalButtons(record: escalation.record, controller: escalation.controller)
-            }
-            Button {
-                open()
-            } label: {
-                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.tertiary)
-            .help("Open")
-            .accessibilityLabel("Open \(item.agent)")
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .surface(fill: Theme.attention.opacity(0.08))
+            .contentShape(.rect)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .surface(fill: Theme.attention.opacity(0.08))
-        .contentShape(.rect)
-        .onTapGesture(perform: open)
-    }
-
-    private var summary: String {
-        if let escalation {
-            return escalation.record.authorityLines.first ?? item.title
-        }
-        return item.title
-    }
-
-    private func open() {
-        switch item.source {
-        case .session(let id, _): model.destination = .session(id)
-        case .machine: model.destination = .machines
-        }
+        .buttonStyle(.plain)
+        .help("Open in the Inbox")
+        .accessibilityLabel("Open \(row.name) in the Inbox, \(row.kind.chip)")
     }
 }
 
@@ -317,17 +294,22 @@ struct InboxView: View {
             content(now: Int(context.date.timeIntervalSince1970 * 1000))
         }
         .navigationTitle("Inbox")
+        #if DEBUG
         .onChange(of: model.debugInboxPick) { _, key in
             // The UI driver opens a thread the list's rows give no way to press.
             guard let key else { return }
-            let now = Int(Date().timeIntervalSince1970 * 1000)
-            let rows = InboxRule.rows(
-                threads: model.inboxThreads, feed: model.attentionRows, raised: model.approvalRaised,
-                reviewing: model.reviewing, now: now
-            )
-            if let row = rows.first(where: { $0.id == key }) { selection = .thread(row.subject) }
+            if let row = model.board.rows.first(where: { $0.id == key }) { selection = .thread(row.subject) }
         }
-        .navigationSubtitle(model.attention.isEmpty ? "" : "\(model.attention.count) waiting")
+        #endif
+        .onChange(of: model.inboxRequest, initial: true) { _, subject in
+            // A row elsewhere asked for a thread. The folder returns to Everything so
+            // the row is among those drawn, and the request is spent once it is open.
+            guard let subject else { return }
+            folder = .everything
+            selection = .thread(subject)
+            model.inboxRequest = nil
+        }
+        .navigationSubtitle(model.board.subtitle)
         .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded() } action: { available = $0 }
         .toolbar {
             // A person without the rail still chooses a folder, from the toolbar.
@@ -348,15 +330,13 @@ struct InboxView: View {
     }
 
     private func content(now: Int) -> some View {
-        let threads = model.inboxThreads
-        let feed = model.attentionRows
-        let rows = InboxRule.rows(threads: threads, feed: feed, raised: model.approvalRaised, reviewing: model.reviewing, now: now)
-        let all = InboxRule.sections(rows)
+        let board = model.board.aged(now: now)
+        let all = board.sections
         let shown = InboxRule.shownFolder(chosen: folder, sections: all)
         let sections = InboxRule.visible(all, in: shown)
         let machines = model.attention.filter { $0.kind == .machine }
-        let tally = model.inboxTally(threads: threads)
-        let note = InboxRule.countNote(running: threads.filter { $0.activity != nil }.count, fromCatalogue: tally.fromCatalogue)
+        let tally = board.tally
+        let note = InboxRule.countNote(running: board.reported, fromCatalogue: tally.fromCatalogue)
         let headline = InboxRule.headline(tally)
         let drawn = [shown.title] + sections.map { "\($0.title) \u{00B7} \($0.count)" }
         let chosenSubject: InboxSubject? = if case .thread(let subject)? = selection { subject } else { nil }
@@ -395,13 +375,17 @@ struct InboxView: View {
 
                 pane(sections: sections, machines: machines)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    #if DEBUG
                     .onGeometryChange(for: Int.self) { Int($0.size.width) } action: { model.debugInboxPaneWidth = $0 }
+                    #endif
             }
         }
         .onChange(of: folders.map { "\($0.folder.title) \($0.count ?? -1)" }, initial: true) { entries = folders }
+        #if DEBUG
         .onChange(of: layout, initial: true) { _, now in model.debugInboxRail = now == .wide ? "rail" : "menu" }
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
         .onChange(of: open, initial: true) { _, now in model.debugInboxOpen = now }
+        #endif
     }
 
     @ViewBuilder
@@ -685,7 +669,7 @@ struct CommandPalette: View {
     private var commands: [Command] {
         var all: [Command] = [
             .init(id: "new", title: "New Agent", subtitle: "Dispatch work to a new session", icon: "plus", liveness: nil, hint: "⌘N") { model.isDispatching = true },
-            .init(id: "inbox", title: "Inbox", subtitle: "\(model.attention.count) waiting", icon: "tray", liveness: nil, hint: "⌘1") { model.destination = .inbox },
+            .init(id: "inbox", title: "Inbox", subtitle: "\(model.board.needing) waiting", icon: "tray", liveness: nil, hint: "⌘1") { model.destination = .inbox },
             .init(id: "mission", title: "Mission Control", subtitle: "The whole fleet", icon: "square.grid.2x2", liveness: nil, hint: "⌘2") { model.destination = .mission },
             .init(id: "machines", title: "Machines", subtitle: "Where everything runs", icon: "server.rack", liveness: nil, hint: "⌘3") { model.destination = .machines },
             .init(id: "connect", title: "Connect a Daemon", subtitle: "Reach a daemon on another machine", icon: "network", liveness: nil, hint: "⇧⌘N") {

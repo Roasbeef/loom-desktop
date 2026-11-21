@@ -294,6 +294,9 @@ public struct InboxBoard: Sendable, Equatable {
     /// The board of nothing read yet.
     public static let empty = InboxBoard(sections: [], tally: InboxTally(), reported: 0)
 
+    /// Every row, in the order the groups are drawn.
+    public var rows: [InboxRow] { sections.flatMap(\.rows) }
+
     /// How many things wait on the owner: approvals, asks, stuck strands and failed
     /// runs, on running sessions and in the saved sessions' summaries.
     public var needing: Int { tally.needing }
