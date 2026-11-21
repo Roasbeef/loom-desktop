@@ -248,9 +248,9 @@ def a_find_is_read_and_closed_from_its_pane(c):
     wait_for(lambda: not find_row(c, "Risk"), 30, "the closed find to leave the list")
 
 
-@scenario("AI-10")
-def an_ask_is_read_in_its_pane_and_not_answered_there(c):
-    """An ask reads with its questions and options, and the pane sends the person to the session to answer."""
+@scenario("AI-10", "AI-12", "AI-40")
+def an_ask_is_read_and_answered_in_its_pane(c):
+    """An ask reads with its questions and options, and Send answers names the first question left open and sends nothing, then the owner's answers end the ask."""
     repo = fresh_repo("inbox-ask")
     c.app.dispatch("Asking askowner", repo)
     c.app.go("inbox")
@@ -258,10 +258,20 @@ def an_ask_is_read_in_its_pane_and_not_answered_there(c):
     open_thread(c, row)
     c.app.see(r"^The agent asks, untrusted text$", 10)
     c.app.see(r"^the cache layout is the owner's call$", 5)
-    for words in ("Which cache layout should the fetcher use?", "Per host", "Shared", "recommended", "May the fetcher drop expired entries early?"):
+    for words in ("Which cache layout should the fetcher use?", "Per host, recommended", "Shared", "May the fetcher drop expired entries early?"):
         c.app.see("^" + re.escape(words) + "$", 5)
-    c.app.see(r"^Answer on the session's page; this window shows an ask and does not answer it\.$", 5)
     c.app.not_see(r"^Allow$")
+
+    # The owner has controls, and Send waits until every question has an entry.
+    c.app.see(r"^Other\u2026$", 10)
+    c.app.press("Send answers")
+    c.app.see(r"^Answer this question\.$", 5)
+    check(find_row(c, "Ask", "Asking askowner") is not None, "an unanswered form must send nothing")
+    c.app.press("Shared")
+    c.app.press("Yes")
+    c.app.not_see(r"^Answer this question\.$")
+    c.app.press("Send answers")
+    wait_for(lambda: find_row(c, "Ask", "Asking askowner") is None, 60, "the answered ask to leave the inbox")
 
 
 # The review thread.
@@ -375,6 +385,43 @@ def the_session_page_lifts_what_waits_and_dates_its_rows(c):
     wait_for(lambda: c.app.enabled("Retry the last step"), 10, "Retry to be offered")
     c.app.press("Retry the last step")
     wait_for(lambda: not any(t == "Needs you \u00b7 1" for t in c.app.texts()), 60, "the stuck strand to leave the rail")
+
+
+@scenario("AI-23", "AI-40", "AI-42", needs_display=True)
+def an_ask_is_answered_from_the_session_pages_rail(c):
+    """The page lifts an ask into its rail, Answer opens the same questions in the row, and sending them ends the ask."""
+    repo = fresh_repo("inbox-rail-ask")
+    c.app.dispatch("Rail askowner", repo)
+    c.app.open_session("Rail")
+    settle(c)
+    c.app.press("Inspector")
+    c.app.see(r"^Lifted from this session$", 60)
+    c.app.see(r"^Needs you \u00b7 1$", 60)
+    wait_for(lambda: c.app.enabled("Answer\u2026"), 20, "Answer to be offered")
+
+    # An observer reads the row and is offered no way to answer.
+    c.app.cmd("asrole observer")
+    wait_for(lambda: "Answer\u2026" not in tree_texts(c), 10, "the Answer control to go")
+    c.app.cmd("asrole none")
+    wait_for(lambda: c.app.enabled("Answer\u2026"), 10, "Answer to return for the owner")
+    c.app.press("Answer\u2026")
+    c.app.see(r"^Which cache layout should the fetcher use\?$", 20)
+    c.app.press("Per host, recommended")
+    c.app.press("No")
+    c.app.press("Send answers")
+    wait_for(lambda: not any(t == "Needs you \u00b7 1" for t in c.app.texts()), 60, "the answered ask to leave the rail")
+
+
+@scenario("AI-08")
+def saved_sessions_are_counted_from_the_catalogue(c):
+    """With a saved session in the list, the headline and the rail's note say the counts came from the catalogue's summary."""
+    repo = fresh_repo("inbox-saved")
+    c.app.dispatch("Saved first", repo)
+    c.app.cmd("stopall")
+    c.app.dispatch("Saved second hang", repo)
+    c.app.go("inbox")
+    wait_for(lambda: "catalogue" in c.app.snap()["inbox"]["note"], 90, "the note to name the catalogue")
+    check("not checked" not in c.app.snap()["inbox"]["note"], c.app.snap()["inbox"]["note"])
 
 
 @scenario("AI-10")
