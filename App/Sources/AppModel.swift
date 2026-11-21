@@ -115,6 +115,16 @@ final class DaemonConnection: Identifiable {
     /// says as "not checked" and never as "nothing waits".
     private(set) var attentionRows: [String: AttentionRow] = [:]
 
+    /// What the catalogue's counts said of the saved sessions at the last read. It is
+    /// `unchecked` until a read answers and again once the daemon refuses the command
+    /// as unknown, and then the inbox says saved sessions are not checked.
+    private(set) var savedReading: SavedReading = .unchecked
+
+    /// The epoch of the daemon that refused `attention.answer` as an unknown command.
+    /// The ask's form is not offered while it is the current epoch: an older daemon
+    /// cannot take an answer, and a restart (a new epoch) gets another try.
+    private(set) var answerRefusedAtEpoch: String?
+
     /// When each session's oldest pending approval was raised, from `approval.read`.
     /// A session with no entry has no age, since an approval is never aged from a
     /// record that carries no raise time.
@@ -317,6 +327,22 @@ final class DaemonConnection: Identifiable {
         if let next = try? await control.sessionsElsewhere(), elsewhere != next { elsewhere = next }
     }
 
+    /// Whether this daemon has refused to take an answer to an ask, so the app says
+    /// asks are answered on the session's page, as it did before the command existed.
+    var cannotTakeAnswers: Bool {
+        answerRefusedAtEpoch != nil && answerRefusedAtEpoch == hello?.epoch
+    }
+
+    /// Records that `attention.answer` is unknown to this daemon.
+    func noteAnswersUnsupported() {
+        answerRefusedAtEpoch = hello?.epoch
+    }
+
+    /// The saved sessions this daemon lists, which the catalogue's counts are read for.
+    var savedSessionIDs: [String] {
+        sessions.filter { $0.state == .saved }.map(\.id)
+    }
+
     /// Reads the attention feed for the resident sessions and the raise time of each
     /// pending approval. Both are reads that an older daemon refuses, and a refusal
     /// leaves the last answer in place rather than failing the connection.
@@ -326,6 +352,7 @@ final class DaemonConnection: Identifiable {
             // asks do not linger.
             if attentionRows != rows { attentionRows = rows }
         }
+        await refreshSaved(control)
         var read: [String: Int] = [:]
         for row in activity.values where row.approvals > 0 {
             if let evidence = try? await control.approvalEvidence(sessionID: row.sessionID), let oldest = evidence.oldestRaised {
@@ -336,6 +363,27 @@ final class DaemonConnection: Identifiable {
             previous: approvalRaised, read: read, approving: Set(activity.values.filter { $0.approvals > 0 }.map(\.sessionID))
         )
         if approvalRaised != raised { approvalRaised = raised }
+    }
+
+    /// Reads the catalogue's counts for the saved sessions, at the feed's cadence. A
+    /// session the list holds and the daemon did not read has no entry and is counted
+    /// as not checked. A daemon that does not know the command leaves the inbox saying
+    /// saved sessions are not checked, and any other refusal leaves the last read in
+    /// place, as the feed's refusals do.
+    private func refreshSaved(_ control: ControlClient) async {
+        let saved = savedSessionIDs
+        guard !saved.isEmpty else {
+            if savedReading != .unchecked { savedReading = .unchecked }
+            return
+        }
+        do {
+            let next = SavedReading.read(try await control.savedAttention(sessions: saved))
+            if savedReading != next { savedReading = next }
+        } catch let error as LoomError where error.isUnknownCommand {
+            if savedReading != .unchecked { savedReading = .unchecked }
+        } catch {
+            // The last answer stays: a refusal says nothing new about the sessions.
+        }
     }
 
     // MARK: Sessions
@@ -560,6 +608,28 @@ final class AppModel {
 
     var attentionRows: [String: AttentionRow] {
         daemons.reduce(into: [:]) { $0.merge($1.attentionRows) { _, new in new } }
+    }
+
+    /// The saved sessions the counts took from the catalogue, across daemons. A daemon
+    /// whose read has not answered, or does not know the command, adds none, so its
+    /// saved sessions are not counted as "not checked" under a line that says they
+    /// were read.
+    var inboxSaved: InboxSaved {
+        var listed: [String] = []
+        var rows: [String: SavedAttention] = [:]
+        var anyRead = false
+        for daemon in daemons {
+            guard case .read(let read) = daemon.savedReading else { continue }
+            anyRead = true
+            listed += daemon.savedSessionIDs
+            rows.merge(read) { _, new in new }
+        }
+        return anyRead ? .read(listed: listed, rows: rows) : .unchecked
+    }
+
+    /// The headline's tally, the one the inbox and its snapshot both read.
+    func inboxTally(threads: [InboxThread]) -> InboxTally {
+        InboxRule.tally(threads: threads, feed: attentionRows, saved: inboxSaved)
     }
 
     var approvalRaised: [String: Int] {

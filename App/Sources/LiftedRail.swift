@@ -27,6 +27,12 @@ final class RailModel {
     /// the policy today. Empty when no approval is pending.
     private(set) var evidence: [String: ApprovalEvidenceItem] = [:]
 
+    /// The asks whose questions the rail has read, by ask id, for the forms it draws.
+    private(set) var askRecords: [String: AttentionRecord] = [:]
+
+    /// Why an ask's record could not be read, by ask id.
+    private(set) var askWords: [String: String] = [:]
+
     /// The row an action is out for. One at a time, so a second press cannot be made.
     private(set) var sending: String?
 
@@ -72,6 +78,29 @@ final class RailModel {
             let next = Dictionary(read.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             if next != evidence { evidence = next }
         }
+    }
+
+    /// Reads an ask in full, for its form, and answers whether the read landed. A
+    /// failed read keeps the record already held.
+    @discardableResult
+    func readAsk(id: String, control: ControlClient?) async -> Bool {
+        guard let control else { return false }
+        do {
+            askRecords[id] = try await control.attentionRecord(sessionID: sessionID, id: id)
+            askWords[id] = nil
+            return true
+        } catch {
+            if askRecords[id] == nil { askWords[id] = error.localizedDescription }
+            return false
+        }
+    }
+
+    /// Reads the ask and the feed row again, after an answer changed or may have
+    /// changed them.
+    func rereadAsk(id: String, control: ControlClient?) async -> Bool {
+        let landed = await readAsk(id: id, control: control)
+        await refresh(control: control, hasApprovals: hadApprovals)
+        return landed
     }
 
     /// Asks a stuck strand to retry, by sending it the fixed retry prompt on the
@@ -192,8 +221,16 @@ private struct LiftedRowView: View {
     let controller: SessionController
     let control: ControlClient?
     let open: () -> Void
+    @Environment(AppModel.self) private var model
+    @State private var answering = false
 
     private var isPinned: Bool { row.hold == .pinned }
+
+    /// The ask's identity, for the row of an ask.
+    private var askID: String { String(row.id.dropFirst("ask:".count)) }
+
+    /// Whether the daemon holding this session has refused to take an answer.
+    private var cannotAnswer: Bool { model.daemon(holding: rail.sessionID)?.cannotTakeAnswers ?? false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -234,7 +271,9 @@ private struct LiftedRowView: View {
     private var note: String? {
         switch row.kind {
         case .approval: return controller.isObserver ? "The operator decides." : "Decide in the card above the composer."
-        case .ask: return "An ask is answered in the web view. This app cannot send the answer yet."
+        case .ask:
+            if cannotAnswer { return "An ask is answered in the web view. This app cannot send the answer yet." }
+            return mayAct ? nil : "Only the owner or an operator can answer an ask."
         case .stuck, .find: return nil
         }
     }
@@ -260,8 +299,34 @@ private struct LiftedRowView: View {
             }
             .controlSize(.small)
             .disabled(isSending)
-        case .approval, .ask:
+        case .ask:
+            if !cannotAnswer { askActions }
+        case .approval:
             EmptyView()
+        }
+    }
+
+    /// An ask's Answer button opens its questions in the row. The record is read when
+    /// the button is pressed, since the row carries only the first question's words.
+    @ViewBuilder
+    private var askActions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(answering ? "Hide" : "Answer\u{2026}") {
+                answering.toggle()
+                if answering { Task { await rail.readAsk(id: askID, control: control) } }
+            }
+            .controlSize(.small)
+            if answering {
+                if let record = rail.askRecords[askID], case .ask(let ask) = record.detail {
+                    AskAnswering(
+                        sessionID: rail.sessionID, name: model.sessions.first { $0.id == rail.sessionID }?.title ?? "the session",
+                        record: record, ask: ask, isObserver: controller.isObserver,
+                        reread: { await rail.rereadAsk(id: askID, control: control) }
+                    )
+                } else {
+                    Text(verbatim: rail.askWords[askID] ?? "Reading the ask\u{2026}").font(Theme.caption).foregroundStyle(.secondary)
+                }
+            }
         }
     }
 }

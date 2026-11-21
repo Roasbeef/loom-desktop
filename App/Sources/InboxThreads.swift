@@ -15,7 +15,7 @@ import SwiftUI
 // holds what the daemon said about the open thread, read once when it opens and
 // again every fifteen seconds while it stays open. The body is chosen by the kind
 // of row: an approval draws its evidence over the live Allow and Deny card, an ask
-// its questions read-only, a stuck strand its failure and Retry, a find its text
+// its questions as controls (`AskAnswer.swift`) for a person who may answer, a stuck strand its failure and Retry, a find its text
 // and the ways to close it, and a session's own thread its brief.
 
 // MARK: What the daemon said about the open thread
@@ -89,13 +89,24 @@ final class ThreadReader {
         }
     }
 
-    private func readRecord(_ control: ControlClient, _ session: String, _ id: String) async {
+    /// Reads the ask or find, and answers whether the read landed. A failed read keeps
+    /// the record already held.
+    @discardableResult
+    func readRecord(_ control: ControlClient, _ session: String, _ id: String) async -> Bool {
         do {
             record = try await control.attentionRecord(sessionID: session, id: id)
             recordWords = nil
+            return true
         } catch {
             if record == nil { recordWords = error.localizedDescription }
+            return false
         }
+    }
+
+    /// Reads the record the form answers, for a form that has just sent.
+    func refreshAsk(control: ControlClient?, session: String, id: String) async -> Bool {
+        guard let control else { return false }
+        return await readRecord(control, session, id)
     }
 
     /// The session's worktree as a review. A refusal for the credential's allowance of
@@ -400,9 +411,10 @@ struct InboxPane: View {
             PaneSection("What it asks for") {
                 if let record = reader.record, case .ask(let ask) = record.detail {
                     if let why = ask.why { QuoteBox(source: "The agent asks, untrusted text", words: why) }
-                    ForEach(ask.questions) { QuestionBlock(question: $0) }
-                    Text("Answer on the session's page; this window shows an ask and does not answer it.")
-                        .font(Theme.caption).foregroundStyle(.secondary)
+                    AskAnswering(
+                        sessionID: sessionID, name: row.name, record: record, ask: ask, isObserver: isObserver,
+                        reread: { await reader.refreshAsk(control: model.daemon(holding: sessionID)?.control, session: sessionID, id: record.id) }
+                    )
                 } else {
                     Text(verbatim: reader.recordWords ?? "Reading the ask\u{2026}").font(Theme.caption).foregroundStyle(.secondary)
                 }
@@ -767,7 +779,7 @@ private struct PeerQuote: View {
 }
 
 /// One question of an ask, with its options and the daemon's marks, as text.
-private struct QuestionBlock: View {
+struct QuestionBlock: View {
     let question: AttentionQuestion
 
     var body: some View {
