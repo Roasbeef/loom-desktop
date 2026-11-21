@@ -208,6 +208,12 @@ public struct AttentionOption: Sendable, Equatable {
     public let label: String
     public let note: String?
     public let isRecommended: Bool
+
+    public init(label: String, note: String?, isRecommended: Bool) {
+        self.label = label
+        self.note = note
+        self.isRecommended = isRecommended
+    }
 }
 
 /// One question of an ask. Every part of it is model text.
