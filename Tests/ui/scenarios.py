@@ -73,6 +73,15 @@ def appearance_and_size_matrix(c):
     c.app.dispatch("Baseline one please demo", WORKSPACE)
     c.app.dispatch("Baseline two escalate", WORKSPACE)
     c.app.transcript_has("waiting on your approval", 30)
+
+    # The inbox headline says how many running sessions its feed read has not
+    # covered yet. Capture only once every running session was read, or the
+    # same screen draws "2 not checked" in one run and nothing in the next.
+    c.app.go("inbox")
+    deadline = time.time() + 20
+    while re.search(r"read live, \d+ not checked", c.app.snap()["inbox"]["headline"]):
+        check(time.time() < deadline, "the inbox feed read never covered the running sessions")
+        time.sleep(0.25)
     screens = ["mission", "inbox", "machines"]
     worst = []
     for appearance in ("dark", "light"):
