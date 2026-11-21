@@ -444,6 +444,8 @@ final class AppModel {
     /// reads. The list's rows and headings are not in the accessibility tree.
     var debugInboxDrawn: [String] = []
     var debugInboxOpen = ""
+    var debugInboxPaneWidth = 0
+    var debugInboxRail = ""
 
     /// Set by the UI driver to choose a new agent's placement by title prefix.
     var debugPlacement = ""

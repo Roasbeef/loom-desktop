@@ -639,6 +639,8 @@ enum InboxSnapshot {
             "note": InboxRule.countNote(running: threads.filter { $0.activity != nil }.count),
             "drawn": model.debugInboxDrawn,
             "open": model.debugInboxOpen,
+            "paneWidth": model.debugInboxPaneWidth,
+            "folderControl": model.debugInboxRail,
         ]
     }
 }

@@ -289,12 +289,22 @@ private enum InboxSelection: Hashable {
 /// group on both. The list keeps focus, so a person can move down it with the arrow
 /// keys and answer an approval with the keyboard.
 ///
+/// The rail is drawn only while the reading pane keeps `InboxLayout.readablePane` points
+/// beside it. Below that width the window is the app's narrowest, the rail is dropped
+/// (the list's band headings carry the same grouping), and a toolbar menu chooses the
+/// folder instead. The list also gives up width, down to `InboxLayout.listFloor`, so
+/// nothing is cut off at any width the window allows.
+///
 /// The pane is `InboxPane` (InboxThreads.swift). It draws an approval's live card under
 /// its evidence, so an approval is decided here as well as on the session's page
 /// (HM-21).
 struct InboxView: View {
     @Environment(AppModel.self) private var model
     @State private var folder: InboxFolder = .everything
+    /// The width the inbox is given, which decides the layout and how much of it the
+    /// list takes.
+    @State private var available: CGFloat = 1000
+    @State private var entries: [(folder: InboxFolder, count: Int?)] = []
     @State private var selection: InboxSelection?
     /// A draft for each thread, so a message half written survives a move down the
     /// list.
@@ -318,6 +328,23 @@ struct InboxView: View {
             if let row = rows.first(where: { $0.id == key }) { selection = .thread(row.subject) }
         }
         .navigationSubtitle(model.attention.isEmpty ? "" : "\(model.attention.count) waiting")
+        .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded() } action: { available = $0 }
+        .toolbar {
+            // A person without the rail still chooses a folder, from the toolbar.
+            if InboxLayout(width: available) == .narrow {
+                ToolbarItem {
+                    Menu {
+                        ForEach(entries, id: \.folder) { entry in
+                            Button(entry.count.map { "\(entry.folder.title) (\($0))" } ?? entry.folder.title) { folder = entry.folder }
+                        }
+                    } label: {
+                        Label("Folder", systemImage: "line.3.horizontal.decrease.circle")
+                    }
+                    .help("Choose a folder")
+                    .accessibilityLabel("Folder menu")
+                }
+            }
+        }
     }
 
     private func content(now: Int) -> some View {
@@ -334,11 +361,16 @@ struct InboxView: View {
         let chosenSubject: InboxSubject? = if case .thread(let subject)? = selection { subject } else { nil }
         let open = InboxRule.selection(sections, chosen: chosenSubject)?.key ?? ""
 
-        return HStack(spacing: 0) {
-            FolderRail(entries: InboxRule.folderEntries(all), shown: shown, note: note) { folder = $0 }
-                .frame(width: 168)
+        let folders = InboxRule.folderEntries(all)
+        let layout = InboxLayout(width: available)
 
-            Divider()
+        return HStack(spacing: 0) {
+            if layout == .wide {
+                FolderRail(entries: folders, shown: shown, note: note) { folder = $0 }
+                    .frame(width: InboxLayout.railWidth)
+
+                Divider()
+            }
 
             if sections.isEmpty && machines.isEmpty {
                 ContentUnavailableView {
@@ -350,14 +382,17 @@ struct InboxView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 InboxList(sections: sections, machines: machines, headline: headline, selection: $selection)
-                    .frame(width: 330)
+                    .frame(width: layout.listWidth(in: available))
 
                 Divider()
 
                 pane(sections: sections, machines: machines)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .onGeometryChange(for: Int.self) { Int($0.size.width) } action: { model.debugInboxPaneWidth = $0 }
             }
         }
+        .onChange(of: folders.map { "\($0.folder.title) \($0.count ?? -1)" }, initial: true) { entries = folders }
+        .onChange(of: layout, initial: true) { _, now in model.debugInboxRail = now == .wide ? "rail" : "menu" }
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
         .onChange(of: open, initial: true) { _, now in model.debugInboxOpen = now }
     }
@@ -382,6 +417,33 @@ struct InboxView: View {
         } else if let item = machines.first {
             AttentionDetail(items: [item], row: nil).id(item.id)
         }
+    }
+}
+
+/// Whether the inbox has room for its folder rail. The rail, the list and a readable
+/// pane together need `wideFrom` points; the window's minimum leaves less than that
+/// beside the sidebar, and then the rail gives way to a toolbar menu.
+enum InboxLayout {
+    case wide
+    case narrow
+
+    static let railWidth: CGFloat = 168
+    static let listWidth: CGFloat = 330
+    /// The narrowest the list is squeezed to before the pane would give up more.
+    static let listFloor: CGFloat = 260
+    /// The width below which the reading pane stops being comfortable to read.
+    static let readablePane: CGFloat = 420
+    /// The least the pane is ever given, at the window's smallest size.
+    static let paneFloor: CGFloat = 340
+    static let wideFrom: CGFloat = railWidth + listWidth + readablePane + 2
+
+    init(width: CGFloat) { self = width >= Self.wideFrom ? .wide : .narrow }
+
+    /// The list keeps its full width while the pane still has its floor beside it,
+    /// and gives up the difference, down to `listFloor`, when it does not.
+    func listWidth(in available: CGFloat) -> CGFloat {
+        let rail = self == .wide ? Self.railWidth + 1 : 0
+        return min(Self.listWidth, max(Self.listFloor, available - rail - 1 - Self.paneFloor))
     }
 }
 
