@@ -19,6 +19,18 @@ provider=$((18999 + slot))
 loom=${LOOM_BIN:-loom}
 loomd=${LOOMD_BIN:-loomd}
 
+# Code mode, and the evolution plane that rides on it, are offered only when the
+# daemon finds a prepared build seed. A daemon looks for one under the workspace,
+# which is a scratch directory here, so a run without the flag draws no code_mode
+# card and every session reads "runtime evolution is unavailable". The seed is
+# the one `make codemode-seed` leaves beside a loom checkout's bin/loomd, or the
+# directory named by LOOM_CODEMODE_SEED.
+seed=${LOOM_CODEMODE_SEED:-$(dirname "$loomd")/../build/codemode-seed}
+seed_flag=""
+if [ -d "$seed" ]; then
+    seed_flag="--codemode-seed $(cd "$seed" && pwd)"
+fi
+
 if [ -e "$base" ]; then
     echo "$base exists; remove it first" >&2
     exit 1
@@ -99,14 +111,14 @@ if ! lsof -nP -iTCP:$provider -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 HOME="$base/exec" LOOM_DISTRIBUTION_OPTFILE="$base/exec/.loom/distribution/dist.options" \
-    nohup "$loomd" --config "$base/exec/.loom/loom.toml" --bind "127.0.0.1:$exec_bind" \
+    nohup "$loomd" --config "$base/exec/.loom/loom.toml" $seed_flag --bind "127.0.0.1:$exec_bind" \
     > "$base/logs/exec.log" 2>&1 &
 echo $! > "$base/exec.pid"
 
 # A tiny recent-tail target lets a short scripted session have something to cut,
 # so /compact can succeed. A real session keeps the default of 20,000 tokens.
 HOME="$base/orch" FAKE_KEY=x LOOM_COMPACTION_KEEP_RECENT=100 LOOM_DISTRIBUTION_OPTFILE="$base/orch/.loom/distribution/dist.options" \
-    nohup "$loomd" --config "$base/orch/.loom/loom.toml" --bind "127.0.0.1:$orch_bind" \
+    nohup "$loomd" --config "$base/orch/.loom/loom.toml" $seed_flag --bind "127.0.0.1:$orch_bind" \
     > "$base/logs/orch.log" 2>&1 &
 echo $! > "$base/orch.pid"
 

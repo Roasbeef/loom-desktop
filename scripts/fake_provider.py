@@ -30,6 +30,8 @@ keyword in the last user turn selects a script:
   cachehit   an ordinary reply whose usage reports a large cached prefix
   cachemiss  an ordinary reply whose usage reports that prefix billed again
   markdown   a reply with an alert, a footnote, a link and a diagram
+  askowner   puts two questions to the owner with `ask`, which ends the turn
+  noticefind leaves a risk note with `notice`, which does not stop the run
 
 Anything else streams a short markdown reply. A tool result continues whichever
 script produced the call.
@@ -227,6 +229,26 @@ def script(messages):
             yield chunk({}, "tool_calls")
         else:
             yield from text_stream("Nothing to add.")
+        return
+
+    if "askowner" in prompt:
+        if steps == 0:
+            yield call(0, "ask", {"why": "the cache layout is the owner's call", "questions": [
+                {"prompt": "Which cache layout should the fetcher use?", "kind": "choice", "options": [
+                    {"label": "Per host", "recommended": True}, {"label": "Shared"}]},
+                {"prompt": "May the fetcher drop expired entries early?", "kind": "confirm"},
+            ]})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("I asked and am waiting for the answer.")
+        return
+
+    if "noticefind" in prompt:
+        if steps == 0:
+            yield call(0, "notice", {"kind": "risk", "text": "The retry loop in fetch.py has no jitter.", "path": "fetch.py", "line": 7})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("I noted the risk and carried on.")
         return
 
     if "peersend" in prompt:

@@ -252,7 +252,10 @@ struct InboxPane: View {
             }
         }
         .accessibilityIdentifier("inbox-pane/\(row.id)")
-        .task(id: row.id) {
+        // The reads follow the kind as well as the row: a session opened as "Waiting" becomes
+        // "To review" once the scan has read its tree, and the review is read only for the
+        // second, so a task keyed on the row alone would never read it.
+        .task(id: "\(row.id)/\(row.kind.chip)") {
             await reader.run(reads: reads, session: sessionID, control: model.daemon(holding: sessionID)?.control)
         }
         .task(id: findIDs) {
