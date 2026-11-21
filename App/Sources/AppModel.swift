@@ -125,6 +125,11 @@ final class DaemonConnection: Identifiable {
     /// cannot take an answer, and a restart (a new epoch) gets another try.
     private(set) var answerRefusedAtEpoch: String?
 
+    /// The epoch of the daemon that refused `sessions.saved_attention` as an unknown
+    /// command. The read is not asked again while it is the current epoch, and a
+    /// restart (a new epoch) gets another try.
+    private var savedRefusedAtEpoch: String?
+
     /// When each session's oldest pending approval was raised, from `approval.read`.
     /// A session with no entry has no age, since an approval is never aged from a
     /// record that carries no raise time.
@@ -368,9 +373,10 @@ final class DaemonConnection: Identifiable {
     /// Reads the catalogue's counts for the saved sessions, at the feed's cadence. A
     /// session the list holds and the daemon did not read has no entry and is counted
     /// as not checked. A daemon that does not know the command leaves the inbox saying
-    /// saved sessions are not checked, and any other refusal leaves the last read in
+    /// saved sessions are not checked, and is not asked again until the epoch changes. Any other refusal leaves the last read in
     /// place, as the feed's refusals do.
     private func refreshSaved(_ control: ControlClient) async {
+        if savedRefusedAtEpoch != nil, savedRefusedAtEpoch == hello?.epoch { return }
         let saved = savedSessionIDs
         guard !saved.isEmpty else {
             if savedReading != .unchecked { savedReading = .unchecked }
@@ -380,6 +386,7 @@ final class DaemonConnection: Identifiable {
             let next = SavedReading.read(try await control.savedAttention(sessions: saved))
             if savedReading != next { savedReading = next }
         } catch let error as LoomError where error.isUnknownCommand {
+            savedRefusedAtEpoch = hello?.epoch
             if savedReading != .unchecked { savedReading = .unchecked }
         } catch {
             // The last answer stays: a refusal says nothing new about the sessions.
