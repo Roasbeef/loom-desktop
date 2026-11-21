@@ -12,17 +12,37 @@ public struct DiffHunk: Sendable, Equatable, Identifiable {
         public let oldNumber: Int?
         public let newNumber: Int?
         public let text: String
+
+        public init(id: Int, kind: Kind, oldNumber: Int?, newNumber: Int?, text: String) {
+            self.id = id
+            self.kind = kind
+            self.oldNumber = oldNumber
+            self.newNumber = newNumber
+            self.text = text
+        }
     }
 
     public let id: Int
     public let header: String
     public let lines: [Line]
+
+    public init(id: Int, header: String, lines: [Line]) {
+        self.id = id
+        self.header = header
+        self.lines = lines
+    }
 }
 
 public struct DiffSummary: Sendable, Equatable {
     public let hunks: [DiffHunk]
     public let added: Int
     public let removed: Int
+
+    public init(hunks: [DiffHunk], added: Int, removed: Int) {
+        self.hunks = hunks
+        self.added = added
+        self.removed = removed
+    }
 }
 
 public enum Diff {

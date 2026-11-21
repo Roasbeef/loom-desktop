@@ -11,19 +11,11 @@ import SwiftUI
 /// done, a dash is dropped, and a blocked task is amber because it waits on a
 /// person.
 ///
-/// It opens while the strand is running and closes to its one line when the run
-/// ends, so an idle session does not give a sixth of its window to a finished
-/// plan. A person's own open or close holds until the next run starts or ends.
+/// It starts closed and only a person opens it. A run starting or ending does
+/// not move it, so sending a message never grows the dock under the composer.
 struct TodoDock: View {
     let board: TodoBoard
-    let isBusy: Bool
-    @State private var isOpen: Bool
-
-    init(board: TodoBoard, isBusy: Bool) {
-        self.board = board
-        self.isBusy = isBusy
-        _isOpen = State(initialValue: isBusy)
-    }
+    @State private var isOpen = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -45,9 +37,6 @@ struct TodoDock: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Todo board")
             .accessibilityValue("\(board.progress) · \(headline)")
-            .onChange(of: isBusy) {
-                withAnimation(.smooth(duration: 0.18)) { isOpen = isBusy }
-            }
 
             if isOpen {
                 VStack(alignment: .leading, spacing: 9) {

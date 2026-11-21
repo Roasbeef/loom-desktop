@@ -247,6 +247,13 @@ def a_failed_run_reaches_the_inbox(c):
     c.app.dispatch("Please explode now", WORKSPACE)
     wait_for(lambda: any(a["kind"] == "Failed runs" and "explode" in a["agent"] for a in c.app.snap()["attention"]), 60, "the failed run")
 
+    # The inbox lists it under "Needs you" with the chip "Failed", and its pane says what a person can do.
+    c.app.go("inbox")
+    row = wait_for(lambda: next((r for g in c.app.snap()["inbox"]["groups"] for r in g["rows"] if r["kind"] == "Failed" and "explode" in r["name"] and g["title"] == "Needs you"), None), 30, "a Failed row under Needs you")
+    c.app.cmd("inboxpick " + row["id"])
+    c.app.see(r"^Failed$", 10)
+    c.app.see(r"^Open Session$", 5)
+
 
 # The composer.
 
@@ -761,6 +768,9 @@ def approval_appears_in_mission_and_inbox(c):
     c.app.go("mission")
     c.app.see("Needs You")
     c.app.go("inbox")
+
+    # The row sits under "Needs you" with the Approval chip, and its pane carries the live card.
+    wait_for(lambda: any(g["title"] == "Needs you" and any(r["kind"] == "Approval" and r["name"].startswith("Everywhere") for r in g["rows"]) for g in c.app.snap()["inbox"]["groups"]), 15, "an Approval row under Needs you")
     c.app.see("Write to /Users/Shared")
     c.app.go("mission")
     c.app.press("Allow")
@@ -844,7 +854,7 @@ def todo_board_follows_the_agent(c):
     run_session(c, "Plan", "todoboard now", "first task is finished")
     wait_for(lambda: c.app.session().get("todo") == "1/4 done", 15, "the board")
     c.app.see(r"Todo board.*Add the tests", 5)
-    # The board remembers whether it was left open, so open it only if it is not.
+    # The board starts closed, and a run does not open it.
     try:
         c.app.see(r"Wire the metrics, pending", 1)
     except Failure:
@@ -1189,6 +1199,7 @@ def machines_lists_each_node(c):
 import scenarios_lifecycle  # noqa: E402,F401
 import scenarios_admin  # noqa: E402,F401
 import scenarios_transcript  # noqa: E402,F401
+import scenarios_inbox  # noqa: E402,F401
 
 
 # Faults. These run last among the functional scenarios, since they damage the cluster.
@@ -1261,6 +1272,22 @@ def idle_is_quiet(c):
     check(share < 0.05, f"idle CPU {share:.1%}")
 
 
+@scenario(needs_display=True)
+def a_huge_paste_stays_drawable(c):
+    """A very large message is a bounded preview that opens, so the page never goes blank."""
+    c.app.dispatch("Paste one", WORKSPACE)
+    c.app.open_session("Paste one")
+    sid = c.app.session_id("Paste one")
+    paste = " ".join(f"line{i} " + "word " * 12 for i in range(4000))
+    c.app.prompt(sid, paste)
+    c.app.see(r"Show all [\d,]+ characters", 40)
+    c.app.not_see(r"line3999")
+    c.app.press(f"Show all {len(paste):,} characters")
+    c.app.see(r"Show less", 5)
+
+
+# A scenario that needs the cluster whole belongs before the faults below: they end with
+# the orchestrator stopped, and a scenario after them cannot dispatch.
 import scenarios_down  # noqa: E402,F401
 
 

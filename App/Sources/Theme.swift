@@ -496,6 +496,20 @@ struct CodeBlockView: View {
     var isStreaming = false
     @State private var isHovering = false
 
+    /// A single text taller than the renderer's layer limit draws nothing, and
+    /// takes the rows around it with it, so a block is laid out only up to this
+    /// many lines. The copy control still copies all of it.
+    private static let previewLines = 200
+
+    private var lineCount: Int { code.reduce(into: 1) { if $1 == "\n" { $0 += 1 } } }
+    private var isCut: Bool { lineCount > Self.previewLines }
+
+    private var shown: String {
+        guard isCut else { return code }
+        return code.split(separator: "\n", maxSplits: Self.previewLines, omittingEmptySubsequences: false)
+            .prefix(Self.previewLines).joined(separator: "\n")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -509,8 +523,16 @@ struct CodeBlockView: View {
             .background(Theme.tint)
             Divider()
             ScrollView(.horizontal, showsIndicators: false) {
-                HighlightedCode(code: code, language: language, isStreaming: isStreaming)
+                HighlightedCode(code: shown, language: language, isStreaming: isStreaming)
                     .padding(12)
+            }
+            if isCut {
+                Divider()
+                Text("Showing the first \(Self.previewLines) of \(lineCount.formatted()) lines. Copy has all of them.")
+                    .font(Theme.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
             }
         }
         .surface(fill: Theme.tint.opacity(0.6))
@@ -566,6 +588,10 @@ struct DiffView: View {
     let summary: DiffSummary
     var language: String?
 
+    /// A view drawn under a line, such as a find pinned at it, or nil for none. The
+    /// review thread uses it to put what the agent noticed at the line it names.
+    var below: (DiffHunk.Line) -> AnyView? = { _ in nil }
+
     // Lines fill the pane even when shorter than it, so colour runs edge to edge.
     @State private var paneWidth: CGFloat = 0
 
@@ -584,6 +610,11 @@ struct DiffView: View {
                     }
                     ForEach(hunk.lines) { line in
                         row(line)
+                        if let extra = below(line) {
+                            // The card keeps to the pane's width and does not scroll
+                            // sideways with a long line above it.
+                            extra.frame(width: paneWidth > 0 ? paneWidth : nil, alignment: .leading)
+                        }
                     }
                 }
             }

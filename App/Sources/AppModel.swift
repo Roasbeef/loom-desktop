@@ -72,6 +72,12 @@ enum CredentialStore {
     }
 }
 
+/// Why a message from the inbox pane was not sent, in the app's own words.
+struct SendFailure: LocalizedError {
+    let words: String
+    var errorDescription: String? { words }
+}
+
 /// One daemon this app is connected to, here or on another machine.
 ///
 /// A session's brain is the daemon that holds it, so a session on another
@@ -104,6 +110,21 @@ final class DaemonConnection: Identifiable {
     private(set) var activity: [String: SessionActivity] = [:]
     private(set) var attached: [String: SessionController] = [:]
 
+    /// The feed rows the daemon last read, by session: asks, finds and stuck
+    /// strands. A resident session with no entry was not read, which the inbox
+    /// says as "not checked" and never as "nothing waits".
+    private(set) var attentionRows: [String: AttentionRow] = [:]
+
+    /// When each session's oldest pending approval was raised, from `approval.read`.
+    /// A session with no entry has no age, since an approval is never aged from a
+    /// record that carries no raise time.
+    private(set) var approvalRaised: [String: Int] = [:]
+
+    /// What the worktree scan knows of each idle session, which decides who is under
+    /// "To review". It is read one session at a time, off the poll, since a read may
+    /// take the daemon several seconds.
+    private(set) var reviewScan = ReviewScan()
+
     /// When this client last saw each session's activity change. The daemon reports
     /// no such time, so this is an observation, absent until a change is seen.
     private(set) var lastChanged: [String: Date] = [:]
@@ -120,6 +141,15 @@ final class DaemonConnection: Identifiable {
     /// The deployment read connects to every node, so it runs far less often
     /// than the catalogue poll.
     private static let deploymentEvery = 8
+
+    /// The attention feed is a fresh observation on every call, and the daemon
+    /// neither caches nor pushes it, so it is read about every 30 seconds beside
+    /// the 2 second catalogue poll.
+    private static let attentionEvery = 15
+
+    /// The worktree scan starts at most one read about every six seconds, which
+    /// keeps within the daemon's two reads in four seconds for a credential.
+    private static let reviewEvery = 3
 
     init(id: String, source: Source) {
         self.id = id
@@ -239,7 +269,45 @@ final class DaemonConnection: Identifiable {
         if ticks % Self.deploymentEvery == 0 {
             await refreshDeployment(control)
         }
+        if ticks % Self.attentionEvery == 0 {
+            await refreshAttention(control, resident: resident, activity: activity)
+        }
+        if ticks % Self.reviewEvery == 0 {
+            scanReview(control, activity: activity)
+        }
         ticks += 1
+    }
+
+    /// Starts the read of the next idle session whose worktree is due, when none is
+    /// out. The read runs apart from the poll and records its answer on return.
+    private func scanReview(_ control: ControlClient, activity: [String: SessionActivity]) {
+        let candidates = ReviewScan.candidates(threads: inboxThreads(activity: activity))
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        guard let next = reviewScan.due(candidates, now: now) else { return }
+        reviewScan.started(next.session, message: next.message, now: now)
+        Task {
+            let result: Result<ReviewRead, ReviewScan.Failure>
+            do {
+                result = .success(try await control.review(sessionID: next.session))
+            } catch LoomError.server(let code, let message, _) {
+                result = .failure(ReviewScan.Failure(code: code, message: message))
+            } catch {
+                result = .failure(.failed)
+            }
+            reviewScan.answered(next.session, message: next.message, read: result)
+        }
+    }
+
+    /// This daemon's resident sessions as the inbox reads them.
+    func inboxThreads(activity: [String: SessionActivity]) -> [InboxThread] {
+        sessions.filter { $0.state.isResident }.map { InboxThread(id: $0.id, name: $0.title, activity: activity[$0.id]) }
+    }
+
+    /// Reads the attention feed now, for a pane that has just settled a find.
+    func readAttentionNow() async {
+        guard let control else { return }
+        let resident = sessions.filter { $0.state.isResident }.map(\.id)
+        await refreshAttention(control, resident: resident, activity: activity)
     }
 
     /// Both reads are owner-only and absent from older daemons, so a refusal
@@ -247,6 +315,27 @@ final class DaemonConnection: Identifiable {
     private func refreshDeployment(_ control: ControlClient) async {
         if let next = try? await control.deployment(), deployment != next { deployment = next }
         if let next = try? await control.sessionsElsewhere(), elsewhere != next { elsewhere = next }
+    }
+
+    /// Reads the attention feed for the resident sessions and the raise time of each
+    /// pending approval. Both are reads that an older daemon refuses, and a refusal
+    /// leaves the last answer in place rather than failing the connection.
+    private func refreshAttention(_ control: ControlClient, resident: [String], activity: [String: SessionActivity]) async {
+        if let rows = try? await control.attention(sessions: resident) {
+            // Only sessions still resident keep a row, so a stopped session's old
+            // asks do not linger.
+            if attentionRows != rows { attentionRows = rows }
+        }
+        var read: [String: Int] = [:]
+        for row in activity.values where row.approvals > 0 {
+            if let evidence = try? await control.approvalEvidence(sessionID: row.sessionID), let oldest = evidence.oldestRaised {
+                read[row.sessionID] = oldest
+            }
+        }
+        let raised = InboxRule.raisedTimes(
+            previous: approvalRaised, read: read, approving: Set(activity.values.filter { $0.approvals > 0 }.map(\.sessionID))
+        )
+        if approvalRaised != raised { approvalRaised = raised }
     }
 
     // MARK: Sessions
@@ -346,6 +435,18 @@ final class AppModel {
     /// steady speed, for measuring frames while scrolling.
     var debugScrollSweep = 0
 
+    /// Set by the UI driver to open one inbox thread by its row identity, which the
+    /// list's rows do not let an accessibility press reach.
+    var debugInboxPick: String?
+
+    /// What the inbox last drew, written by the view so the driver can read it: the
+    /// folder shown, then each band drawn with its count, and the thread the pane
+    /// reads. The list's rows and headings are not in the accessibility tree.
+    var debugInboxDrawn: [String] = []
+    var debugInboxOpen = ""
+    var debugInboxPaneWidth = 0
+    var debugInboxRail = ""
+
     /// Set by the UI driver to choose a new agent's placement by title prefix.
     var debugPlacement = ""
     #endif
@@ -426,6 +527,55 @@ final class AppModel {
                 Mission.blastRadius(nodes: daemon.deployment?.nodes ?? [], sessions: daemon.sessions)
             }
         )
+    }
+
+    /// The resident sessions as the inbox reads them: the display name beside the
+    /// daemon's activity report, which is nil when it gave none.
+    var inboxThreads: [InboxThread] {
+        daemons.flatMap { daemon in
+            daemon.sessions.filter { $0.state.isResident }.map {
+                InboxThread(id: $0.id, name: $0.title, activity: daemon.activity[$0.id])
+            }
+        }
+    }
+
+    /// The sessions listed under "To review", across daemons.
+    var reviewing: Set<String> {
+        daemons.reduce(into: Set<String>()) { all, daemon in
+            let candidates = ReviewScan.candidates(threads: inboxThreads.filter { daemon.activity[$0.id] != nil })
+            all.formUnion(daemon.reviewScan.reviewing(candidates))
+        }
+    }
+
+    /// The size of a session's change from the scan, for its current message.
+    func reviewStat(of sessionID: String, message: String) -> ReviewStat? {
+        daemon(holding: sessionID)?.reviewScan.stat(sessionID, message: message)
+    }
+
+    /// Whether every try at reading a session's worktree for its last message failed.
+    func reviewIsUnreadable(of sessionID: String, message: String) -> Bool {
+        daemon(holding: sessionID)?.reviewScan.isUnreadable(sessionID, message: message) ?? false
+    }
+
+    /// Sends a message from the inbox pane to a session's strand: a prompt, or a
+    /// steer when the person chose one. It attaches a lane first, as a strip's
+    /// message does, and returns the daemon's `admitted` or `queued`.
+    func sendMessage(sessionID: String, strand: String, text: String, choice: ThreadSend.Choice) async throws -> String? {
+        guard let controller = daemon(holding: sessionID)?.attach(sessionID) else {
+            throw SendFailure(words: "The session is not running.")
+        }
+        await controller.waitUntilAdopted()
+        guard !controller.isObserver else { throw SendFailure(words: SessionController.observerWords) }
+        let reply = try await controller.request(choice.command, body: ["strand": .string(strand), "text": .string(text)])
+        return reply.body["status"]?.string
+    }
+
+    var attentionRows: [String: AttentionRow] {
+        daemons.reduce(into: [:]) { $0.merge($1.attentionRows) { _, new in new } }
+    }
+
+    var approvalRaised: [String: Int] {
+        daemons.reduce(into: [:]) { $0.merge($1.approvalRaised) { _, new in new } }
     }
 
     var cards: [AgentCard] {

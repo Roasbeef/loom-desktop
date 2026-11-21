@@ -107,11 +107,11 @@ struct FoldRow: View {
             ReasoningRow(text: text, tookMs: row.tookMs, summary: summary)
         case .assistant(let text):
             // Prose the strand wrote between steps is narration, so it is drawn
-            // quieter than the answer.
-            Text(text)
-                .font(.callout)
+            // quieter than the answer. It is still markdown, and a long one can
+            // hold headings, lists and fences, so it is laid out block by block
+            // like any reply rather than as one raw text.
+            MarkdownView(source: text)
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
         default:
             RowView(row: row)
         }
@@ -172,7 +172,7 @@ struct PeerCard: View {
                 Spacer(minLength: 8)
                 Text("Origin checked by the daemon").font(Theme.meta).foregroundStyle(.tertiary)
             }
-            Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Text(OutputBlock.cut(text)).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             HStack(spacing: 8) {
                 Button("Reply to Peer") {
                     model.currentSession?.composer.draft = "Reply to \(name) (session \(session), strand \(strand)): "
@@ -204,7 +204,7 @@ struct SiblingCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("From strand \(StrandName.display(strand))").font(Theme.label).foregroundStyle(.secondary)
-            Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            Text(OutputBlock.cut(text)).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             if let trailer {
                 Text(trailer).font(Theme.caption).foregroundStyle(.tertiary).textSelection(.enabled).lineLimit(6)
             }
@@ -251,7 +251,7 @@ struct AdvisorLine: View {
                     Image(systemName: "eye").font(.system(size: 11)).foregroundStyle(.tertiary)
                     Text(frame.label).font(Theme.label).foregroundStyle(.secondary)
                 }
-                Text(text).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(OutputBlock.cut(text)).font(Theme.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(12)
@@ -652,9 +652,25 @@ struct OutputBlock: View {
     /// The language to colour the text as. Output with none is drawn in the tint alone.
     var language: String?
 
+    /// Output past this many lines or characters is cut for drawing. One `Text` taller
+    /// than the renderer's layer limit draws blank, and takes its neighbours with it.
+    static let previewLines = 300
+    static let previewCharacters = 20_000
+
+    private var shown: String { OutputBlock.cut(text) }
+
+    private var isCut: Bool { shown.count < text.count }
+
+    static func cut(_ text: String) -> String {
+        let head = text.prefix(previewCharacters)
+        let lines = head.split(separator: "\n", maxSplits: previewLines, omittingEmptySubsequences: false)
+        if lines.count <= previewLines, head.count == text.count { return text }
+        return lines.prefix(previewLines).joined(separator: "\n")
+    }
+
     private var styled: Text {
-        guard let language else { return Text(text) }
-        return Text(HighlightCache.attributed(text, language: language, isStreaming: false))
+        guard let language else { return Text(shown) }
+        return Text(HighlightCache.attributed(shown, language: language, isStreaming: false))
     }
 
     /// The block's own width. A scroll view that scrolls both ways gives a spacer
@@ -678,6 +694,15 @@ struct OutputBlock: View {
         .frame(maxHeight: 260)
         .fixedSize(horizontal: false, vertical: true)
         .surface(radius: Theme.radiusInner)
+        .overlay(alignment: .bottomTrailing) {
+            if isCut {
+                Text("Cut to the first \(Self.previewLines) lines")
+                    .font(Theme.meta).foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.thinMaterial, in: .capsule)
+                    .padding(6)
+            }
+        }
     }
 }
 
@@ -744,11 +769,51 @@ struct ReasoningRow: View {
             }
 
             if isOpen {
-                MarkdownView(source: text)
+                // A long thought is one row, so it is laid out a slice at a time.
+                // A row taller than the renderer's layer limit draws blank, and takes
+                // the whole transcript with it.
+                let slice = ThoughtSlice.head(of: text, shown: shownCharacters)
+                MarkdownView(source: slice.text)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if slice.hiddenCharacters > 0 {
+                    Button("Show more (\(slice.hiddenCharacters.formatted()) characters left)") {
+                        shownCharacters += ThoughtSlice.step
+                    }
+                    .buttonStyle(.link)
+                    .font(Theme.caption)
+                }
             }
         }
+    }
+
+    @State private var shownCharacters = ThoughtSlice.step
+}
+
+/// How much of a thought one row lays out. Cut on a paragraph break, so a slice
+/// never ends inside a code fence's opening line or a word.
+enum ThoughtSlice {
+    static let step = 6_000
+
+    struct Cut {
+        let text: String
+        let hiddenCharacters: Int
+    }
+
+    static func head(of text: String, shown: Int) -> Cut {
+        guard text.count > shown else { return Cut(text: text, hiddenCharacters: 0) }
+        let head = text.prefix(shown)
+        let end = head.range(of: "\n\n", options: .backwards)?.lowerBound ?? head.endIndex
+        let kept = String(head[..<end])
+        return Cut(text: kept, hiddenCharacters: text.count - kept.count)
+    }
+
+    static func tail(of text: String, shown: Int) -> Cut {
+        guard text.count > shown else { return Cut(text: text, hiddenCharacters: 0) }
+        let tail = text.suffix(shown)
+        let start = tail.range(of: "\n\n")?.upperBound ?? tail.startIndex
+        let kept = String(tail[start...])
+        return Cut(text: kept, hiddenCharacters: text.count - kept.count)
     }
 }
 
@@ -891,6 +956,8 @@ private struct LiveReasoning: View {
 
     /// The section the summary is in now when it has titles, or its newest line.
     private var newest: AttributedString {
+        // Only the end is read, so each streamed token costs the same however long the thought is.
+        let thinking = String(thinking.suffix(4_000))
         if let title = Markdown.sectionTitles(in: thinking).last { return AttributedString(title) }
         let line = thinking.split(separator: "\n", omittingEmptySubsequences: true).last.map(String.init) ?? thinking
         return MarkdownView.inline(line.count > 120 ? "…" + String(line.suffix(120)) : line)
@@ -924,7 +991,14 @@ private struct LiveReasoning: View {
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
 
             if isOpen {
-                MarkdownView(source: thinking, isStreaming: true)
+                // Only the newest part is laid out while it streams: the earlier part
+                // is already settled and one row cannot be arbitrarily tall.
+                let slice = ThoughtSlice.tail(of: thinking, shown: ThoughtSlice.step)
+                if slice.hiddenCharacters > 0 {
+                    Text("Earlier thinking (\(slice.hiddenCharacters.formatted()) characters) shows once it settles.")
+                        .font(Theme.caption).foregroundStyle(.tertiary)
+                }
+                MarkdownView(source: slice.text, isStreaming: true)
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

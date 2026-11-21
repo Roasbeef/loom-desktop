@@ -14,10 +14,12 @@ struct ProposalCard: View {
     @State private var confirms = false
     @State private var isExpanded = false
 
-    /// A compact card clips the change to a few lines until it is opened, so the
-    /// dock above the composer stays short. Opening it shows every line, why it
-    /// was proposed and where from, in a pane that scrolls past its own height.
-    private var isClipped: Bool { compact && !isExpanded }
+    /// A compact card always clips the change to a few lines, so the dock above
+    /// the composer keeps its height. Opening it shows every line, why it was
+    /// proposed and where from, in a popover that scrolls past its own height.
+    /// Growing the dock in place instead pushed the composer out of the window
+    /// for a long change.
+    private var isClipped: Bool { compact }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -28,15 +30,15 @@ struct ProposalCard: View {
                 Text("for \(row.target)").font(Theme.meta).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 6)
                 if compact {
-                    Button {
-                        withAnimation(.smooth(duration: 0.15)) { isExpanded.toggle() }
-                    } label: {
-                        Image(systemName: "chevron.down")
-                            .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    Button { isExpanded.toggle() } label: {
+                        Image(systemName: "arrow.up.left.and.arrow.down.right")
                     }
                     .buttonStyle(.borderless)
                     .help(isExpanded ? "Show less" : "Show the whole change")
                     .accessibilityLabel(isExpanded ? "Collapse \(row.kindWords)" : "Expand \(row.kindWords)")
+                    .popover(isPresented: $isExpanded, arrowEdge: .top) {
+                        ProposalDetail(row: row)
+                    }
                 }
                 if row.canDecide {
                     Button("Reject") { decide("reject") }
@@ -86,6 +88,35 @@ struct ProposalCard: View {
 
     private func decide(_ decision: String) {
         controller.run("proposal_decide", body: ["id": .string(row.id), "decision": .string(decision)])
+    }
+}
+
+/// The whole of a proposed change, shown in a popover from the dock's card.
+private struct ProposalDetail: View {
+    let row: ProposalBoard.Row
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(row.kindWords.capitalized) for \(row.target)").font(Theme.label)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !row.old.isEmpty {
+                        Text(row.old).font(Theme.code).foregroundStyle(Theme.removedText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    Text(row.new).font(Theme.code).foregroundStyle(row.old.isEmpty ? Color.primary : Theme.addedText)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .textSelection(.enabled)
+            }
+            .frame(height: 300)
+            if !row.rationale.isEmpty {
+                Quiet("Why: " + PanelWords.oneLine(row.rationale))
+            }
+            Quiet("From session \(row.session.prefix(8))" + (row.entry.map { ", entry \($0.prefix(8))" } ?? ""))
+        }
+        .padding(14)
+        .frame(width: 520)
     }
 }
 

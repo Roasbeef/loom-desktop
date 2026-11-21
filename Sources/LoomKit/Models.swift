@@ -129,6 +129,12 @@ public struct SessionActivity: Sendable, Equatable {
     public let approvals: Int
     public let lastOutcome: String?
     public let lastMessage: String?
+    /// When the entry behind `lastMessage` was written, in Unix milliseconds. The
+    /// daemon sends it only with the message, and an older daemon sends neither.
+    public let lastMessageAt: Int?
+    /// When the turn now open on main began, in Unix milliseconds; nil while main
+    /// runs nothing. It is the start of this turn and never the end of the last.
+    public let turnStartedAt: Int?
     public let model: String?
     public let glances: [Glance]
 
@@ -144,6 +150,8 @@ public struct SessionActivity: Sendable, Equatable {
         approvals = body["approvals"]?.int ?? 0
         lastOutcome = body["last_outcome"]?.string
         lastMessage = body["last_message"]?.string
+        lastMessageAt = body["last_message_at"]?.natural
+        turnStartedAt = body["turn_started_at"]?.natural
         model = body["model"]?.string
         glances = (body["glances"]?.array ?? []).compactMap { glance in
             guard let strand = glance["strand"]?.string else { return nil }

@@ -196,7 +196,7 @@ client:
 | No read of a saved session's approvals or spend | A saved session's pending approval is invisible until opened | The catalogue summary in Loom's `docs/design-notes/web-ui-redesign.md` |
 | Claim tokens are refused, not redeemed | A member needs a credential obtained elsewhere | Implement `/v2/claim` |
 | Sessions cannot be moved from the app | `moving` is displayed, `sessions.move` is not sent | Add once the flow is designed |
-| No last-activity time on the wire | Ages are this client's own observation | Add it to the catalogue summary |
+| Mission Control still ages a strip from this client's own observation | The daemon now sends `last_message_at` and `turn_started_at` on `sessions.activity`, and the Inbox uses them; the strips do not yet | Read the two times in `AgentStrip` |
 | A window other than the main one has no Session menu | Its shortcuts act on the main window's session | Track the key window |
 
 Not built yet: a worktree per session, a free-form canvas, goals, proposals, schedules,

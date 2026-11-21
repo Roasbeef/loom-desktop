@@ -110,6 +110,14 @@ private struct LiveSession: View {
     let controller: SessionController
     let placement: Placement?
     @State private var query = ""
+    @State private var rail: RailModel
+
+    init(record: SessionRecord, controller: SessionController, placement: Placement?) {
+        self.record = record
+        self.controller = controller
+        self.placement = placement
+        _rail = State(initialValue: RailModel(sessionID: record.id))
+    }
 
     private var subtitle: String {
         var parts: [String] = []
@@ -122,8 +130,25 @@ private struct LiveSession: View {
         @Bindable var model = model
         @Bindable var controller = controller
         TranscriptView(controller: controller, query: query)
+            .safeAreaBar(edge: .top, spacing: 0) {
+                StreamHead(controller: controller, rail: rail)
+            }
             .safeAreaBar(edge: .bottom, spacing: 0) {
-                ComposerStack(controller: controller)
+                ComposerStack(controller: controller, rail: rail)
+            }
+            // The rail reads the session's feed row and the approval evidence about
+            // every five seconds while the page is open, and approval evidence only
+            // while an approval waits, since the daemon caches neither.
+            .task(id: record.id) {
+                while !Task.isCancelled {
+                    if controller.isLive {
+                        await rail.refresh(
+                            control: model.daemon(holding: record.id)?.control,
+                            hasApprovals: !controller.escalations.isEmpty
+                        )
+                    }
+                    try? await Task.sleep(for: RailModel.refreshEvery)
+                }
             }
             .navigationTitle(record.title)
             .navigationSubtitle(subtitle)
@@ -132,7 +157,10 @@ private struct LiveSession: View {
             }
             .searchable(text: $query, isPresented: $controller.isSearching, placement: .toolbar, prompt: "Find in transcript")
             .inspector(isPresented: $model.showsInspector) {
-                SessionInspector(record: record, controller: controller, placement: placement)
+                SessionInspector(
+                    record: record, controller: controller, placement: placement, rail: rail,
+                    control: model.daemon(holding: record.id)?.control
+                )
                     .inspectorColumnWidth(min: 260, ideal: 460, max: 800)
             }
             .sheet(isPresented: Binding(
@@ -217,6 +245,14 @@ private struct TranscriptView: View {
     #endif
     @State private var width: CGFloat = 0
 
+    // Whether the reader is within reach of the top, or what is loaded does not
+    // yet fill the window. It is read from the scroll geometry and not from the
+    // stack building the "Load Older Turns" button: a lazy stack that lost its
+    // place can build the top of a long transcript while the view is at the end,
+    // and each page that landed then asked for the next until the whole history
+    // was held, which is what made a long session crawl.
+    @State private var wantsOlder = false
+
     /// What changes when a reply settles: the live tail ends and its committed
     /// rows replace it, often at a different height. Older turns paging in at the
     /// top leave both parts alone, so they never pull the reader to the end.
@@ -247,6 +283,15 @@ private struct TranscriptView: View {
         return models
     }
 
+    /// The record time of the row whose first part has this id, for a long reply
+    /// laid out a run per row. Only the first run carries the time.
+    private static func time(of id: String, in blocks: [TranscriptBlock]) -> Int? {
+        for block in blocks.reversed() {
+            if case .row(let row) = block, row.id == id { return row.at }
+        }
+        return nil
+    }
+
     /// One row of the lazy stack: a whole block, or one markdown block of a long reply.
     private enum Item: Identifiable {
         case block(TranscriptBlock)
@@ -269,6 +314,9 @@ private struct TranscriptView: View {
     /// which left the view over rows it had not drawn. The live tail already lays
     /// a streaming reply out this way.
     private static let splitAbove = 6
+
+    /// How close to the top of the transcript, in points, counts as near it.
+    private static let nearTop: CGFloat = 800
 
     private var items: [Item] {
         visibleBlocks.flatMap { block -> [Item] in
@@ -296,10 +344,6 @@ private struct TranscriptView: View {
                     .buttonStyle(.link)
                     .frame(maxWidth: .infinity)
 
-                    // The button is built only once the reader scrolls to it, so
-                    // its appearing is the request, and each page that lands
-                    // changes the first block and asks for the next while it shows.
-                    .task(id: controller.blocks.first?.id) { controller.loadOlder() }
                 } else if controller.isAdopted, query.isEmpty, !controller.blocks.isEmpty {
                     Text("Beginning of the conversation")
                         .font(Theme.caption)
@@ -311,14 +355,17 @@ private struct TranscriptView: View {
                         switch item {
                         case .block(let block):
                             BlockView(block: block, controller: controller)
-                        case .answerPart(_, let part, let text, let isFirst):
-                            AnswerPart(part: part, text: text, isFirst: isFirst)
+                        case .answerPart(let id, let part, let text, let isFirst):
+                            GutterRow(at: isFirst ? Self.time(of: id, in: controller.blocks) : nil) {
+                                AnswerPart(part: part, text: text, isFirst: isFirst)
+                            }
                         }
                     }
                     .id(item.id)
                 }
                 if query.isEmpty {
                     LiveTail(controller: controller)
+                        .padding(.leading, GutterRow<EmptyView>.width)
                 }
                 if !query.isEmpty, visibleBlocks.isEmpty {
                     Text("No matches in what is loaded.")
@@ -329,7 +376,7 @@ private struct TranscriptView: View {
                     ProgressView().controlSize(.small).frame(maxWidth: .infinity)
                 }
             }
-            .frame(maxWidth: Theme.contentWidth, alignment: .leading)
+            .frame(maxWidth: Theme.contentWidth + GutterRow<EmptyView>.width, alignment: .leading)
             .padding(.horizontal, 28)
             .padding(.top, 28)
             .padding(.bottom, 14)
@@ -350,6 +397,20 @@ private struct TranscriptView: View {
             geometry.visibleRect.maxY >= geometry.contentSize.height - 40
         } action: { _, atBottom in
             isAtBottom = atBottom
+        }
+        .onScrollGeometryChange(for: Bool.self) { geometry in
+            geometry.visibleRect.minY < Self.nearTop
+                || geometry.contentSize.height <= geometry.containerSize.height + Self.nearTop
+        } action: { _, near in
+            wantsOlder = near
+        }
+
+        // A page that lands changes the first block, which restarts this and asks
+        // for the next while the reader is still near the top, so the history
+        // arrives a turn at a time as far as the reader goes and no further.
+        .task(id: "\(wantsOlder)|\(controller.hasOlder)|\(controller.blocks.first?.id ?? "")") {
+            guard wantsOlder, query.isEmpty, controller.hasOlder else { return }
+            controller.loadOlder()
         }
         .onScrollPhaseChange { _, phase, context in
             guard phase == .idle else { return }
@@ -497,13 +558,82 @@ private struct BlockView: View {
     let block: TranscriptBlock
     let controller: SessionController
 
+    private static func showsTime(_ row: TranscriptRow) -> Bool {
+        switch row.kind {
+        case .user, .assistant, .failure, .agentReport, .peer, .sibling, .advisor, .decision: return true
+        case .thinking, .tool, .spawned, .memory, .notice: return false
+        }
+    }
+
     var body: some View {
         switch block {
         case .row(let row):
-            RowView(row: row)
+            // The gutter says when the daemon recorded the row. The rows a reader
+            // scans by time are the people's messages and the replies; a notice,
+            // a step or a memory line would only add noise to the column.
+            GutterRow(at: Self.showsTime(row) ? row.at : nil) {
+                RowView(row: row)
+            }
         case .fold(let fold):
-            FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries)
+            GutterRow(at: nil) {
+                FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries)
+            }
         }
+    }
+}
+
+/// A message a person wrote. A long one is shown as a preview with the rest one
+/// press away, and opened in a box that scrolls.
+///
+/// One `Text` taller than the renderer's largest layer draws as nothing, and a
+/// large paste is enough to make one: the page went blank around it and came
+/// back only when a pane was opened or closed. Bounding what is laid out keeps
+/// the row drawable however much was pasted. The copy button beside the message
+/// still copies all of it.
+private struct UserText: View {
+    let text: String
+    @State private var isOpen = false
+
+    private static let previewLines = 24
+    private static let previewCharacters = 3_000
+    private static let openCharacters = 60_000
+
+    /// The first lines of the message, and whether any of it was left out.
+    private var preview: (text: String, isCut: Bool) {
+        let head = text.prefix(Self.previewCharacters)
+        let lines = head.split(separator: "\n", omittingEmptySubsequences: false)
+        let kept = lines.prefix(Self.previewLines).joined(separator: "\n")
+        return (kept, kept.count < text.count)
+    }
+
+    var body: some View {
+        let shown = preview
+        VStack(alignment: .trailing, spacing: 6) {
+            if isOpen, shown.isCut {
+                ScrollView {
+                    Text(String(text.prefix(Self.openCharacters)))
+                        .font(Theme.body).lineSpacing(3)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 420)
+            } else {
+                Text(shown.text)
+                    .font(Theme.body).lineSpacing(3)
+                    .textSelection(.enabled)
+            }
+            if shown.isCut {
+                Button(isOpen ? "Show less" : "Show all \(text.count.formatted()) characters") { isOpen.toggle() }
+                    .buttonStyle(.link)
+                    .font(Theme.caption)
+                if isOpen, text.count > Self.openCharacters {
+                    Quiet("Showing the first \(Self.openCharacters.formatted()) characters. Copy has all of it.")
+                }
+            }
+        }
+        .padding(.horizontal, 13)
+        .padding(.vertical, 9)
+        .background(Theme.tintStrong, in: .rect(cornerRadius: Theme.radius))
     }
 }
 
@@ -520,13 +650,7 @@ struct RowView: View {
                 CopyButton(text: text, label: "Copy message")
                     .opacity(isHovering ? 1 : 0)
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(text)
-                        .font(Theme.body)
-                        .lineSpacing(3)
-                        .textSelection(.enabled)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 9)
-                        .background(Theme.tintStrong, in: .rect(cornerRadius: Theme.radius))
+                    UserText(text: text)
                     if row.images > 0 {
                         Label("\(row.images) image\(row.images == 1 ? "" : "s")", systemImage: "photo")
                             .font(Theme.caption)
@@ -582,7 +706,7 @@ struct RowView: View {
         case .failure(let text):
             Label {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(text).textSelection(.enabled)
+                    Text(OutputBlock.cut(text)).textSelection(.enabled)
                     if row.repeats > 1 {
                         // The same failure again and again is one line that counts them.
                         Text("×\(row.repeats)")
@@ -613,6 +737,7 @@ struct RowView: View {
 /// glass cannot sample other glass and nearby pieces must be drawn together.
 private struct ComposerStack: View {
     let controller: SessionController
+    let rail: RailModel
 
     var body: some View {
         GlassEffectContainer(spacing: 10) {
@@ -636,7 +761,7 @@ private struct ComposerStack: View {
                 // The card is flat, as it is everywhere, on one plain piece of glass
                 // that keeps it legible over the transcript scrolling beneath it.
                 ForEach(controller.escalations) { escalation in
-                    ApprovalCard(record: escalation, controller: controller)
+                    ApprovalCard(record: escalation, controller: controller, evidence: rail.evidence[escalation.id])
                         .glassEffect(.regular, in: .rect(cornerRadius: Theme.radiusFloating))
                 }
                 if !controller.remoteChildren.isEmpty {
@@ -684,14 +809,26 @@ struct ApprovalCard: View {
     @State private var cardWidth: CGFloat = 1000
     let record: Escalation
     let controller: SessionController
+    /// What `approval.read` lent for this record, or nil when it was not read or
+    /// the daemon is older. Every line it adds is left out when it is absent.
+    var evidence: ApprovalEvidenceItem?
     @State private var isArmed = false
+
+    /// The headline: the tool-named title the evidence composes when the call
+    /// wants a write or network grant, and otherwise the card's own sentence.
+    private var headline: String {
+        evidence.flatMap(ApprovalWords.title)
+            ?? record.sentence(asker: StrandName.display(record.strand.isEmpty ? "A strand" : record.strand))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
-            // Who is asking and what for, in a sentence, before the authority.
-            Text(record.sentence(asker: StrandName.display(record.strand.isEmpty ? "A strand" : record.strand)))
+            // Who is asking and what for, before the authority. The headline can
+            // carry the model's command, so it is drawn as text and never as markup.
+            Text(verbatim: headline)
                 .font(.system(size: 13))
-                .accessibilityLabel(record.sentence(asker: StrandName.display(record.strand.isEmpty ? "A strand" : record.strand)))
+                .accessibilityLabel(headline)
+            evidenceLines
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "hand.raised.fill")
                     .font(.system(size: 12))
@@ -770,6 +907,30 @@ struct ApprovalCard: View {
         .padding(13)
         .background(Theme.attention.opacity(0.09), in: .rect(cornerRadius: Theme.radiusFloating))
         .overlay(RoundedRectangle(cornerRadius: Theme.radiusFloating).strokeBorder(Theme.attention.opacity(0.4), lineWidth: 1))
+    }
+
+    /// The words `approval.read` adds: how long the card has waited, the network the
+    /// call would have and the policy the session runs under now. The wait is aged
+    /// from the daemon's raise time and from nothing else, once a minute.
+    @ViewBuilder
+    private var evidenceLines: some View {
+        if let evidence {
+            let lines = [ApprovalWords.networkLine(evidence), ApprovalWords.policyLine(evidence)].compactMap { $0 }
+            if evidence.raisedAt != nil || !lines.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    if evidence.raisedAt != nil {
+                        TimelineView(.periodic(from: .now, by: 30)) { context in
+                            Text(ApprovalWords.waitingLine(
+                                raisedAt: evidence.raisedAt, now: Int(context.date.timeIntervalSince1970 * 1000)
+                            ) ?? "")
+                        }
+                    }
+                    ForEach(lines, id: \.self) { Text($0).font(Theme.meta) }
+                }
+                .font(Theme.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var sampleNote: some View {
@@ -919,6 +1080,8 @@ private struct SessionInspector: View {
     let record: SessionRecord
     let controller: SessionController
     let placement: Placement?
+    let rail: RailModel
+    let control: ControlClient?
 
     /// Four tabs. The strand's notes and its evolution candidates are sections
     /// of the Session tab, which already held the session's other boards.
@@ -975,6 +1138,19 @@ private struct SessionInspector: View {
                 }
                 .padding(14)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // What this session has lifted sits under the tabs, as it does on the
+            // web, and is drawn only when something was lifted.
+            let rows = LiftRule.rows(approvals: controller.escalations, raised: rail.raised, feed: rail.feed)
+            if !rows.isEmpty {
+                Divider()
+                ScrollView {
+                    LiftedRail(rows: rows, rail: rail, controller: controller, control: control)
+                        .padding(14)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 280)
             }
         }
     }
@@ -1054,54 +1230,6 @@ private struct ChangesPane: View {
         .task(id: settledTools) {
             try? await Task.sleep(for: .milliseconds(300))
             controller.requestDiff()
-        }
-    }
-}
-
-private struct FileChange: View {
-    let entry: JSONValue
-    @State private var isOpen = true
-
-    /// The status as one of a few fixed words, from the two porcelain letters.
-    private var statusWord: String {
-        switch (entry["index_status"]?.string ?? "", entry["worktree_status"]?.string ?? "") {
-        case ("?", _): return "new"
-        case (_, "D"), ("D", _): return "deleted"
-        case ("A", _): return "added"
-        default: return "modified"
-        }
-    }
-
-    var body: some View {
-        let path = entry["path"]?.string ?? ""
-        let summary = Diff.parse(entry["patch"]?.string ?? "")
-        VStack(alignment: .leading, spacing: 6) {
-            Button {
-                withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
-                    Text(path).font(.system(size: 12, weight: .medium).monospaced()).lineLimit(1).truncationMode(.head)
-                    Text(statusWord).font(Theme.caption).foregroundStyle(.tertiary)
-                    Spacer(minLength: 6)
-                    if summary.added > 0 {
-                        Text("+\(summary.added)").font(Theme.meta).foregroundStyle(Theme.addedText)
-                    }
-                    if summary.removed > 0 {
-                        Text("−\(summary.removed)").font(Theme.meta).foregroundStyle(Theme.removedText)
-                    }
-                }
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("\(path), \(summary.added) added, \(summary.removed) removed, \(statusWord)")
-
-            if isOpen {
-                DiffView(summary: summary, language: Syntax.language(forPath: path))
-            }
         }
     }
 }

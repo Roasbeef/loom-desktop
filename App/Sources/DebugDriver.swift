@@ -44,6 +44,18 @@ enum DebugDriver {
     static func start(model: AppModel) {
         guard let directory = ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] else { return }
         let commands = URL(fileURLWithPath: directory).appendingPathComponent("commands")
+        // SwiftUI fills its accessibility tree only after the app has been active
+        // once. A copy launched in the background stays hollow (a handful of
+        // unnamed nodes), so every scenario that reads text fails, and that
+        // depends on what else the machine was doing at launch. Activating for a
+        // moment and handing focus back makes the tree the same everywhere, and it
+        // stays filled after the app goes inactive.
+        let previous = NSWorkspace.shared.frontmostApplication
+        NSApp.activate(ignoringOtherApps: true)
+        Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            if let previous, previous != NSRunningApplication.current { previous.activate() }
+        }
         Task {
             while true {
                 try? await Task.sleep(for: .milliseconds(100))
@@ -239,6 +251,10 @@ enum DebugDriver {
             model.destination = .session(parts[1])
         case "strand" where parts.count > 1:
             model.currentSession?.focusedStrand = parts[1]
+        case "inboxpick" where parts.count > 1:
+            // Opens the inbox thread whose row identity is given, as a click on the row would.
+            model.debugInboxPick = nil
+            model.debugInboxPick = parts[1]
         case "lanedelay" where parts.count > 1:
             // Holds each send before it reaches the lane, so a test can see the
             // pending line that a quick daemon answer would remove at once.
@@ -594,8 +610,38 @@ enum Snapshot {
             ]
         }
         body["sidebar"] = SidebarSnapshot.encode(model)
+        body["inbox"] = InboxSnapshot.encode(model)
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+/// The inbox's groups, rows and folders as the rule decides them, which the
+/// accessibility tree does not list. The view draws the same values.
+enum InboxSnapshot {
+    @MainActor
+    static func encode(_ model: AppModel) -> [String: Any] {
+        let threads = model.inboxThreads
+        let rows = InboxRule.rows(
+            threads: threads, feed: model.attentionRows, raised: model.approvalRaised, reviewing: model.reviewing,
+            now: Int(Date().timeIntervalSince1970 * 1000)
+        )
+        let sections = InboxRule.sections(rows)
+        return [
+            "groups": sections.map { section -> [String: Any] in
+                [
+                    "title": section.title, "count": section.count,
+                    "rows": section.rows.map { ["id": $0.id, "kind": $0.kind.chip, "name": $0.name, "head": $0.head, "age": $0.age?.words ?? ""] },
+                ]
+            },
+            "folders": InboxRule.folderEntries(sections).map { ["title": $0.folder.title, "count": $0.count ?? -1] as [String: Any] },
+            "headline": InboxRule.headline(InboxRule.tally(threads: threads, feed: model.attentionRows)),
+            "note": InboxRule.countNote(running: threads.filter { $0.activity != nil }.count),
+            "drawn": model.debugInboxDrawn,
+            "open": model.debugInboxOpen,
+            "paneWidth": model.debugInboxPaneWidth,
+            "folderControl": model.debugInboxRail,
+        ]
     }
 }
 
