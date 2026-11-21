@@ -21,9 +21,12 @@ import LoomKit
 // ## Where this departs from the web
 //
 // - No Projects folder and no ticket rows: this app has no project boards.
-// - No saved-session counts. The web takes them from the catalogue's summary
-//   (loom protocol-change/122), which no control command carries, so the notes
-//   here say saved sessions are not checked.
+// - Saved sessions are counted, not listed. The web counts each from the catalogue's
+//   summary (loom protocol-change/122) and draws a row for each one that holds
+//   something open, with a Resume button. Here `sessions.saved_attention` feeds the
+//   counts, the headline and the rail note (`InboxSaved`), and a saved session gets
+//   no row of its own. Against a daemon that does not know the command, or before
+//   the first read, the notes keep saying saved sessions are not checked.
 // - A "To review" group exists for the sessions the caller names in `reviewing`.
 //   The web decides that by reading each idle session's worktree, and `ReviewScan`
 //   does the same here, so an idle session with something to say sits in
@@ -239,8 +242,22 @@ public struct InboxTally: Sendable, Equatable {
     public var finds = 0
     /// Running sessions the counts looked at.
     public var running = 0
-    /// Running sessions no feed row was read for.
+    /// Running sessions no feed row was read for, and saved sessions the catalogue
+    /// has no summary for. The saved ones count only once at least one saved session
+    /// was read, as the web counts them, since until then the line says saved
+    /// sessions are not checked at all.
     public var unread = 0
+    /// Saved sessions counted from the catalogue's summary.
+    public var fromCatalogue = 0
+}
+
+/// What the inbox knows of the sessions that are not running.
+public enum InboxSaved: Sendable, Equatable {
+    /// No read answered, or the daemon does not know `sessions.saved_attention`.
+    case unchecked
+    /// The saved sessions the list holds, and the rows the catalogue read for them. A
+    /// listed session with no row was not read, which is not the same as zero.
+    case read(listed: [String], rows: [String: SavedAttention])
 }
 
 public enum InboxRule {
@@ -537,7 +554,13 @@ public enum InboxRule {
     /// row had room to list, and one approval when its activity says one is
     /// pending. A running session with no feed row counts its approval and is
     /// marked not checked. Finds are counted apart.
-    public static func tally(threads: [InboxThread], feed: [String: AttentionRow]) -> InboxTally {
+    ///
+    /// A saved session counts its summary's pending approvals and open asks as
+    /// needing the owner and its open finds as finds, as the web does. A saved
+    /// session the catalogue has no summary for is not checked. When no saved session
+    /// was read at all, none of them is counted either way, and the headline keeps
+    /// saying saved sessions are not checked.
+    public static func tally(threads: [InboxThread], feed: [String: AttentionRow], saved: InboxSaved = .unchecked) -> InboxTally {
         var tally = InboxTally()
         for thread in threads {
             let approval = kind(of: thread) == .approval ? 1 : 0
@@ -550,18 +573,32 @@ public enum InboxRule {
                 tally.unread += 1
             }
         }
+        guard case .read(let listed, let rows) = saved else { return tally }
+        let found = listed.compactMap { rows[$0] }
+        guard !found.isEmpty else { return tally }
+        for row in found {
+            tally.needing += row.pendingApprovals + row.openAsks
+            tally.finds += row.openFinds
+        }
+        tally.fromCatalogue = found.count
+        tally.unread += listed.count - found.count
         return tally
+    }
+
+    /// The first words of the headline: how many things need the owner.
+    public static func lead(_ tally: InboxTally) -> String {
+        switch tally.needing {
+        case 0: return "Nothing needs you"
+        case 1: return "1 needs you"
+        case let many: return "\(many) need you"
+        }
     }
 
     /// The line over the list: how many things need the owner, how many finds are
     /// open, and what the count read, so it never claims more than it looked at.
+    /// Once saved sessions were read it says how many came from the catalogue, in
+    /// the web's words; before that it says saved sessions are not checked.
     public static func headline(_ tally: InboxTally) -> String {
-        let first: String
-        switch tally.needing {
-        case 0: first = "Nothing needs you"
-        case 1: first = "1 needs you"
-        case let many: first = "\(many) need you"
-        }
         let finds: String
         switch tally.finds {
         case 0: finds = ""
@@ -570,13 +607,20 @@ public enum InboxRule {
         }
         let sessions = tally.running == 1 ? "1 running session" : "\(tally.running) running sessions"
         let unread = tally.unread == 0 ? "" : ", \(tally.unread) not checked"
-        return "\(first)\(finds) \u{00B7} \(sessions) read live\(unread); saved sessions not checked"
+        if tally.fromCatalogue > 0 {
+            return "\(lead(tally))\(finds) \u{00B7} \(sessions) read live, \(tally.fromCatalogue) saved from the catalogue\(unread)"
+        }
+        return "\(lead(tally))\(finds) \u{00B7} \(sessions) read live\(unread); saved sessions not checked"
     }
 
     /// The note under the rail's folders: how many running sessions the counts
-    /// read, and that the saved ones were not.
-    public static func countNote(running: Int) -> String {
+    /// read, and whether the saved ones were read too. `fromCatalogue` is the
+    /// tally's count of saved sessions taken from the catalogue.
+    public static func countNote(running: Int, fromCatalogue: Int = 0) -> String {
         let sessions = running == 1 ? "1 running session" : "\(running) running sessions"
+        if fromCatalogue > 0 {
+            return "Counts read \(sessions) live and each saved session from the catalogue's summary."
+        }
         return "Counts read \(sessions). Saved sessions are not checked."
     }
 }

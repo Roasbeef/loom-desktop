@@ -503,6 +503,80 @@ final class InboxRuleTests: XCTestCase {
         XCTAssertEqual(InboxRule.countNote(running: 1), "Counts read 1 running session. Saved sessions are not checked.")
     }
 
+    // MARK: Saved sessions
+
+    private func saved(_ id: String, approvals: Int = 0, asks: Int = 0, finds: Int = 0) -> SavedAttention {
+        SavedAttention(sessionID: id, pendingApprovals: approvals, openAsks: asks, openFinds: finds, updatedAt: 5)
+    }
+
+    /// Ports `attention_rule.tally`'s saved arm: a saved session counts its summary's
+    /// approvals and asks as needing the owner, its finds apart, and is counted as
+    /// taken from the catalogue.
+    func testASavedSessionCountsFromItsSummary() {
+        let tally = InboxRule.tally(
+            threads: [thread("a", "A", activity("idle"))], feed: ["a": feed("a", asks: [ask("ask-1", 1)])],
+            saved: .read(listed: ["s1", "s2"], rows: ["s1": saved("s1", approvals: 1, asks: 2, finds: 3), "s2": saved("s2")])
+        )
+        XCTAssertEqual(tally, InboxTally(needing: 4, finds: 3, running: 1, unread: 0, fromCatalogue: 2))
+    }
+
+    /// A listed saved session with no summary is not checked, as the web's `SavedUnread`.
+    func testASavedSessionWithNoSummaryIsNotChecked() {
+        let tally = InboxRule.tally(
+            threads: [], feed: [:], saved: .read(listed: ["s1", "s2", "s3"], rows: ["s2": saved("s2", asks: 1)])
+        )
+        XCTAssertEqual(tally, InboxTally(needing: 1, finds: 0, running: 0, unread: 2, fromCatalogue: 1))
+
+        // A row for a session the list no longer holds is not counted.
+        XCTAssertEqual(InboxRule.tally(threads: [], feed: [:], saved: .read(listed: ["s1"], rows: ["gone": saved("gone", asks: 9), "s1": saved("s1")])).needing, 0)
+    }
+
+    /// The web words the saved counts only when a summary was found
+    /// (`home.gleam`'s `SavedFromCatalogue` choice). With none found, or no read, the
+    /// tally is what it was before the command and the line says saved sessions are
+    /// not checked.
+    func testNoSummaryFoundLeavesTheTallyAsItWas() {
+        let threads = [thread("a", "A", activity("working"))]
+        let before = InboxRule.tally(threads: threads, feed: [:])
+        XCTAssertEqual(InboxRule.tally(threads: threads, feed: [:], saved: .unchecked), before)
+        XCTAssertEqual(InboxRule.tally(threads: threads, feed: [:], saved: .read(listed: ["s1"], rows: [:])), before)
+        XCTAssertEqual(InboxRule.tally(threads: threads, feed: [:], saved: .read(listed: [], rows: [:])), before)
+    }
+
+    /// Fixture: the example of `attention_rule.headline` in loom
+    /// packages/web_view/src/web_view/attention_rule.gleam, which has no
+    /// not-checked sessions, and the same line with some.
+    func testTheHeadlineSaysHowManySavedSessionsCameFromTheCatalogue() {
+        XCTAssertEqual(
+            InboxRule.headline(InboxTally(needing: 1, finds: 2, running: 3, unread: 0, fromCatalogue: 4)),
+            "1 needs you \u{00B7} 2 finds \u{00B7} 3 running sessions read live, 4 saved from the catalogue"
+        )
+        XCTAssertEqual(
+            InboxRule.headline(InboxTally(needing: 0, finds: 0, running: 1, unread: 2, fromCatalogue: 1)),
+            "Nothing needs you \u{00B7} 1 running session read live, 1 saved from the catalogue, 2 not checked"
+        )
+    }
+
+    /// Fixture: `inbox_rule.count_note`'s `SavedFromCatalogue` words in loom
+    /// packages/web_view/src/web_view/inbox_rule.gleam.
+    func testTheRailNoteSaysSavedSessionsWereReadFromTheCatalogue() {
+        XCTAssertEqual(
+            InboxRule.countNote(running: 6, fromCatalogue: 2),
+            "Counts read 6 running sessions live and each saved session from the catalogue's summary."
+        )
+        XCTAssertEqual(
+            InboxRule.countNote(running: 1, fromCatalogue: 1),
+            "Counts read 1 running session live and each saved session from the catalogue's summary."
+        )
+        XCTAssertEqual(InboxRule.countNote(running: 1, fromCatalogue: 0), "Counts read 1 running session. Saved sessions are not checked.")
+    }
+
+    func testTheLeadNamesWhatNeedsYou() {
+        XCTAssertEqual(InboxRule.lead(InboxTally()), "Nothing needs you")
+        XCTAssertEqual(InboxRule.lead(InboxTally(needing: 1)), "1 needs you")
+        XCTAssertEqual(InboxRule.lead(InboxTally(needing: 4)), "4 need you")
+    }
+
     // MARK: Text
 
     func testModelTextStaysTextOnTheRow() {
