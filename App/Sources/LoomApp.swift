@@ -47,7 +47,7 @@ struct LoomApp: App {
         MenuBarExtra {
             MenuBarContent().environment(model)
         } label: {
-            let waiting = model.attention.count
+            let waiting = model.board.needing
             if waiting == 0 {
                 Image(systemName: "circle.dotted")
             } else {
@@ -61,6 +61,7 @@ struct LoomApp: App {
 /// how a Mac app teaches its keyboard.
 private struct LoomCommands: Commands {
     let model: AppModel
+    @FocusedValue(\.armedApproval) private var approval
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -106,38 +107,47 @@ private struct LoomCommands: Commands {
             }
         }
         CommandMenu("Session") {
-            SessionMenuItems(model: model)
+            SessionMenuItems(model: model, approval: approval)
             Divider()
             SessionLifecycleMenuItems(model: model)
         }
     }
 }
 
-/// The Session menu's items. They stay enabled and check at the moment they run,
+/// The Session menu's items. Most stay enabled and check at the moment they run,
 /// because SwiftUI does not refresh a menu item's enabled state from observable
-/// model changes, and a stale disabled item would swallow the shortcut.
+/// model changes, and a stale disabled item would swallow the shortcut. The three
+/// that decide an approval are the exception: their state follows the focused
+/// window's armed approval card, which a focused scene value publishes.
 private struct SessionMenuItems: View {
     let model: AppModel
 
     private var session: SessionController? { model.currentSession }
 
+    /// The armed approval card in the focused window, if one is on screen. The
+    /// Commands value reads it, since a focused value is delivered to it and not
+    /// reliably to a view nested inside a menu.
+    let approval: ArmedApproval?
+
     var body: some View {
-        // These answer the first card on screen, which is the record the person
-        // is looking at, so the echo still states what was displayed.
-        Button("Allow Request") {
-            if let session, let record = session.escalations.first, record.canApprove { session.approve(record) }
+        // These decide the armed approval card in the focused window, and nothing
+        // else: a decision is made beside its evidence, so with no such card they are
+        // disabled. The titles name the tool the card asks for.
+        Button { approval?.controller.approve(approval!.record) } label: {
+            Text(verbatim: approval.map { "Allow \($0.toolName)" } ?? "Allow Request")
         }
         .keyboardShortcut("a", modifiers: [.command, .shift])
-        Button("Allow Request for This Session") {
-            if let session, session.role == "owner", let record = session.escalations.first, record.canRemember {
-                session.approve(record, remember: true)
-            }
+        .disabled(approval?.canAllow != true)
+        Button { approval?.controller.approve(approval!.record, remember: true) } label: {
+            Text(verbatim: approval.map { "Allow \($0.toolName) for This Session" } ?? "Allow Request for This Session")
         }
         .keyboardShortcut("a", modifiers: [.command, .shift, .option])
-        Button("Deny Request") {
-            if let session, let record = session.escalations.first { session.deny(record) }
+        .disabled(approval?.canRemember != true)
+        Button { approval?.controller.deny(approval!.record) } label: {
+            Text(verbatim: approval.map { "Deny \($0.toolName)" } ?? "Deny Request")
         }
         .keyboardShortcut("d", modifiers: [.command, .shift])
+        .disabled(approval == nil)
         Divider()
         Button("Stop Run") {
             if session?.isBusy == true { session?.abort() }
@@ -160,12 +170,15 @@ private struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        let items = model.attention
-        if items.isEmpty {
+        let rows = model.board.needsYou
+        if model.board.needing == 0 {
             Text("Nothing needs you")
         } else {
-            ForEach(items.prefix(8)) { item in
-                Button("\(item.agent): \(item.title)") { show(.inbox) }
+            ForEach(rows.prefix(8)) { row in
+                Button { show(row.subject) } label: { Text(verbatim: "\(row.name): \(model.summary(of: row))") }
+            }
+            if rows.isEmpty {
+                Button("\(model.board.needing) in saved sessions") { show(.inbox) }
             }
         }
         Divider()
@@ -176,6 +189,12 @@ private struct MenuBarContent: View {
         }
         Divider()
         Button("Quit Loom") { NSApplication.shared.terminate(nil) }
+    }
+
+    private func show(_ subject: InboxSubject) {
+        model.openInbox(subject)
+        openWindow(id: "main")
+        NSApplication.shared.activate()
     }
 
     private func show(_ destination: Destination) {
@@ -203,7 +222,7 @@ final class Announcer {
         Task {
             while true {
                 try? await Task.sleep(for: .seconds(1))
-                update(model.attention)
+                update(model)
                 model.recordFirstReplies()
             }
         }
@@ -217,10 +236,12 @@ final class Announcer {
         #endif
     }
 
-    private func update(_ items: [AttentionItem]) {
-        NSApp.dockTile.badgeLabel = items.isEmpty ? nil : "\(items.count)"
-        let current = Set(items.map(\.id))
-        let fresh = items.filter { !known.contains($0.id) }
+    private func update(_ model: AppModel) {
+        let board = model.board
+        NSApp.dockTile.badgeLabel = board.dockLabel
+        let rows = board.needsYou
+        let current = Set(rows.map(\.id))
+        let fresh = rows.filter { !known.contains($0.id) }
 
         // The first read is a backlog, not news.
         let isFirstRead = known.isEmpty && !hasRead
@@ -228,13 +249,13 @@ final class Announcer {
         known = current
         guard !isFirstRead, !NSApp.isActive, !isUnderTest,
               UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true else { return }
-        for item in fresh {
+        for row in fresh {
             let content = UNMutableNotificationContent()
-            content.title = item.agent
-            content.subtitle = item.kind.title
-            content.body = item.title
+            content.title = row.name
+            content.subtitle = row.kind.chip
+            content.body = model.summary(of: row)
             content.sound = .default
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: item.id, content: content, trigger: nil))
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: row.id, content: content, trigger: nil))
         }
     }
 

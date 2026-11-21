@@ -18,6 +18,11 @@ final class SidebarTests: XCTestCase {
         return SessionRecord(.object(fields))!
     }
 
+    /// A resident record, for tests in other suites that group sessions in the sidebar.
+    static func sidebarRecord(_ id: String) -> SessionRecord {
+        SidebarTests().record(id, state: ["state": "resident", "incarnation": "i"])
+    }
+
     private func activity(_ id: String, _ state: String) -> SessionActivity {
         SessionActivity(["session_id": .string(id), "state": .string(state)])!
     }

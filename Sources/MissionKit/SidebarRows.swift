@@ -87,13 +87,17 @@ public enum SidebarRows {
         activity: SessionActivity?,
         machine: String,
         gitPointer: String? = nil,
+        isNeeding: Bool = false,
         now: Date = Date()
     ) -> SidebarRow {
-        SidebarRow(
+        // A running session the inbox board lists under "Needs you" says so, whatever
+        // its activity read says: an ask or a stuck strand leaves the read idle.
+        let standing = isNeeding && record.state.isResident ? "needs you" : standing(of: record, activity: activity)
+        return SidebarRow(
             id: record.id,
             title: record.title,
             subtitle: record.subtitle.flatMap { $0 == record.title || $0.isEmpty ? nil : $0 },
-            standing: standing(of: record, activity: activity),
+            standing: standing,
             created: ago(record.createdAt, now: now),
             worktree: record.executor == nil && record.pool == nil
                 ? worktree(workspace: record.workspace, gitPointer: gitPointer) : nil,
@@ -104,7 +108,8 @@ public enum SidebarRows {
 
     /// Sections in the order a person reads them. Rows are newest first within a
     /// section, and a machine filter keeps only that machine's rows. Saved rows are
-    /// left to the caller, which folds them apart.
+    /// left to the caller, which folds them apart. `needing` names the sessions the
+    /// inbox board lists under "Needs you", which lead the status grouping.
     public static func sections(
         _ records: [SessionRecord],
         activity: [String: SessionActivity],
@@ -112,14 +117,18 @@ public enum SidebarRows {
         machine: (SessionRecord) -> String,
         machineFilter: String? = nil,
         gitPointer: (SessionRecord) -> String? = { _ in nil },
+        needing: Set<String> = [],
         now: Date = Date()
     ) -> [SidebarSection] {
         let rows: [(SessionRecord, SidebarRow)] = records
             .filter { machineFilter == nil || machine($0) == machineFilter }
             .sorted { ($0.createdAt, $0.id) > ($1.createdAt, $1.id) }
-            .map { ($0, row($0, activity: activity[$0.id], machine: machine($0), gitPointer: gitPointer($0), now: now)) }
+            .map {
+                ($0, row($0, activity: activity[$0.id], machine: machine($0), gitPointer: gitPointer($0), isNeeding: needing.contains($0.id), now: now))
+            }
         func liveness(_ record: SessionRecord) -> AgentCard.Liveness {
-            Mission.liveness(session: record, activity: activity[record.id])
+            let state = Mission.liveness(session: record, activity: activity[record.id])
+            return needing.contains(record.id) && state != .off ? .needsYou : state
         }
         switch grouping {
         case .status:

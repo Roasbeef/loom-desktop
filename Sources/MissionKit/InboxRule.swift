@@ -13,10 +13,22 @@ import LoomKit
 //
 // ## Flow
 //
-// `InboxRule.rows` turns threads and feed rows into rows; `sections` puts them in
-// groups and orders each; `folderEntries`, `visible` and `shownFolder` decide what
-// the rail offers and what the list draws; `selection` names the open thread;
-// `headline` and `countNote` say what the counts read.
+// `InboxRule.board` is the one entry point the app reads: it turns threads and feed
+// rows into rows with `rows`, puts them in groups with `sections`, counts them with
+// `tally`, and keeps the three together as an `InboxBoard`. Every surface that
+// shows a number or a list of what needs the owner (the Inbox's badge, the window's
+// subtitle, the Dock badge, the menu bar, the notifier, "Next Session Needing You",
+// Mission Control's Needs You block, the sidebar's Needs You group and the inbox
+// itself) reads that one board, so two surfaces cannot disagree. `folderEntries`,
+// `visible` and `shownFolder` decide what the rail offers and what the list draws;
+// `selection` names the open thread; `headline` and `countNote` say what the counts
+// read.
+//
+// "Needs you" counts approvals, asks, stuck strands and failed runs, which are the
+// rows the web's "Needs you" band draws. An unhealthy machine is not one of them:
+// the web classifier has no such kind, so this app does not count it. The inbox
+// still lists a sick machine in a "Machines" section of its own, which the board
+// does not carry and no count includes.
 //
 // ## Where this departs from the web
 //
@@ -31,6 +43,11 @@ import LoomKit
 //   The web decides that by reading each idle session's worktree, and `ReviewScan`
 //   does the same here, so an idle session with something to say sits in
 //   "Waiting" only once a read has found its tree clean.
+// - A quiet session that has any feed row (an ask, a stuck strand or a find) is not
+//   folded. The web folds it as well as listing the item, so the same session sits
+//   under "Needs you" and again under "Folded", whose gloss says no one is waiting.
+//   Here its feed rows stand alone and its quiet row is dropped. This departs from
+//   the web until the same fix lands in Loom.
 
 /// What a thread is about, which the chip on its row says.
 public enum InboxKind: Sendable, Equatable {
@@ -236,7 +253,7 @@ public struct InboxSection: Sendable, Equatable {
 
 /// What the headline counts.
 public struct InboxTally: Sendable, Equatable {
-    /// Approvals, asks and stuck strands that need the owner.
+    /// Approvals, asks, stuck strands and failed runs that need the owner.
     public var needing = 0
     /// Open finds.
     public var finds = 0
@@ -258,6 +275,57 @@ public enum InboxSaved: Sendable, Equatable {
     /// The saved sessions the list holds, and the rows the catalogue read for them. A
     /// listed session with no row was not read, which is not the same as zero.
     case read(listed: [String], rows: [String: SavedAttention])
+}
+
+/// Everything the app shows about what needs the owner, decided once. The rows, the
+/// groups they sit in and the counts come from one call to `InboxRule.board`, so
+/// the badges, the subtitle, the Dock tile, the menu bar, the notifier, the jump to
+/// the next session, Mission Control, the sidebar and the inbox read the same
+/// values and cannot differ.
+public struct InboxBoard: Sendable, Equatable {
+    /// The groups that hold any row, in the order the inbox draws them.
+    public let sections: [InboxSection]
+    /// The counts the headline reads, which include the saved sessions the catalogue
+    /// summarised.
+    public let tally: InboxTally
+    /// How many threads the daemon gave a usable report for.
+    public let reported: Int
+
+    /// The board of nothing read yet.
+    public static let empty = InboxBoard(sections: [], tally: InboxTally(), reported: 0)
+
+    /// Every row, in the order the groups are drawn.
+    public var rows: [InboxRow] { sections.flatMap(\.rows) }
+
+    /// How many things wait on the owner: approvals, asks, stuck strands and failed
+    /// runs, on running sessions and in the saved sessions' summaries.
+    public var needing: Int { tally.needing }
+
+    /// The rows of the "Needs you" group, in the order it is drawn. A saved session
+    /// is counted in `needing` and has no row, so this can be shorter than the count.
+    public var needsYou: [InboxRow] { sections.first { $0.group == .needsYou }?.rows ?? [] }
+
+    /// The sessions with a row under "Needs you", in the group's order and each once.
+    /// The sidebar's Needs You group and "Next Session Needing You" both read it.
+    public var needingSessions: [String] {
+        var seen: Set<String> = []
+        return needsYou.map(\.sessionID).filter { seen.insert($0).inserted }
+    }
+
+    /// The window subtitle: how many things wait, or nothing when none do.
+    public var subtitle: String { needing == 0 ? "" : "\(needing) waiting" }
+
+    /// The words on the Dock tile, or nil when nothing waits.
+    public var dockLabel: String? { needing == 0 ? nil : "\(needing)" }
+
+    /// The same board with every row's age counted to `now`. The counts and groups
+    /// do not depend on the clock, so only the ages move.
+    public func aged(now: Int) -> InboxBoard {
+        InboxBoard(
+            sections: sections.map { InboxSection(group: $0.group, rows: $0.rows.map { $0.aged(now: now) }) },
+            tally: tally, reported: reported
+        )
+    }
 }
 
 public enum InboxRule {
@@ -415,7 +483,10 @@ public enum InboxRule {
     ) -> [InboxRow] {
         var rows: [InboxRow] = []
         for thread in threads {
-            if let kind = kind(of: thread, reviewing: reviewing), let activity = thread.activity {
+            // A quiet session with a feed row waits on someone or has said something
+            // worth a line, so it is not folded under a gloss that says no one waits.
+            let hasFeedRow = feed[thread.id].map { !$0.asks.items.isEmpty || !$0.stuck.items.isEmpty || !$0.finds.items.isEmpty } ?? false
+            if let kind = kind(of: thread, reviewing: reviewing), let activity = thread.activity, !(kind == .quiet && hasFeedRow) {
                 rows.append(InboxRow(
                     subject: .session(thread.id), kind: kind, group: group(of: kind),
                     name: shownName(thread), sortName: thread.name, head: threadHead(thread),
@@ -458,6 +529,30 @@ public enum InboxRule {
         case .working: return activity.turnStartedAt
         case .failed, .quiet, .ask, .stuck, .find: return nil
         }
+    }
+
+    // MARK: The board
+
+    /// The inbox as one value: the rows the inputs make, grouped and ordered, and the
+    /// counts over the same inputs. This is the only function the app calls to learn
+    /// what needs the owner. `rows`, `sections` and `tally` stay public for the tests
+    /// that state each decision on its own.
+    ///
+    /// - `saved` is what the catalogue said of the sessions that are not running.
+    public static func board(
+        threads: [InboxThread],
+        feed: [String: AttentionRow],
+        raised: [String: Int] = [:],
+        reviewing: Set<String> = [],
+        saved: InboxSaved = .unchecked,
+        now: Int,
+        clock: (Int) -> String = ClockTime.local
+    ) -> InboxBoard {
+        InboxBoard(
+            sections: sections(rows(threads: threads, feed: feed, raised: raised, reviewing: reviewing, now: now, clock: clock)),
+            tally: tally(threads: threads, feed: feed, saved: saved),
+            reported: threads.filter { $0.activity != nil }.count
+        )
     }
 
     // MARK: Groups
@@ -529,12 +624,6 @@ public enum InboxRule {
         return sections.filter { $0.group == group }
     }
 
-    /// How many things wait on the owner, as the Inbox's badge counts them: the
-    /// "Needs you" folder's count.
-    public static func needingCount(_ sections: [InboxSection]) -> Int {
-        sections.first { $0.group == .needsYou }?.count ?? 0
-    }
-
     // MARK: Selection
 
     /// The row the reading pane shows: the chosen one when the visible sections
@@ -551,8 +640,8 @@ public enum InboxRule {
 
     /// The counts the headline reads. A running session with a feed row counts its
     /// asks and stuck strands as the row reports them, which may be more than the
-    /// row had room to list, and one approval when its activity says one is
-    /// pending. A running session with no feed row counts its approval and is
+    /// row had room to list, and one approval, or one failed run, when its activity
+    /// says so. A running session with no feed row counts its approval and is
     /// marked not checked. Finds are counted apart.
     ///
     /// A saved session counts its summary's pending approvals and open asks as
@@ -563,7 +652,12 @@ public enum InboxRule {
     public static func tally(threads: [InboxThread], feed: [String: AttentionRow], saved: InboxSaved = .unchecked) -> InboxTally {
         var tally = InboxTally()
         for thread in threads {
-            let approval = kind(of: thread) == .approval ? 1 : 0
+            // An approval and a failed run each count one: both are a session
+            // reported as needing the owner, and the feed adds its own rows.
+            let approval = switch kind(of: thread) {
+            case .approval?, .failed?: 1
+            default: 0
+            }
             tally.running += 1
             if let row = feed[thread.id] {
                 tally.needing += approval + row.asks.count + row.stuck.count
@@ -626,6 +720,11 @@ public enum InboxRule {
 }
 
 extension InboxRow {
+    /// The same row with its age counted to `now`.
+    fileprivate func aged(now: Int) -> InboxRow {
+        InboxRow(subject: subject, kind: kind, group: group, name: name, sortName: sortName, head: head, since: since, now: now)
+    }
+
     /// Whether the row is an item of the attention feed rather than a session's
     /// own thread.
     fileprivate var isFeedItem: Bool {

@@ -294,6 +294,24 @@ class App:
         nodes = [n for n in self.tree() if n["name"] == label]
         return bool(nodes) and all(n["enabled"] for n in nodes)
 
+    def take_focus(self):
+        """Makes the app active with its window key, which a focused value needs.
+
+        The Session menu's Allow and Deny follow the armed card in the focused window, and
+        SwiftUI delivers a focused value only to an active app's key window. This takes
+        focus briefly, so a scenario that calls it is marked `foreground`.
+        """
+        subprocess.run(["open", "-b", f"com.roasbeef.loom-desktop.uitest{SLOT}"], check=True)
+        wait_for(lambda: self.stats()["active"] == "true" and self.stats()["key"] == "true", 8, "the app to be active with a key window")
+
+        # A scene that was deactivated before tells SwiftUI its focus only after its window
+        # is ordered front again.
+        self.cmd("activate")
+
+    def menu_state(self, title):
+        """`enabled`, `disabled` or `not-found` for the menu item with this title."""
+        return self.cmd(f"menuenabled {title}")
+
     def menu(self, title):
         # A title that matches nothing must fail here, or the scenario goes on as if it had acted.
         if self.cmd(f"menu {title}") != "ok":

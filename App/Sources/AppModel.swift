@@ -553,10 +553,7 @@ final class AppModel {
 
     /// Moves to the next thing waiting, the one-key route through a busy fleet.
     func goToNextNeedingYou() {
-        let targets = attention.compactMap { item -> String? in
-            if case .session(let id, _) = item.source { return id }
-            return nil
-        }
+        let targets = board.needingSessions
         guard !targets.isEmpty else { return }
         if case .session(let current) = destination, let index = targets.firstIndex(of: current) {
             destination = .session(targets[(index + 1) % targets.count])
@@ -571,6 +568,52 @@ final class AppModel {
         daemons.count > 1 || daemons.contains { $0.deployment?.isDistributed == true }
     }
 
+    /// What needs the owner, decided once by `InboxRule.board` and read by every
+    /// surface: the Inbox's badge, the window subtitle, the Dock tile, the menu bar,
+    /// the notifier, the jump to the next session, Mission Control, the sidebar and
+    /// the inbox. It is recomputed when anything it reads changes, and never by a
+    /// view, so two surfaces cannot show different counts. Row ages are counted to
+    /// the time of the last change; a view that draws them calls `aged(now:)`.
+    private(set) var board = InboxBoard.empty
+
+    /// Computes the board and arms the next recomputation. Observation tracking
+    /// reports a change before it lands, so the recomputation waits one main-actor
+    /// turn and reads the new values.
+    func trackBoard() {
+        let next = withObservationTracking {
+            InboxRule.board(
+                threads: inboxThreads, feed: attentionRows, raised: approvalRaised, reviewing: reviewing, saved: inboxSaved,
+                now: Int(Date().timeIntervalSince1970 * 1000)
+            )
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.trackBoard() }
+        }
+        if board != next { board = next }
+    }
+
+    /// The thread the inbox should open next, set by a row elsewhere and cleared by
+    /// the inbox once it has opened it.
+    var inboxRequest: InboxSubject?
+
+    /// Opens a thread in the inbox. A decision is made only beside its evidence,
+    /// which the inbox's pane carries, so a row elsewhere goes there to decide.
+    func openInbox(_ subject: InboxSubject) {
+        inboxRequest = subject
+        destination = .inbox
+    }
+
+    /// The one line a surface other than the inbox says about a row: an approval's
+    /// requested authority when its card has been read, else the row's own line.
+    func summary(of row: InboxRow) -> String {
+        if row.kind == .approval, let line = controller(for: row.sessionID)?.escalations.first?.authorityLines.first {
+            return line
+        }
+        return row.head
+    }
+
+    /// The approvals, failed runs and unhealthy machines `Mission.attention` holds,
+    /// which the inbox's pane reads for a session's live approval card and for the
+    /// machines section. It is not a count: the board is.
     var attention: [AttentionItem] {
         Mission.attention(
             sessions: sessions,
@@ -644,11 +687,6 @@ final class AppModel {
             rows.merge(read) { _, new in new }
         }
         return anyRead ? .read(listed: listed, rows: rows) : .unchecked
-    }
-
-    /// The headline's tally, the one the inbox and its snapshot both read.
-    func inboxTally(threads: [InboxThread]) -> InboxTally {
-        InboxRule.tally(threads: threads, feed: attentionRows, saved: inboxSaved)
     }
 
     var approvalRaised: [String: Int] {
@@ -776,6 +814,7 @@ final class AppModel {
             }
         }
         daemons.forEach { $0.start() }
+        trackBoard()
     }
 
     // MARK: Other machines

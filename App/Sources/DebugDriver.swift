@@ -41,6 +41,18 @@ enum DebugDriver {
     private static var hitch: HitchMeter?
     private static var reply = "ok"
 
+    /// Gives every menu the update it gets when a person opens it. SwiftUI rebuilds a
+    /// menu's items, titles and enabled states then and not before, so a read of the
+    /// bar without this one shows what the menu said when it was last opened.
+    private static func refreshMenus() {
+        func walk(_ menu: NSMenu) {
+            menu.delegate?.menuNeedsUpdate?(menu)
+            menu.update()
+            for item in menu.items { if let sub = item.submenu { walk(sub) } }
+        }
+        if let main = NSApp.mainMenu { walk(main) }
+    }
+
     static func start(model: AppModel) {
         guard let directory = ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] else { return }
         let commands = URL(fileURLWithPath: directory).appendingPathComponent("commands")
@@ -115,7 +127,7 @@ enum DebugDriver {
             }
         case "state":
             let session = NSApp.keyWindow?.firstResponder.map { "\(type(of: $0))" } ?? "none"
-            let text = "destination=\(String(describing: model.destination)) responder=\(session) modal=\(NSApp.modalWindow != nil) sheets=\(NSApp.keyWindow?.sheets.count ?? -1) inspector=\(model.showsInspector) palette=\(model.isPaletteOpen) dispatching=\(model.isDispatching) adding=\(model.isAddingDaemon) current=\(model.currentSession != nil) escalations=\(model.currentSession?.escalations.count ?? -1) canApprove=\(model.currentSession?.escalations.first?.canApprove ?? false) grants=\(model.currentSession?.escalations.first?.grants.count ?? -1) live=\(model.currentSession?.isLive ?? false)\n"
+            let text = "destination=\(String(describing: model.destination)) responder=\(session) modal=\(NSApp.modalWindow != nil) sheets=\(NSApp.keyWindow?.sheets.count ?? -1) inspector=\(model.showsInspector) palette=\(model.isPaletteOpen) dispatching=\(model.isDispatching) adding=\(model.isAddingDaemon) current=\(model.currentSession != nil) escalations=\(model.currentSession?.escalations.count ?? -1) canApprove=\(model.currentSession?.escalations.first?.canApprove ?? false) grants=\(model.currentSession?.escalations.first?.grants.count ?? -1) live=\(model.currentSession?.isLive ?? false)\n windows=\(NSApp.windows.filter { $0.isVisible }.map { "\($0.title)|key=\($0.isKeyWindow)|main=\($0.isMainWindow)" }) active=\(NSApp.isActive)\n"
             try? text.write(to: directory.appendingPathComponent("state.txt"), atomically: true, encoding: .utf8)
         case "run" where parts.count > 1:
             // Sends one session command from the current session with a JSON body,
@@ -189,6 +201,7 @@ enum DebugDriver {
             NSApp.deactivate()
         case "menu":
             // Invokes a menu item by title, the way a click on it does.
+            refreshMenus()
             func find(_ menu: NSMenu) -> (NSMenu, Int)? {
                 for (index, item) in menu.items.enumerated() {
                     if item.title == rest { return (menu, index) }
@@ -198,6 +211,21 @@ enum DebugDriver {
             }
             if let main = NSApp.mainMenu, let (menu, index) = find(main) {
                 menu.performActionForItem(at: index)
+            } else {
+                reply = "not-found"
+            }
+        case "menuenabled":
+            refreshMenus()
+            // Says whether the menu item with this title is enabled, or that none has it.
+            func locate(_ menu: NSMenu) -> NSMenuItem? {
+                for item in menu.items {
+                    if item.title == rest { return item }
+                    if let sub = item.submenu, let hit = locate(sub) { return hit }
+                }
+                return nil
+            }
+            if let main = NSApp.mainMenu, let item = locate(main) {
+                reply = item.isEnabled ? "enabled" : "disabled"
             } else {
                 reply = "not-found"
             }
@@ -622,15 +650,14 @@ enum InboxSnapshot {
     @MainActor
     static func encode(_ model: AppModel) -> [String: Any] {
         let threads = model.inboxThreads
-        let rows = InboxRule.rows(
-            threads: threads, feed: model.attentionRows, raised: model.approvalRaised, reviewing: model.reviewing,
-            now: Int(Date().timeIntervalSince1970 * 1000)
-        )
-        let sections = InboxRule.sections(rows)
-        let tally = model.inboxTally(threads: threads)
+        let board = model.board.aged(now: Int(Date().timeIntervalSince1970 * 1000))
+        let sections = board.sections
+        let tally = board.tally
         // The running sessions' part alone, so a scenario can tell its own threads
         // from saved sessions other scenarios left in the catalogue.
         let live = InboxRule.tally(threads: threads, feed: model.attentionRows)
+        // What each surface draws, so a scenario can hold them against one another.
+        let windowSubtitle = NSApp.windows.first { $0.isVisible && $0.frame.width > 400 && $0.canBecomeMain }?.subtitle ?? ""
         return [
             "groups": sections.map { section -> [String: Any] in
                 [
@@ -641,6 +668,13 @@ enum InboxSnapshot {
             "folders": InboxRule.folderEntries(sections).map { ["title": $0.folder.title, "count": $0.count ?? -1] as [String: Any] },
             "headline": InboxRule.headline(tally),
             "needing": tally.needing,
+            "surfaces": [
+                "sidebarBadge": board.needing, "windowSubtitle": windowSubtitle, "boardSubtitle": board.subtitle,
+                "dockBadge": NSApp.dockTile.badgeLabel ?? "", "menuBar": board.needing,
+                "needsYouRows": board.needsYou.count, "needingSessions": board.needingSessions,
+                "sidebarNeedsYou": model.sidebarSections(grouping: .status, machineFilter: nil)
+                    .first { $0.title == "Needs You" }?.rows.map(\.id) ?? [],
+            ] as [String: Any],
             "liveNeeding": live.needing,
             "liveFinds": live.finds,
             "fromCatalogue": tally.fromCatalogue,

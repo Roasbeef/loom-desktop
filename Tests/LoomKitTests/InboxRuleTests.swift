@@ -416,13 +416,130 @@ final class InboxRuleTests: XCTestCase {
         XCTAssertEqual(InboxRule.shownFolder(chosen: .updating, sections: emptied), .everything)
     }
 
+    // MARK: The board
+
+    private func board(
+        _ threads: [InboxThread], feed rows: [AttentionRow] = [], saved: InboxSaved = .unchecked, now: Int = 10_000_000
+    ) -> InboxBoard {
+        InboxRule.board(
+            threads: threads, feed: Dictionary(uniqueKeysWithValues: rows.map { ($0.sessionID, $0) }),
+            saved: saved, now: now, clock: { "t\($0)" }
+        )
+    }
+
     /// Ports `the_bar_counts_what_waits_on_the_owner_test`: the badge is the "Needs
-    /// you" folder's count, and a calm inbox has none.
+    /// you" count, and a calm inbox has none. It now reads the board, which counts a
+    /// failed run as well.
     func testTheBadgeCountsWhatWaitsOnTheOwner() {
-        XCTAssertEqual(InboxRule.needingCount(mixed()), 1)
-        XCTAssertEqual(InboxRule.needingCount(sections([thread("c", "w", activity("working"))])), 0)
-        let more = sections([thread("a", "A", activity("needs_you"))], feed: [feed("a", asks: [ask("ask-1", 1)], stuck: [AttentionStuck(strand: "s")])])
-        XCTAssertEqual(InboxRule.needingCount(more), 3)
+        XCTAssertEqual(board([thread("b", "approval", activity("needs_you", approvals: 1, message: "Approve?"))]).needing, 1)
+        XCTAssertEqual(board([thread("c", "w", activity("working"))]).needing, 0)
+        let more = board([thread("a", "A", activity("needs_you"))], feed: [feed("a", asks: [ask("ask-1", 1)], stuck: [AttentionStuck(strand: "s")])])
+        XCTAssertEqual(more.needing, 3)
+    }
+
+    /// A session whose only open item is an ask is idle to the daemon's activity read,
+    /// and the board still counts it. This is the case the old count missed.
+    func testAnAskOnlySessionRaisesTheCountOnEverySurface() {
+        let waiting = board([thread("a", "Ask only", activity("idle"))], feed: [feed("a", asks: [ask("ask-1", 1)])])
+        XCTAssertEqual(waiting.needing, 1)
+        XCTAssertEqual(waiting.subtitle, "1 waiting")
+        XCTAssertEqual(waiting.dockLabel, "1")
+        XCTAssertEqual(waiting.needingSessions, ["a"])
+        XCTAssertEqual(waiting.needsYou.map(\.kind), [.ask])
+        XCTAssertTrue(InboxRule.headline(waiting.tally).hasPrefix("1 needs you"))
+    }
+
+    /// An approval and an ask count two, whether they sit on one session or two, and
+    /// a session with both is one entry in the sessions that need the owner.
+    func testAnApprovalAndAnAskCountTwo() {
+        let one = board([thread("a", "Both", activity("needs_you", approvals: 1))], feed: [feed("a", asks: [ask("ask-1", 1)])])
+        XCTAssertEqual(one.needing, 2)
+        XCTAssertEqual(one.subtitle, "2 waiting")
+        XCTAssertEqual(one.needsYou.count, 2)
+        XCTAssertEqual(one.needingSessions, ["a"])
+
+        let two = board(
+            [thread("a", "A", activity("needs_you", approvals: 1)), thread("b", "B", activity("idle"))],
+            feed: [feed("b", asks: [ask("ask-1", 1)])]
+        )
+        XCTAssertEqual(two.needing, 2)
+        XCTAssertEqual(Set(two.needingSessions), ["a", "b"])
+    }
+
+    /// A failed run needs the owner, as the web's "Needs you" band holds it.
+    func testAFailedRunCountsAsNeedingTheOwner() {
+        let failed = board([thread("a", "Failed", activity("needs_you"))])
+        XCTAssertEqual(failed.needing, 1)
+        XCTAssertEqual(failed.needsYou.map(\.kind), [.failed])
+    }
+
+    /// Nothing waiting is zero on every surface: no subtitle, no Dock label, no
+    /// session to jump to. Working and finished sessions do not need the owner.
+    func testNothingWaitingCountsZero() {
+        let calm = board([
+            thread("a", "Working", activity("working")), thread("b", "Done", activity("idle", message: "Done.")),
+            thread("c", "Quiet", activity("idle")),
+        ], feed: [feed("a", finds: [find("find-1", 1)])])
+        XCTAssertEqual(calm.needing, 0)
+        XCTAssertEqual(calm.subtitle, "")
+        XCTAssertNil(calm.dockLabel)
+        XCTAssertEqual(calm.needingSessions, [])
+        XCTAssertEqual(calm.needsYou, [])
+        XCTAssertEqual(board([]), .empty)
+    }
+
+    /// The saved sessions' summaries count in the same number, as the web's top-bar
+    /// pill counts them, though they have no row.
+    func testTheBoardCountsSavedSessionsWithoutRowsForThem() {
+        let saved = InboxSaved.read(listed: ["s1"], rows: ["s1": SavedAttention(sessionID: "s1", pendingApprovals: 1, openAsks: 1, openFinds: 0, updatedAt: 5)])
+        let counted = board([thread("a", "A", activity("idle"))], feed: [feed("a", asks: [ask("ask-1", 1)])], saved: saved)
+        XCTAssertEqual(counted.needing, 3)
+        XCTAssertEqual(counted.needsYou.count, 1)
+        XCTAssertEqual(counted.subtitle, "3 waiting")
+    }
+
+    /// Counting the ages to a later time moves no count and no group.
+    func testAgingTheBoardMovesOnlyTheAges() {
+        let first = board([thread("a", "A", activity("idle"))], feed: [feed("a", asks: [ask("ask-1", 9_000_000)])], now: 9_000_000)
+        let later = first.aged(now: 9_000_000 + 2 * 3_600_000)
+        XCTAssertEqual(first.needsYou.first?.age?.words, "now")
+        XCTAssertEqual(later.needsYou.first?.age?.words, "2h 00m")
+        XCTAssertEqual(later.needing, first.needing)
+        XCTAssertEqual(later.sections.map(\.group), first.sections.map(\.group))
+    }
+
+    /// The sidebar's Needs You group is built from the same board: a session with an
+    /// ask leads the status grouping though its activity read says idle, and says so.
+    func testTheSidebarsNeedsYouGroupReadsTheBoard() {
+        let sidebar = SidebarTests.sidebarRecord("a")
+        let quiet = SidebarTests.sidebarRecord("b")
+        let found = board([thread("a", "A", activity("idle")), thread("b", "B", activity("idle"))], feed: [feed("a", asks: [ask("ask-1", 1)])])
+        let sections = SidebarRows.sections(
+            [sidebar, quiet], activity: ["a": activity("idle"), "b": activity("idle")], grouping: .status,
+            machine: { _ in "m" }, needing: Set(found.needingSessions)
+        )
+        XCTAssertEqual(sections.map(\.title), ["Needs You", "Idle"])
+        XCTAssertEqual(sections[0].rows.map(\.id), ["a"])
+        XCTAssertEqual(sections[0].rows.first?.standing, "needs you")
+        XCTAssertEqual(sections[1].rows.map(\.id), ["b"])
+    }
+
+    /// A quiet session with any feed row is not folded. The web folds it as well as
+    /// listing the item; this app departs from that until Loom changes.
+    func testAQuietSessionWithAFeedRowIsNotFolded() {
+        for items in [feed("a", asks: [ask("ask-1", 1)]), feed("a", stuck: [AttentionStuck(strand: "s")]), feed("a", finds: [find("find-1", 1)])] {
+            let groups = sections([thread("a", "Quiet", activity("idle"))], feed: [items]).map(\.group)
+            XCTAssertFalse(groups.contains(.quiet), "\(items) left the session folded: \(groups)")
+        }
+
+        // With nothing in the feed it is folded as before, and so is a quiet session
+        // whose feed row is empty.
+        XCTAssertEqual(sections([thread("a", "Quiet", activity("idle"))]).map(\.group), [.quiet])
+        XCTAssertEqual(sections([thread("a", "Quiet", activity("idle"))], feed: [feed("a")]).map(\.group), [.quiet])
+
+        // The item still lists, under its own group.
+        let found = sections([thread("a", "Quiet", activity("idle"))], feed: [feed("a", finds: [find("find-1", 1)])])
+        XCTAssertEqual(found.map(\.group), [.finds])
     }
 
     // MARK: Selection
@@ -481,10 +598,11 @@ final class InboxRuleTests: XCTestCase {
         ].map { ($0.sessionID, $0) })
         let tally = InboxRule.tally(threads: threads, feed: rows)
 
-        // The approval and the ask and the stuck strand count; the failed run needs
-        // the owner but is not one of the headline's records; b has no feed row.
-        XCTAssertEqual(tally, InboxTally(needing: 3, finds: 1, running: 3, unread: 1))
-        XCTAssertEqual(InboxRule.headline(tally), "3 need you \u{00B7} 1 find \u{00B7} 3 running sessions read live, 1 not checked; saved sessions not checked")
+        // The approval, the ask, the stuck strand and the failed run (b) count, since
+        // the board counts what the web's "Needs you" band holds; b has no feed row.
+        // The failed run is counted as of the one-count change; it was not before.
+        XCTAssertEqual(tally, InboxTally(needing: 4, finds: 1, running: 3, unread: 1))
+        XCTAssertEqual(InboxRule.headline(tally), "4 need you \u{00B7} 1 find \u{00B7} 3 running sessions read live, 1 not checked; saved sessions not checked")
         XCTAssertEqual(InboxRule.headline(InboxTally(needing: 1, finds: 0, running: 1, unread: 0)), "1 needs you \u{00B7} 1 running session read live; saved sessions not checked")
         XCTAssertEqual(InboxRule.headline(InboxTally()), "Nothing needs you \u{00B7} 0 running sessions read live; saved sessions not checked")
         XCTAssertEqual(InboxRule.headline(InboxTally(needing: 0, finds: 2, running: 2, unread: 0)), "Nothing needs you \u{00B7} 2 finds \u{00B7} 2 running sessions read live; saved sessions not checked")

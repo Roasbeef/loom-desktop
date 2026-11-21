@@ -24,7 +24,8 @@ extension AppModel {
             records, activity: activity, grouping: grouping,
             machine: { [self] in machine(of: $0) },
             machineFilter: machineFilter,
-            gitPointer: { [self] in gitPointer(of: $0) }
+            gitPointer: { [self] in gitPointer(of: $0) },
+            needing: Set(board.needingSessions)
         )
     }
 

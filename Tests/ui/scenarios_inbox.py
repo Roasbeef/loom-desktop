@@ -14,6 +14,7 @@ not in the accessibility tree, so its rows, bands and folders are read from the 
 """
 import re
 import subprocess
+import time
 
 from loomui import BASE, wait_for
 from scenarios import check, run_command, scenario, settle
@@ -450,3 +451,70 @@ def a_working_session_reads_as_an_update_and_offers_queue_and_steer(c):
     check("Queue" in texts and "Steer" in texts, f"a working session takes a queue and a steer: {texts[-8:]}")
     check("Send" not in texts, "a working session has no plain Send")
     check("Open Session" in texts, "the pane should lead to the session")
+
+
+# One count.
+
+
+@scenario("HM-22", "AI-01")
+def an_ask_only_session_is_counted_by_every_surface(c):
+    """A session whose only open item is an ask raises the sidebar badge, the subtitle, the Dock tile and the headline together, and leads the sidebar."""
+    # Saved sessions that earlier scenarios left in the catalogue move the whole count
+    # as the catalogue is read, so the running sessions' part is what this one adds to.
+    before = c.app.snap()["inbox"]["liveNeeding"]
+    repo = fresh_repo("inbox-count")
+    sid = c.app.dispatch("Count ask askowner", repo)
+    c.app.go("inbox")
+    wait_row(c, "Ask", "Count ask askowner")
+    wait_for(lambda: c.app.snap()["inbox"]["liveNeeding"] == before + 1, 10, "the board to count the ask")
+
+    def agree():
+        inbox = c.app.snap()["inbox"]
+        s = inbox["surfaces"]
+        n = inbox["needing"]
+        return (
+            s["sidebarBadge"] == n and s["menuBar"] == n and s["dockBadge"] == str(n)
+            and s["windowSubtitle"] == f"{n} waiting" == s["boardSubtitle"]
+            and inbox["headline"].startswith(f"{n} need") and sid in s["needingSessions"] and sid in s["sidebarNeedsYou"]
+        ) or None
+
+    wait_for(agree, 10, "every surface to show the same count")
+
+    # The ask-only session is listed once, under Needs you, and not again under Folded.
+    snapshot = c.app.snap()["inbox"]
+    named = [g["title"] for g in snapshot["groups"] for r in g["rows"] if r["name"] == "Count ask askowner"]
+    check(named == ["Needs you"], f"the session should be listed only under Needs you: {named}")
+
+
+@scenario(needs_display=True, foreground=True)
+def the_session_menu_decides_only_the_armed_card_in_view(c):
+    """Allow in the Session menu names the tool, works from the inbox's approval pane once armed, and does nothing away from the card."""
+    repo = fresh_repo("inbox-menu")
+    c.app.dispatch("Menu pane escalate", repo)
+    c.app.go("inbox")
+    row = wait_row(c, "Approval", "Menu pane escalate", 60)
+
+    # A focused value reaches the menu only in an active app's key window.
+    c.app.take_focus()
+
+    # Away from any card the three items are disabled and the command acts on nothing.
+    c.app.go("mission")
+    wait_for(lambda: c.app.menu_state("Allow Request") == "disabled", 5, "Allow to be disabled on Mission Control")
+    check(c.app.menu_state("Deny Request") == "disabled", "Deny should be disabled with no card in view")
+    c.app.cmd("menu Allow Request")
+    time.sleep(1)
+    check(find_row(c, "Approval", "Menu pane escalate"), "the request must stay pending")
+
+    # In the inbox's pane the card publishes itself once armed, and the titles name the tool.
+    c.app.go("inbox")
+    open_thread(c, row)
+    try:
+        wait_for(lambda: c.app.menu_state("Allow fs_write") == "enabled", 10, "Allow fs_write to follow the armed card")
+    except Exception:
+        c.app.cmd("state")
+        print((c.app.dir / "state.txt").read_text(), flush=True)
+        raise
+    check(c.app.menu_state("Deny fs_write") == "enabled", "Deny should name the tool and be enabled")
+    c.app.menu("Allow fs_write")
+    wait_for(lambda: not find_row(c, "Approval", "Menu pane escalate"), 20, "the approval to clear")
+    wait_for(lambda: c.app.menu_state("Allow Request") == "disabled", 10, "the item to be disabled once the card is gone")

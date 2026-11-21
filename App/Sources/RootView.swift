@@ -148,7 +148,7 @@ private struct SidebarView: View {
         List(selection: $model.destination) {
             Section {
                 Label("Inbox", systemImage: "tray")
-                    .badge(model.attention.count)
+                    .badge(model.board.needing)
                     .tag(Destination.inbox)
                 Label("Mission Control", systemImage: "square.grid.2x2")
                     .tag(Destination.mission)

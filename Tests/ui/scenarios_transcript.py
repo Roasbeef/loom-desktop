@@ -497,8 +497,10 @@ def an_observer_sees_the_session_and_can_change_nothing(c):
         c.app.see(r"You are watching this session", 5)
         c.app.see(r"Only an operator can answer", 5)
         check(not any(n["name"] in ("Message", "Allow", "Deny") for n in c.app.tree()), "an observer has no editor and no answer buttons")
-        c.app.menu("Allow Request")
-        wait_for(lambda: "observer can watch" in c.app.session()["lastError"], 5, "the menu command to be refused")
+        # An observer's card publishes no armed approval, so the menu has no target.
+        # Before the one-count change the command was enabled and the daemon-side
+        # refusal showed as an error; now the item is disabled.
+        wait_for(lambda: c.app.menu_state("Allow Request") == "disabled", 5, "the menu's Allow to be disabled for an observer")
         check(c.app.session()["escalations"], "the request stays pending")
     finally:
         c.app.cmd("asrole none")
