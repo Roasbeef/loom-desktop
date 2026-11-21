@@ -18,8 +18,8 @@ import SwiftUI
 // not (answered, routed to a strand, an observer, an older daemon) it draws the
 // questions read-only under the offer's words. If it does, `AskAnswerForm` draws a
 // control for each question and Send checks the entries, calls the daemon at the
-// revision it read, and then reads the record again. A refusal that says the prompt
-// arrived holds the form until that read has landed.
+// revision it read, and then reads the record again. Any send, delivered or refused or
+// lost, holds the form until that read has landed.
 
 /// The questions of an open ask, as controls or as words.
 struct AskAnswering: View {
@@ -82,25 +82,25 @@ final class AnswerModel {
         }
         guard flow.begin() else { return }
         guard let daemon = model.daemon(holding: sessionID), let control = daemon.control else {
-            flow.refused(AnswerAftermath(words: "The session is not running.", follow: .nothing))
+            flow.ended(words: "The session is not running.")
             return
         }
         do {
             let receipt = try await control.answerAsk(sessionID: sessionID, ask: record.id, revision: record.revision, answer: body)
-            flow.delivered(words: AnswerRule.deliveredWords(receipt.delivery, name: name))
+            flow.ended(words: AnswerRule.deliveredWords(receipt.delivery, name: name))
         } catch let error as LoomError where error.isUnknownCommand {
             // An older daemon: the ask goes back to being read-only, as it was.
             daemon.noteAnswersUnsupported()
-            flow.refused(AnswerAftermath(words: AnswerRule.unsupportedWords, follow: .nothing))
+            flow.declined(words: AnswerRule.unsupportedWords)
             return
         } catch LoomError.server(let code, let message, _) {
-            flow.refused(AnswerRule.aftermath(code: code, message: message))
+            flow.ended(words: AnswerRule.refusalWords(code: code, message: message))
         } catch LoomError.outcomeUnknown {
-            flow.refused(AnswerAftermath(words: AnswerRule.unansweredWords, follow: .holdThenReread))
+            flow.ended(words: AnswerRule.unansweredWords)
         } catch {
-            flow.refused(AnswerAftermath(words: ComposerModel.words(error), follow: .nothing))
+            flow.ended(words: ComposerModel.words(error))
         }
-        if flow.isHeld { await settle(daemon: daemon, reread: reread) }
+        await settle(daemon: daemon, reread: reread)
     }
 
     /// Reads the feed and the record again. A read that fails leaves the form held,

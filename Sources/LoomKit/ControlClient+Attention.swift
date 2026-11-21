@@ -51,10 +51,12 @@ extension ControlClient {
     /// the ask. The daemon refuses a stale epoch (`stale_epoch`), a record that
     /// moved or was answered (`conflict`), an answer that fails its check
     /// (`bad_request`, naming the first failing key), a saved session
-    /// (`not_resident`) and an observer (`forbidden`). A `conflict` or `unavailable`
-    /// whose message says `delivered` means the prompt arrived, so the caller reads
-    /// the record again before offering another answer. A daemon that predates the
-    /// command is `LoomError.isUnknownCommand`.
+    /// (`not_resident`) and an observer (`forbidden`). Whether the prompt arrived is not
+    /// reliable to read from a refusal: a message may say `delivered` under any code,
+    /// and an `unavailable` may say only that it "may have arrived". After any outcome,
+    /// an error from the transport included, the caller reads the record again before
+    /// offering another answer. A daemon that predates the command is
+    /// `LoomError.isUnknownCommand`.
     public func answerAsk(sessionID: String, ask: String, revision: Int, answer: AttentionAnswerBody) async throws -> AnswerReceipt {
         let body = try await request("attention.answer", body: AttentionWire.answerBody(
             session: sessionID, ask: ask, revision: revision, answer: answer, epoch: try currentEpoch()

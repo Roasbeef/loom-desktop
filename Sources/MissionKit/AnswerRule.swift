@@ -18,8 +18,8 @@ import LoomKit
 // `AnswerRule.offer` says whether the ask shows a form or only words (answered,
 // routed to a strand, observer, a question this app cannot draw, an older daemon).
 // `check` turns the entries into the `attention.answer` body or the first question
-// that fails. `aftermath` words a refusal and says whether the record must be read
-// again, and `AnswerFlow` holds the form until a read lands when it must.
+// that fails. `refusalWords` words a refusal, and `AnswerFlow` holds the form after any
+// send until the form's own read of the record has landed.
 //
 // ## Where this departs from the web
 //
@@ -61,28 +61,6 @@ public enum AnswerCheck: Sendable, Equatable {
 public enum AnswerOffer: Sendable, Equatable {
     case form
     case words(String)
-}
-
-/// What to do after a refusal.
-public enum AnswerFollow: Sendable, Equatable {
-    /// The ask is as it was and the form stays as it is.
-    case nothing
-    /// Read the record again, since its revision is stale, and offer the form again.
-    case reread
-    /// The prompt may have arrived. Read the record again and offer no second answer
-    /// until that read has landed.
-    case holdThenReread
-}
-
-/// A refusal's words and what follows it.
-public struct AnswerAftermath: Sendable, Equatable {
-    public let words: String
-    public let follow: AnswerFollow
-
-    public init(words: String, follow: AnswerFollow) {
-        self.words = words
-        self.follow = follow
-    }
 }
 
 public enum AnswerRule {
@@ -163,6 +141,10 @@ public enum AnswerRule {
             return .success(.other(text))
         }
         switch (question.kind, entry) {
+        // A checklist takes any subset, and a multiple whose minimum is zero does, so
+        // an untouched one is the empty answer the daemon accepts.
+        case (.checklist, .unset): return .success(.labels([]))
+        case (.multiple, .unset) where bounds(of: question).min == 0: return .success(.labels([]))
         case (_, .unset): return refuse("Answer this question.")
         case (.confirm, .confirm(let yes)): return .success(.confirm(yes))
         case (.choice, .picked(let label)):
@@ -229,21 +211,12 @@ public enum AnswerRule {
         "Answer delivered to \(name) \u{00B7} \(delivery.rawValue)"
     }
 
-    /// The words of a refusal, which are the daemon's own, and what follows it.
-    ///
-    /// A message that says `delivered` means the prompt reached the strand and the
-    /// record did not settle, so a second answer would reach it twice: the form holds
-    /// until the record has been read again. Any other `conflict` is a stale
-    /// revision or an ask answered already, and the read fixes both.
-    public static func aftermath(code: String, message: String) -> AnswerAftermath {
-        let words = message.isEmpty ? (Refusal.words(code: code) ?? code) : message
-        let delivered = message.contains("delivered")
-        switch code {
-        case "conflict", "unavailable":
-            return AnswerAftermath(words: words, follow: delivered ? .holdThenReread : (code == "conflict" ? .reread : .nothing))
-        default:
-            return AnswerAftermath(words: words, follow: .nothing)
-        }
+    /// The words of a refusal, which are the daemon's own. Nothing here decides what
+    /// follows: every send, however it ended, holds the form until the record is read
+    /// again (`AnswerFlow`), because the daemon's messages do not reliably say whether
+    /// the prompt arrived.
+    public static func refusalWords(code: String, message: String) -> String {
+        message.isEmpty ? (Refusal.words(code: code) ?? code) : message
     }
 
     /// The words for a send that never got an answer. The prompt may have arrived,
@@ -252,13 +225,15 @@ public enum AnswerRule {
 }
 
 /// The form's hold on sending, which keeps a second answer from being sent against
-/// a record the first one made stale.
+/// a record the first one made stale, or delivered twice.
 ///
-/// A send that settled the ask, or that may have reached the strand without settling
-/// it, holds the form. Only a read of the record that the form itself started after
-/// the send returned releases it, and a read that failed leaves it held, so the form
-/// never offers an answer made against a revision it has not looked at again. A send
-/// in flight holds the form until it returns.
+/// One rule: after a send ends, whatever way it ended, the form is held. Only a read
+/// of the record that the form itself started after the send returned releases it,
+/// and a read that failed leaves it held. The daemon's refusal messages do not
+/// reliably say whether the prompt arrived (some codes carry "delivered; the record
+/// was not settled", and an `unavailable` may carry "the prompt may have arrived"),
+/// so the form does not read them. The one exception is a daemon that does not know
+/// the command, which the form never offers again (`declined`).
 public struct AnswerFlow: Sendable, Equatable {
     /// The words on the last send or refusal. Nil before any.
     public private(set) var said: String?
@@ -277,21 +252,20 @@ public struct AnswerFlow: Sendable, Equatable {
         return true
     }
 
-    /// A delivery. The record is stale from here, so the form waits for a read.
-    public mutating func delivered(words: String) {
+    /// A send ended, delivered or refused or lost. The record is stale or in doubt
+    /// from here, so the form waits for a read.
+    public mutating func ended(words: String) {
         isSending = false
         said = words
         isHeld = true
     }
 
-    /// A refusal, with the hold its aftermath asks for.
-    public mutating func refused(_ aftermath: AnswerAftermath) {
+    /// The daemon does not know the command, so nothing was delivered and a read
+    /// would say nothing. The form is not offered again, so it is not held.
+    public mutating func declined(words: String) {
         isSending = false
-        said = aftermath.words
-        switch aftermath.follow {
-        case .nothing: isHeld = false
-        case .reread, .holdThenReread: isHeld = true
-        }
+        said = words
+        isHeld = false
     }
 
     /// A read of the record landed after the last send returned.

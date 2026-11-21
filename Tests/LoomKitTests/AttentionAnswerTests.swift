@@ -53,7 +53,6 @@ final class AttentionAnswerTests: XCTestCase {
     /// (line 2152).
     func testTheDocumentedReceiptDecodes() throws {
         let receipt = try XCTUnwrap(AnswerReceipt(json(#"{"ask":"ask-3f9c01a2b4","delivery":"admitted","revision":42}"#)))
-        XCTAssertEqual(receipt, try XCTUnwrap(AnswerReceipt(json(#"{"ask":"ask-3f9c01a2b4","delivery":"admitted","revision":42}"#))))
         XCTAssertEqual(receipt.ask, "ask-3f9c01a2b4")
         XCTAssertEqual(receipt.delivery, .admitted)
         XCTAssertEqual(receipt.revision, 42)

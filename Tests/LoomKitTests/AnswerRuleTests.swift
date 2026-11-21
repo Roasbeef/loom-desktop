@@ -105,9 +105,9 @@ final class AnswerRuleTests: XCTestCase {
         XCTAssertNil(try result(nil, "anything\nat all"))
         XCTAssertNotNil(try result("path", "a\nb"))
         XCTAssertNil(try result("path", "src/a.gleam"))
-        for bad in ["", "1.", ".5", "1.2.3", "+4", "1e3", "12a", "--1"] where !bad.isEmpty { XCTAssertNotNil(try result("number", bad), bad) }
+        for bad in ["1.", ".5", "1.2.3", "+4", "1e3", "12a", "--1"] { XCTAssertNotNil(try result("number", bad), bad) }
         for good in ["0", "12", "-3", "-3.50", "007"] { XCTAssertNil(try result("number", good), good) }
-        XCTAssertNil(try result("url", "https://example.com/a b".replacingOccurrences(of: " ", with: "%20")))
+        XCTAssertNil(try result("url", "https://example.com/a%20b"))
         for bad in ["example.com", "ftp://x", "http://", "https://a b", "https://a\nb"] { XCTAssertNotNil(try result("url", bad), bad) }
     }
 
@@ -171,28 +171,77 @@ final class AnswerRuleTests: XCTestCase {
     /// Fixture: the refusal table of loom docs/client-protocol.md section 3.34: the
     /// message names the first failing key, and the daemon's words are shown as sent.
     func testTheDaemonsWordsAreShownAsTheyCame() {
-        let named = AnswerRule.aftermath(code: "bad_request", message: "q2: not one of the options")
-        XCTAssertEqual(named, AnswerAftermath(words: "q2: not one of the options", follow: .nothing))
-        XCTAssertEqual(AnswerRule.aftermath(code: "forbidden", message: "").words, "Only the owner can do that.")
+        XCTAssertEqual(AnswerRule.refusalWords(code: "bad_request", message: "q2: not one of the options"), "q2: not one of the options")
+        XCTAssertEqual(AnswerRule.refusalWords(code: "forbidden", message: ""), "Only the owner can do that.")
         XCTAssertEqual(
-            AnswerRule.aftermath(code: "not_found", message: "the asking strand no longer exists; the ask is still open"),
-            AnswerAftermath(words: "the asking strand no longer exists; the ask is still open", follow: .nothing)
+            AnswerRule.refusalWords(code: "not_found", message: "the asking strand no longer exists; the ask is still open"),
+            "the asking strand no longer exists; the ask is still open"
         )
-        XCTAssertEqual(AnswerRule.aftermath(code: "not_resident", message: "").words, "not_resident")
-    }
-
-    /// A conflict that says `delivered` means the prompt arrived and the record did
-    /// not settle: the form holds until the record is read again. A stale revision
-    /// is read again too. A refused gateway is not delivered and needs no read.
-    func testADeliveredConflictHoldsTheFormUntilTheRecordIsReadAgain() {
-        XCTAssertEqual(AnswerRule.aftermath(code: "conflict", message: "delivered; the record changed").follow, .holdThenReread)
-        XCTAssertEqual(AnswerRule.aftermath(code: "unavailable", message: "delivered; the settling write failed").follow, .holdThenReread)
-        XCTAssertEqual(AnswerRule.aftermath(code: "conflict", message: "the ask was changed").follow, .reread)
-        XCTAssertEqual(AnswerRule.aftermath(code: "unavailable", message: "the gateway did not answer in time").follow, .nothing)
-        XCTAssertEqual(AnswerRule.aftermath(code: "stale_epoch", message: "").follow, .nothing)
     }
 
     // MARK: The hold
+
+    private func ended(_ flow: inout AnswerFlow, words: String) {
+        XCTAssertTrue(flow.begin())
+        flow.ended(words: words)
+    }
+
+    /// One rule: whatever way a send ended, the form is held until the record is read
+    /// again. The messages are the daemon's own (protocol-change/128 and the table of
+    /// section 3.34). Two of the `unavailable` ones do not contain the word
+    /// "delivered" and still may have delivered, which is why no message is read.
+    func testEverySendOutcomeHoldsTheFormUntilTheRecordIsReadAgain() {
+        let outcomes: [(code: String, message: String)] = [
+            ("conflict", "delivered; the record changed"),
+            ("conflict", "that ask changed since it was read"),
+            ("conflict", "that ask was already answered"),
+            ("conflict", "the strand's queue is full; the ask is still open"),
+            ("unavailable", "the session did not take the prompt or did not answer; the prompt may have arrived and the ask is still open"),
+            ("unavailable", "the session did not answer in time; the prompt may have arrived and the ask is still open"),
+            ("not_resident", "delivered; the record was not settled"),
+            ("not_found", "delivered; the record was not settled"),
+            ("bad_request", "delivered; the record was not settled"),
+            ("unavailable", "delivered; the record was not settled"),
+            ("forbidden", ""),
+            ("stale_epoch", ""),
+        ]
+        for outcome in outcomes {
+            var flow = AnswerFlow()
+            ended(&flow, words: AnswerRule.refusalWords(code: outcome.code, message: outcome.message))
+            XCTAssertFalse(flow.maySend, "\(outcome.code): \(outcome.message)")
+            XCTAssertFalse(flow.begin(), "\(outcome.code): \(outcome.message)")
+            XCTAssertNotNil(flow.holdWords)
+
+            // A read that failed never calls this, so the form stays held until one lands.
+            flow.readLanded()
+            XCTAssertTrue(flow.maySend, "\(outcome.code): \(outcome.message)")
+        }
+    }
+
+    /// A transport error, a closed socket or a reply that broke the protocol also
+    /// leaves the prompt in doubt.
+    func testALostSendHoldsTheFormToo() {
+        let errors: [Error] = [
+            LoomError.closed("gone"), LoomError.protocolViolation("attention.answer returned no receipt"),
+            LoomError.outcomeUnknown(command: "attention.answer"),
+        ]
+        for error in errors {
+            var flow = AnswerFlow()
+            ended(&flow, words: error.localizedDescription)
+            XCTAssertFalse(flow.maySend, "\(error)")
+            flow.readLanded()
+            XCTAssertTrue(flow.maySend)
+        }
+    }
+
+    func testADeliveryHoldsTheFormUntilTheRecordIsRead() {
+        var flow = AnswerFlow()
+        ended(&flow, words: AnswerRule.deliveredWords(.queued, name: "build"))
+        XCTAssertEqual(flow.said, "Answer delivered to build \u{00B7} queued")
+        XCTAssertFalse(flow.maySend)
+        flow.readLanded()
+        XCTAssertTrue(flow.maySend)
+    }
 
     func testASendInFlightHoldsASecondOne() {
         var flow = AnswerFlow()
@@ -201,47 +250,32 @@ final class AnswerRuleTests: XCTestCase {
         XCTAssertFalse(flow.maySend)
     }
 
-    /// The invariant of the whole form: after "delivered; the record changed", no
-    /// second answer is sent until a read of the record has landed.
-    func testNoSecondAnswerUntilARecordReadLandsAfterADeliveredRefusal() {
+    /// An unknown-command reply delivered nothing, so it holds nothing, and the ask
+    /// is offered as read-only words from then on.
+    func testAnUnknownCommandIsNotHeldAndLeavesTheAskReadOnly() throws {
         var flow = AnswerFlow()
         XCTAssertTrue(flow.begin())
-        flow.refused(AnswerRule.aftermath(code: "conflict", message: "delivered; the record changed"))
-        XCTAssertEqual(flow.said, "delivered; the record changed")
-        XCTAssertFalse(flow.maySend)
-        XCTAssertFalse(flow.begin())
-        XCTAssertNotNil(flow.holdWords)
+        flow.declined(words: AnswerRule.unsupportedWords)
+        XCTAssertFalse(flow.isHeld)
+        XCTAssertEqual(flow.said, AnswerRule.unsupportedWords)
 
-        // A read that failed never calls this, so the form stays held until one lands.
-        flow.readLanded()
-        XCTAssertTrue(flow.maySend)
-        XCTAssertNil(flow.holdWords)
+        let q = [#"{"key":"q1","prompt":"?","kind":"confirm"}"#]
+        XCTAssertEqual(
+            AnswerRule.offer(ask: try ask(questions: q), status: "open", isObserver: false, unsupported: true),
+            .words(AnswerRule.unsupportedWords)
+        )
     }
 
-    func testARefusalThatChangedNothingLeavesTheFormOpen() {
-        var flow = AnswerFlow()
-        XCTAssertTrue(flow.begin())
-        flow.refused(AnswerRule.aftermath(code: "bad_request", message: "q1: missing"))
-        XCTAssertTrue(flow.maySend)
-    }
+    // MARK: Untouched questions
 
-    func testAStaleRevisionHoldsTheFormUntilTheReadToo() {
-        var flow = AnswerFlow()
-        XCTAssertTrue(flow.begin())
-        flow.refused(AnswerRule.aftermath(code: "conflict", message: "the ask was changed"))
-        XCTAssertFalse(flow.maySend)
-        flow.readLanded()
-        XCTAssertTrue(flow.maySend)
-    }
-
-    func testADeliveryHoldsTheFormUntilTheRecordIsRead() {
-        var flow = AnswerFlow()
-        XCTAssertTrue(flow.begin())
-        flow.delivered(words: AnswerRule.deliveredWords(.queued, name: "build"))
-        XCTAssertEqual(flow.said, "Answer delivered to build \u{00B7} queued")
-        XCTAssertFalse(flow.maySend)
-        flow.readLanded()
-        XCTAssertTrue(flow.maySend)
+    /// The daemon accepts `[]` for a checklist and for a `multiple` with `min` 0
+    /// (core/attention_answer `Checklist`, `within`), so an untouched one is that.
+    func testAnUntouchedChecklistIsTheEmptyAnswer() throws {
+        let checklist = try question(#"{"key":"q5","prompt":"?","kind":"checklist","options":[{"label":"x"}]}"#)
+        XCTAssertEqual(AnswerRule.check(questions: [checklist], entries: [:]), .ready(AttentionAnswerBody(entries: [("q5", .labels([]))])))
+        XCTAssertEqual(AnswerRule.check(questions: [try multiple(min: 0)], entries: [:]), .ready(AttentionAnswerBody(entries: [("q3", .labels([]))])))
+        XCTAssertNotNil(refusal(AnswerRule.check(questions: [try multiple()], entries: [:])))
+        XCTAssertNotNil(refusal(AnswerRule.check(questions: [try multiple(min: 1)], entries: [:])))
     }
 }
 
