@@ -1,4 +1,4 @@
-Baseline: 8ce2692 on inbox/answer-asks (2026-11-21)
+Baseline: 33f1c16 on main (2026-11-22, paused mid native pass)
 
 # Next: Loom Desktop handoff
 
@@ -13,6 +13,19 @@ Its in-flight items either landed in the parity work below or moved to
 "Deliberately open".
 
 ## Where the tree is
+
+### Paused 2026-11-22
+
+The owner paused all work for a handoff while slice 2 of the Mac-native pass
+was mid-run. State at the pause:
+
+| Work | Where | State |
+| --- | --- | --- |
+| Inbox port (#1, #2) | `main` | Merged 2026-11-21. |
+| Native pass plan | `docs/native-pass.md` on `main` | Merged with slice 1. Three Sonnet critics' reports are summarised there. |
+| Native pass slice 1 (#3): one needs-you count, decide only beside evidence, no folding a waiting session, release build fixed | `main` | Merged 2026-11-21. Last full UI run 138 passed, 1 failed (the known evolution scenario). |
+| Native pass slice 2: the inbox as an `HSplitView` with a toolbar folder picker, one selection on the model, a refresh never moves it (`InboxRule.settle`) | branch `native/split-inbox` (pushed), worktree `/Users/roasbeef/gocode/src/github.com/roasbeef/ld-native` | One `wip:` commit, no PR. Unit tests were added; the full UI run, the release build and the before/after captures were not finished. |
+| Slices 3–5 (commands and keyboard, native controls in the pane, notifications) | `docs/native-pass.md` | Not started. |
 
 ### The attention inbox port
 
@@ -47,7 +60,27 @@ The other `ld-*` worktrees (`ld-inbox`, `ld-pane`, `ld-rail`, `ld-shots`,
 
 Ordered.
 
-### 1. The two order-dependent press failures
+### 1. Finish slice 2 of the native pass
+
+On `native/split-inbox` in `ld-native`: build the debug bundle, run the inbox
+scenarios with `--only`, then the full suite with `--foreground` (slot 8,
+`LOOMD_BIN=/Users/roasbeef/loom-drives/desktop-loomd/bin/loomd`), check
+`CONFIG=release scripts/bundle.sh`, take the before/after captures with a copy
+of the slice 1 capture script (the slice 1 shots are in
+`/Users/roasbeef/loom-drives/native-pass/slice1/`), split the `wip:` commit into
+the model/rule change, the view change, and the test/baseline commits, and open
+the PR. The owner's standing go covers merging once its gates pass.
+
+### 2. Slices 3, 4 and 5 of the native pass
+
+In the order and with the guardrails in `docs/native-pass.md`. The guardrails
+that matter most: no notification, row or toolbar button decides an approval;
+no unread or archive state on Needs-you rows; a menu Allow/Deny only while an
+armed card is visible. Slice 5 must also settle the notifier change slice 1
+made: notifications are keyed per session row now, so a second approval on a
+session with one already waiting sends no new notification.
+
+### 3. The two order-dependent press failures
 
 On #1's last full run, two older scenarios failed and each passes alone. On #2's two runs, `evolution_tab_reads_the_board_and_core` failed both times and `generation_speed_is_timed_from_the_stream` passed both:
 
@@ -56,38 +89,19 @@ On #1's last full run, two older scenarios failed and each passes alone. On #2's
 
 Find what the earlier scenarios leave behind that makes an AX press a no-op (a
 held focus, an open popover in another window, a disclosure's state cached
-across sessions). Never loosen the assertions; a scenario that cleans up after
+across sessions). Slice 1 found one cause of this family: an earlier
+scenario's `deactivate` leaves the app without a key window, and SwiftUI then
+delivers no focused value to the menu; `app.take_focus()` re-fronts the run's
+own app copy. Never loosen the assertions; a scenario that cleans up after
 itself is the fix.
 
-### 2. The Mac-native refinement pass
+### 4. Open parity rows
 
-The owner's ask (2026-11-21): once the port is at parity, do a pass so the app
-does not just copy the web UI but uses patterns suited to SwiftUI and the Mac,
-so it captures the web view's intent rather than reading as a port. Method:
-
-1. A mini council of Sonnet 5.5 critics reviews the running app from
-   screenshots and the code, each seat with one lens: Mac interface guidelines
-   and platform habits; SwiftUI structure and state; what the web view gets
-   right in spirit and must keep.
-2. A written proposal of which Mac patterns replace which web shapes.
-   Candidates to weigh, not decisions: a real three-column
-   `NavigationSplitView` with native column collapse instead of the
-   hand-sized folder rail, toolbar items and menu-bar commands with keyboard
-   shortcuts for every inbox action, an inspector for the reading pane's
-   evidence, system notifications for an ask or approval, a Dock badge for
-   "needs you", Quick Look for files in the review thread, and native
-   context menus on rows.
-3. Slices, each with before and after captures and its scenarios, like the web
-   mockup-fidelity pass.
-
-### 3. Open parity rows
-
-- Check why "Cache layout askowner" drew both under Needs you (an open ask) and under Folded ("no one is waiting on you") in `docs/images/inbox.png`, and why the sidebar said 1 needs you where the inbox said 2.
 - AI-06, AI-15, AI-17, AI-31 and AI-41 are `code` with no scenario. AI-17 is sending from the message bar.
 - AI-26 stays `code`: "Session state" has an accessibility label that hides the stream-head words, so no scenario can read them.
 - AI-33 and AI-44 differ from the web by design: committed work and the working tree arrive merged on the wire, and saved sessions are counted, not listed.
 
-### 4. Carried over from the 2026-11-05 edition, still unanswered
+### 5. Carried over from the 2026-11-05 edition, still unanswered
 
 - A friendlier Changes-tab message for "worktree observation exceeded its output budget" (the daemon's `status_byte_limit` in `worktree_diff.gleam`).
 - Per-session worktrees with git-cow from the new-agent sheet. Needs a Loom protocol change to `sessions.create`; ask the owner first.
