@@ -71,6 +71,32 @@ of the slice 1 capture script (the slice 1 shots are in
 the model/rule change, the view change, and the test/baseline commits, and open
 the PR. The owner's standing go covers merging once its gates pass.
 
+### 1a. What the owner found on 2026-11-23
+
+The owner ran a build of `main` (`7604fdb`) against their daemon. Fix these
+before or alongside slice 2, each with a UI scenario.
+
+- **An open ask is not visible on a session's page.** An agent's `ask` was
+  recorded as open (`open_asks = 1` in the daemon's catalogue), but the owner,
+  reading the transcript, saw nothing, typed "continue", and the agent went
+  ahead on its own pick. An ask is drawn only as an Inbox thread and in the
+  Inspector's lifted rail, which starts hidden (⌥⌘I). `ComposerStack` in
+  `App/Sources/SessionScreen.swift` draws approval cards above the composer
+  but never an ask. Give an open ask that place too, with its answer form
+  (`AskAnswer.swift`), so it is answerable where the owner reads.
+- **An answer shows in the transcript as raw JSON.** After the owner answered,
+  the transcript showed a user message "Answer to ask-b0244f75fb:" and a
+  fenced `json` block with the wire record (`{"ask":…,"answers":{"q1":null},
+  "other":{"q1":"already answered"}}`). This breaks the "no raw JSON in the UI"
+  ruling. Draw it as the question and the option chosen, or the Other text.
+  The text is built by the daemon when it delivers the answer, so check with
+  Loom's handoff (`docs/next.md`, "What the owner found on the release")
+  whether the fix is in the daemon's delivery, in this client's drawing, or
+  both.
+- The web view's list of the same day is in Loom's `docs/next.md`; its items
+  on navigation and the ask thread's layout apply here wherever the desktop
+  draws the same thing.
+
 ### 2. Slices 3, 4 and 5 of the native pass
 
 In the order and with the guardrails in `docs/native-pass.md`. The guardrails
