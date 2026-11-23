@@ -260,6 +260,9 @@ private struct TranscriptView: View {
         "\(controller.blocks.last?.id ?? "")|\(controller.stream == nil)"
     }
 
+    /// The blocks of the turns that put a question to the owner.
+    private var asking: Set<String> { AskCardRule.askingBlocks(in: controller.blocks) }
+
     private var visibleBlocks: [TranscriptBlock] {
         guard !query.isEmpty else { return controller.blocks }
         return controller.blocks.filter { $0.contains(query) }
@@ -330,6 +333,7 @@ private struct TranscriptView: View {
     }
 
     var body: some View {
+        let asking = self.asking
         ScrollView {
             // One lazy stack holds everything. Building the newest block eagerly in a
             // second stack below it stopped an empty page from drawing, but a reply
@@ -357,7 +361,14 @@ private struct TranscriptView: View {
                             BlockView(block: block, controller: controller)
                         case .answerPart(let id, let part, let text, let isFirst):
                             GutterRow(at: isFirst ? Self.time(of: id, in: controller.blocks) : nil) {
-                                AnswerPart(part: part, text: text, isFirst: isFirst)
+                                if isFirst, asking.contains(id) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        AskMark()
+                                        AnswerPart(part: part, text: text, isFirst: isFirst)
+                                    }
+                                } else {
+                                    AnswerPart(part: part, text: text, isFirst: isFirst)
+                                }
                             }
                         }
                     }
@@ -387,6 +398,7 @@ private struct TranscriptView: View {
             // is a minimum, so a long transcript still has its full height to scroll.
             .frame(minHeight: viewport, alignment: .top)
             .environment(\.transcriptShowsAuthors, Self.authors(in: controller.blocks) > 1)
+            .environment(\.askingBlocks, asking)
             .environment(\.strandModels, Self.models(of: controller.strandLines))
         }
         .scrollPosition($position)
@@ -557,6 +569,7 @@ private struct AnswerPart: View {
 private struct BlockView: View {
     let block: TranscriptBlock
     let controller: SessionController
+    @Environment(\.askingBlocks) private var asking
 
     private static func showsTime(_ row: TranscriptRow) -> Bool {
         switch row.kind {
@@ -572,11 +585,18 @@ private struct BlockView: View {
             // scans by time are the people's messages and the replies; a notice,
             // a step or a memory line would only add noise to the column.
             GutterRow(at: Self.showsTime(row) ? row.at : nil) {
-                RowView(row: row)
+                if asking.contains(row.id) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        AskMark()
+                        RowView(row: row)
+                    }
+                } else {
+                    RowView(row: row)
+                }
             }
         case .fold(let fold):
             GutterRow(at: nil) {
-                FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries)
+                FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries, isAsking: asking.contains(fold.id))
             }
         }
     }
@@ -739,6 +759,8 @@ private struct ComposerStack: View {
     let controller: SessionController
     let rail: RailModel
 
+    private var asks: [AskCard] { AskCardRule.cards(feed: rail.feed) }
+
     var body: some View {
         GlassEffectContainer(spacing: 10) {
             VStack(spacing: 10) {
@@ -757,6 +779,12 @@ private struct ComposerStack: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .glassEffect(.regular.tint(Theme.attention.opacity(0.18)), in: .rect(cornerRadius: Theme.radius))
+                }
+                // An ask is drawn above the approvals, so one appearing or leaving
+                // moves nothing below it and an approval's buttons stay where they
+                // were. It never takes focus from what the person is typing.
+                ForEach(asks) { card in
+                    AskCardView(card: card, controller: controller, rail: rail)
                 }
                 // The card is flat, as it is everywhere, on one plain piece of glass
                 // that keeps it legible over the transcript scrolling beneath it.
@@ -794,6 +822,7 @@ private struct ComposerStack: View {
         .padding(.top, 4)
         .frame(maxWidth: .infinity)
         .animation(.smooth(duration: 0.2), value: controller.escalations)
+        .animation(.smooth(duration: 0.2), value: asks)
     }
 }
 

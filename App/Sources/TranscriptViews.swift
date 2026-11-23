@@ -11,6 +11,8 @@ struct FoldView: View {
     let fold: Fold
     let tails: [String: String]
     var summaries: [String: String] = [:]
+    /// The turn called `ask`, so the fold says there is a question in it.
+    var isAsking = false
     @State private var userOpened: Bool?
 
     private var isOpen: Bool { userOpened ?? fold.isLive }
@@ -32,6 +34,7 @@ struct FoldView: View {
                         ChangeCounts(added: fold.added, removed: fold.removed)
                             .accessibilityHidden(true)
                     }
+                    if isAsking { AskMark() }
                     if !isOpen {
                         Text(ToolSummary.describe(fold.rows.filter { if case .tool = $0.kind { return true }; return false }))
                             .font(Theme.caption)
@@ -48,7 +51,7 @@ struct FoldView: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(fold.title)
+            .accessibilityLabel(isAsking ? "\(fold.title), asked a question" : fold.title)
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
 
             if isOpen {
