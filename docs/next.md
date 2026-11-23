@@ -79,20 +79,29 @@ before or alongside slice 2, each with a UI scenario.
 - **An open ask is not visible on a session's page.** An agent's `ask` was
   recorded as open (`open_asks = 1` in the daemon's catalogue), but the owner,
   reading the transcript, saw nothing, typed "continue", and the agent went
-  ahead on its own pick. An ask is drawn only as an Inbox thread and in the
-  Inspector's lifted rail, which starts hidden (⌥⌘I). `ComposerStack` in
-  `App/Sources/SessionScreen.swift` draws approval cards above the composer
-  but never an ask. Give an open ask that place too, with its answer form
-  (`AskAnswer.swift`), so it is answerable where the owner reads.
-- **An answer shows in the transcript as raw JSON.** After the owner answered,
-  the transcript showed a user message "Answer to ask-b0244f75fb:" and a
-  fenced `json` block with the wire record (`{"ask":…,"answers":{"q1":null},
-  "other":{"q1":"already answered"}}`). This breaks the "no raw JSON in the UI"
-  ruling. Draw it as the question and the option chosen, or the Other text.
-  The text is built by the daemon when it delivers the answer, so check with
-  Loom's handoff (`docs/next.md`, "What the owner found on the release")
-  whether the fix is in the daemon's delivery, in this client's drawing, or
-  both.
+  ahead on its own pick. An ask was drawn only as an Inbox thread and in the
+  Inspector's lifted rail, which starts hidden (⌥⌘I).
+  **Done on `session/ask-card`.** `ComposerStack` draws an `AskCardView`
+  (`App/Sources/AskCardView.swift`) for each open ask routed to the owner,
+  oldest first, above the approval cards, so an ask appearing or leaving moves
+  nothing below it. The card is headed "Ask · waiting since 13:40 · main" and
+  holds the same `AskAnswering` form the Inbox pane and the rail draw. An
+  observer sees the questions and the words "Only the owner or an operator can
+  answer an ask." It scrolls inside itself past 300 points, and it takes no
+  focus. The feed row it reads from is refreshed every five seconds, as the
+  rail's is, so an ask can take up to that long to appear. The turn that called
+  `ask` is marked "Ask": on its fold in the usual case, since the model's prose
+  before the call is folded as narration, and on the message when the model
+  wrote one after it. Which asks show, their order and the mark are
+  `MissionKit/AskCard.swift`, tested in `AskCardTests`; the scenario is
+  `an_ask_is_answered_from_the_card_above_the_composer`.
+- **An answer showed in the transcript as raw JSON.** Loom #1348 changed the
+  daemon to deliver the answer as text: "Answer to your ask ask-…", then each
+  question numbered with its answer indented three spaces under it. The user
+  row already draws a message's lines and indent as they arrive, and the new
+  scenario checks that with the daemon of Loom main. An older daemon still
+  sends a fenced JSON record, which is drawn as it is sent, so the raw JSON
+  stays visible against an older daemon. That was not changed here.
 - The web view's list of the same day is in Loom's `docs/next.md`; its items
   on navigation and the ask thread's layout apply here wherever the desktop
   draws the same thing.

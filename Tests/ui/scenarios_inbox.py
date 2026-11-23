@@ -424,6 +424,47 @@ def an_ask_is_answered_from_the_session_pages_rail(c):
     wait_for(lambda: not any(t == "Needs you \u00b7 1" for t in c.app.texts()), 60, "the answered ask to leave the rail")
 
 
+@scenario("AI-23", "AI-40", needs_display=True)
+def an_ask_is_answered_from_the_card_above_the_composer(c):
+    """An open ask has a card above the composer with the Inspector closed, an observer reads it without a form, sending the answer removes the card, and the transcript shows the answer as numbered, indented lines."""
+    repo = fresh_repo("inbox-card-ask")
+    c.app.dispatch("Card askowner", repo)
+    c.app.open_session("Card")
+    settle(c)
+    check(not c.app.snap()["showsInspector"], "the Inspector should start closed")
+
+    # The card says when the ask was raised and by whom, and the turn that raised it is marked.
+    c.app.see(r"^Ask \u00b7 waiting since \d\d:\d\d \u00b7 main$", 60)
+    c.app.see(r"^Which cache layout should the fetcher use\?$", 20)
+    c.app.see(r"asked a question", 5)
+
+    # An observer reads the questions and is offered no form.
+    c.app.cmd("asrole observer")
+    wait_for(lambda: "Send answers" not in tree_texts(c), 10, "the form to go for an observer")
+    c.app.see(r"^Only the owner or an operator can answer an ask\.$", 5)
+    c.app.see(r"^Which cache layout should the fetcher use\?$", 5)
+    c.app.cmd("asrole none")
+    wait_for(lambda: c.app.enabled("Send answers"), 10, "the form to return for the owner")
+
+    # Sending settles the ask, and the card leaves with the Inspector still closed.
+    c.app.press("Shared")
+    c.app.press("No")
+    c.app.press("Send answers")
+    wait_for(lambda: not any(t.startswith("Ask \u00b7 waiting since") for t in c.app.texts()), 60, "the answered ask's card to leave")
+    check(not c.app.snap()["showsInspector"], "answering must not open the Inspector")
+
+    # The daemon words the answer as text, each question numbered with its answer indented under it.
+    def answer_row():
+        return next((t for t in c.app.session()["transcript"] if t.startswith("Answer to your ask")), None)
+
+    text = wait_for(answer_row, 40, "the answer in the transcript")
+    check('1. Which cache layout should the fetcher use?\n   "Shared"' in text, repr(text))
+    check("2. May the fetcher drop expired entries early?\n   No" in text, repr(text))
+    check("```" not in text and '"answers"' not in text, "the answer should not be a JSON record: " + repr(text))
+    shown = [t for t in c.app.texts() if t.startswith("Answer to your ask")]
+    check(shown and "\n   " in shown[0], f"the drawn message should keep its lines and indent: {shown!r}")
+
+
 @scenario("AI-08")
 def saved_sessions_are_counted_from_the_catalogue(c):
     """With a saved session in the list, the headline and the rail's note say the counts came from the catalogue's summary."""
