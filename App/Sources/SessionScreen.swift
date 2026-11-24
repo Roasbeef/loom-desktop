@@ -361,12 +361,7 @@ private struct TranscriptView: View {
                             BlockView(block: block, controller: controller)
                         case .answerPart(let id, let part, let text, let isFirst):
                             GutterRow(at: isFirst ? Self.time(of: id, in: controller.blocks) : nil) {
-                                if isFirst, asking.contains(id) {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        AskMark()
-                                        AnswerPart(part: part, text: text, isFirst: isFirst)
-                                    }
-                                } else {
+                                AskMarked(isMarked: isFirst && asking.contains(id)) {
                                     AnswerPart(part: part, text: text, isFirst: isFirst)
                                 }
                             }
@@ -585,14 +580,7 @@ private struct BlockView: View {
             // scans by time are the people's messages and the replies; a notice,
             // a step or a memory line would only add noise to the column.
             GutterRow(at: Self.showsTime(row) ? row.at : nil) {
-                if asking.contains(row.id) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        AskMark()
-                        RowView(row: row)
-                    }
-                } else {
-                    RowView(row: row)
-                }
+                AskMarked(isMarked: asking.contains(row.id)) { RowView(row: row) }
             }
         case .fold(let fold):
             GutterRow(at: nil) {

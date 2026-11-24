@@ -106,6 +106,23 @@ struct AskMark: View {
     }
 }
 
+/// A transcript row under the "Ask" mark when `isMarked`, and the row alone when not.
+struct AskMarked<Content: View>: View {
+    let isMarked: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if isMarked {
+            VStack(alignment: .leading, spacing: 4) {
+                AskMark()
+                content
+            }
+        } else {
+            content
+        }
+    }
+}
+
 extension EnvironmentValues {
     /// The ids of the transcript blocks that raised an ask, from `AskCardRule`.
     @Entry var askingBlocks: Set<String> = []
