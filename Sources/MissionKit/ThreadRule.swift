@@ -107,12 +107,13 @@ public enum ThreadRule {
         case .ask(_, let id): return ThreadReads(approval: false, brief: true, record: id)
         case .find(_, let id): return ThreadReads(approval: false, brief: false, record: id)
         case .stuck: return .none
+        case .ticket: return .none
         case .session:
             switch row.kind {
             case .approval: return ThreadReads(approval: true, brief: true, record: nil)
             case .review: return ThreadReads(approval: false, brief: true, record: nil, review: true)
             case .waiting, .working: return ThreadReads(approval: false, brief: true, record: nil)
-            case .failed, .quiet, .ask, .stuck, .find: return .none
+            case .failed, .quiet, .ask, .stuck, .find, .ticket: return .none
             }
         }
     }
@@ -376,6 +377,7 @@ public enum ThreadRule {
         case .stuck: return row.since.map { ThreadMoment(label: "failed", at: $0) }
         case .approval: return (raised ?? row.since).map { ThreadMoment(label: "waiting since", at: $0) }
         case .waiting, .review: return row.since.map { ThreadMoment(label: "finished", at: $0) }
+        case .ticket: return row.since.map { ThreadMoment(label: "opened", at: $0) }
         case .failed, .working, .quiet, .find: return nil
         }
     }

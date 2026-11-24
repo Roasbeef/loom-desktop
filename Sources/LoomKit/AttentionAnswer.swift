@@ -181,6 +181,13 @@ public enum AttentionWire {
 // MARK: Unknown command
 
 extension LoomError {
+    /// Whether the daemon answered `not_found`. For a `projects.*` command that
+    /// says the daemon started no project table.
+    public var isNotFound: Bool {
+        guard case .server(let code, _, _) = self else { return false }
+        return code == "not_found"
+    }
+
     /// Whether the daemon does not know the command. A daemon built before a command
     /// answers `unsupported`, or `bad_request` with the message `unsupported control
     /// command` (client protocol sections 1.5, 3.29 and 3.31), and either leaves the

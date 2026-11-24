@@ -32,7 +32,14 @@ import LoomKit
 //
 // ## Where this departs from the web
 //
-// - No Projects folder and no ticket rows: this app has no project boards.
+// - A project ticket that waits on a person is a thread of its own, as on the web
+//   (loom web_view `ticket_rule`): one that needs an answer or a decision sits
+//   under "Needs you", and one whose work waits to be read (`person/review` and
+//   `person/check`) under "To review". It is counted with the group it sits in,
+//   so the badge, the subtitle and the folder counts agree with the bands. A
+//   ticket has no session of its own in the list, so it is never a target of "Next
+//   Session Needing You". The web's Projects rail folder is the sidebar's Projects
+//   destination here.
 // - Saved sessions are counted, not listed. The web counts each from the catalogue's
 //   summary (loom protocol-change/122) and draws a row for each one that holds
 //   something open, with a Resume button. Here `sessions.saved_attention` feeds the
@@ -69,6 +76,8 @@ public enum InboxKind: Sendable, Equatable {
     case stuck
     /// An open find, by what the agent calls it.
     case find(FindKind)
+    /// A project ticket that waits on a person, in the lane its stage puts it in.
+    case ticket(TicketLane)
 
     /// The word on the row's chip.
     public var chip: String {
@@ -82,6 +91,7 @@ public enum InboxKind: Sendable, Equatable {
         case .ask: return "Ask"
         case .stuck: return "Stuck"
         case .find(let kind): return kind.rawValue.capitalized
+        case .ticket: return "Ticket"
         }
     }
 }
@@ -153,12 +163,18 @@ public enum InboxSubject: Sendable, Equatable, Hashable, Codable {
     case ask(session: String, id: String)
     case stuck(session: String, strand: String)
     case find(session: String, id: String)
+    /// A project's ticket. It is not a session: its worker's session, once one is
+    /// bound, is reached through the ticket's own read.
+    case ticket(project: String, ticket: String)
 
-    /// The session the thread belongs to.
+    /// The session the thread belongs to, or the empty string for a ticket, which
+    /// belongs to a project. No daemon holds a session with that identity, so a
+    /// lookup by it finds nothing.
     public var sessionID: String {
         switch self {
         case .session(let id): return id
         case .ask(let session, _), .stuck(let session, _), .find(let session, _): return session
+        case .ticket: return ""
         }
     }
 
@@ -170,6 +186,7 @@ public enum InboxSubject: Sendable, Equatable, Hashable, Codable {
         case .ask(let session, let id): return "ask/\(session)/\(id)"
         case .stuck(let session, let strand): return "stuck/\(session)/\(strand)"
         case .find(let session, let id): return "find/\(session)/\(id)"
+        case .ticket(let project, let ticket): return "ticket/\(project)/\(ticket)"
         }
     }
 }
@@ -219,6 +236,12 @@ public struct InboxRow: Sendable, Equatable, Identifiable {
     public let since: Int?
     public var id: String { subject.key }
     public var sessionID: String { subject.sessionID }
+
+    /// Whether the row is a project ticket, which has no session to open.
+    public var isTicket: Bool {
+        if case .ticket = subject { return true }
+        return false
+    }
 
     init(
         subject: InboxSubject, kind: InboxKind, group: InboxGroup, name: String, sortName: String? = nil, head: String,
@@ -320,7 +343,7 @@ public struct InboxBoard: Sendable, Equatable {
     /// The sidebar's Needs You group and "Next Session Needing You" both read it.
     public var needingSessions: [String] {
         var seen: Set<String> = []
-        return needsYou.map(\.sessionID).filter { seen.insert($0).inserted }
+        return needsYou.map(\.sessionID).filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 
     /// The window subtitle: how many things wait, or nothing when none do.
@@ -366,8 +389,8 @@ public enum InboxRule {
 
     static func group(of kind: InboxKind) -> InboxGroup {
         switch kind {
-        case .approval, .failed, .ask, .stuck: return .needsYou
-        case .review: return .toReview
+        case .approval, .failed, .ask, .stuck, .ticket(.answering): return .needsYou
+        case .review, .ticket(.reviewing): return .toReview
         case .waiting: return .waiting
         case .find: return .finds
         case .working: return .updates
@@ -521,10 +544,11 @@ public enum InboxRule {
         feed: [String: AttentionRow],
         raised: [String: Int] = [:],
         reviewing: Set<String> = [],
+        tickets: [ProjectTicketRef] = [],
         now: Int,
         clock: (Int) -> String = ClockTime.local
     ) -> [InboxRow] {
-        var rows: [InboxRow] = []
+        var rows: [InboxRow] = ticketRows(tickets, now: now)
         for thread in threads {
             // A quiet session with a feed row waits on someone or has said something
             // worth a line, so it is not folded under a gloss that says no one waits.
@@ -562,6 +586,20 @@ public enum InboxRule {
         return rows
     }
 
+    /// One row for each ticket that waits on a person. The row is named for the
+    /// ticket's title, says the daemon's stage word under it, and is aged from the
+    /// ticket's opening message, which the daemon may no longer hold.
+    public static func ticketRows(_ tickets: [ProjectTicketRef], now: Int) -> [InboxRow] {
+        tickets.filter(\.ticket.stage.needsPerson).map { ref in
+            let lane = ProjectRule.lane(of: ref.ticket)
+            return InboxRow(
+                subject: .ticket(project: ref.project, ticket: ref.ticket.id), kind: .ticket(lane),
+                group: group(of: .ticket(lane)), name: ProjectRule.titleWords(ref.ticket), head: ProjectRule.head(ref),
+                since: ref.ticket.openedMs, now: now
+            )
+        }
+    }
+
     /// An approval is aged from its raise time, a finished session from the time of
     /// its last message, and a working one from the start of the turn now running.
     /// A session whose data holds no such time has none.
@@ -570,7 +608,7 @@ public enum InboxRule {
         case .approval: return raised
         case .waiting, .review: return activity.lastMessageAt
         case .working: return activity.turnStartedAt
-        case .failed, .quiet, .ask, .stuck, .find: return nil
+        case .failed, .quiet, .ask, .stuck, .find, .ticket: return nil
         }
     }
 
@@ -588,12 +626,13 @@ public enum InboxRule {
         raised: [String: Int] = [:],
         reviewing: Set<String> = [],
         saved: InboxSaved = .unchecked,
+        tickets: [ProjectTicketRef] = [],
         now: Int,
         clock: (Int) -> String = ClockTime.local
     ) -> InboxBoard {
         InboxBoard(
-            sections: sections(rows(threads: threads, feed: feed, raised: raised, reviewing: reviewing, now: now, clock: clock)),
-            tally: tally(threads: threads, feed: feed, saved: saved),
+            sections: sections(rows(threads: threads, feed: feed, raised: raised, reviewing: reviewing, tickets: tickets, now: now, clock: clock)),
+            tally: tally(threads: threads, feed: feed, saved: saved, tickets: tickets),
             reported: threads.filter { $0.activity != nil }.count,
             checked: Set(feed.keys)
         )
@@ -693,8 +732,14 @@ public enum InboxRule {
     /// session the catalogue has no summary for is not checked. When no saved session
     /// was read at all, none of them is counted either way, and the headline keeps
     /// saying saved sessions are not checked.
-    public static func tally(threads: [InboxThread], feed: [String: AttentionRow], saved: InboxSaved = .unchecked) -> InboxTally {
+    public static func tally(
+        threads: [InboxThread], feed: [String: AttentionRow], saved: InboxSaved = .unchecked, tickets: [ProjectTicketRef] = []
+    ) -> InboxTally {
         var tally = InboxTally()
+
+        // A ticket that waits on an answer needs the owner, as the "Needs you" band
+        // that lists it says. One that waits to be read is counted by "To review".
+        tally.needing += tickets.filter { $0.ticket.stage.needsPerson && ProjectRule.lane(of: $0.ticket) == .answering }.count
         for thread in threads {
             // An approval and a failed run each count one: both are a session
             // reported as needing the owner, and the feed adds its own rows.
@@ -774,7 +819,7 @@ extension InboxRow {
     fileprivate var isFeedItem: Bool {
         switch subject {
         case .session: return false
-        case .ask, .stuck, .find: return true
+        case .ask, .stuck, .find, .ticket: return true
         }
     }
 
