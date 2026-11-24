@@ -578,13 +578,14 @@ final class AppModel {
     /// reports a change before it lands, so the recomputation waits one main-actor
     /// turn and reads the new values.
     func trackBoard() {
-        let (next, machines) = withObservationTracking {
+        let (next, machines, place) = withObservationTracking {
             (
                 InboxRule.board(
                     threads: inboxThreads, feed: attentionRows, raised: approvalRaised, reviewing: reviewing, saved: inboxSaved,
                     now: Int(Date().timeIntervalSince1970 * 1000)
                 ),
-                inboxMachines
+                inboxMachines,
+                destination == .inbox ? InboxPlace.inbox : InboxPlace.elsewhere
             )
         } onChange: { [weak self] in
             Task { @MainActor in self?.trackBoard() }
@@ -593,8 +594,14 @@ final class AppModel {
 
         // The open thread is settled in the same turn as the board it reads, so the
         // pane and the highlight never see a board the selection has not met.
-        let settled = InboxRule.settle(inboxOpening, rows: InboxRule.selectable(next.sections), machines: machines)
+        // Destination is tracked as well, so arriving on the Inbox opens the first
+        // thread then and not at launch, and leaving drops a resolved opening.
+        let settled = InboxRule.settle(inboxOpening, rows: InboxRule.selectable(next.sections), machines: machines, place: place)
         if settled != inboxOpening { inboxOpening = settled }
+
+        // A folder that has emptied is drawn as Everything. Forget it here, or a
+        // later item in that folder would narrow the list again with no click.
+        if InboxRule.shownFolder(chosen: inboxFolder, sections: next.sections) != inboxFolder { inboxFolder = .everything }
     }
 
     /// The unhealthy machines the inbox lists under its own section.
@@ -612,7 +619,7 @@ final class AppModel {
     /// is cleared, leaves the open thread as it is.
     func chooseInbox(_ selection: InboxSelection?) {
         guard let selection else { return }
-        inboxOpening = InboxRule.open(selection, rows: InboxRule.selectable(board.sections), machines: inboxMachines)
+        inboxOpening = InboxRule.open(selection, from: inboxOpening, rows: InboxRule.selectable(board.sections), machines: inboxMachines)
     }
 
     /// The owner picked a folder, and the open thread follows only when the folder
@@ -633,7 +640,7 @@ final class AppModel {
     /// folder returns to Everything so the row is among those drawn.
     func openInbox(_ subject: InboxSubject) {
         inboxFolder = .everything
-        inboxOpening = InboxRule.open(.thread(subject), rows: InboxRule.selectable(board.sections), machines: inboxMachines)
+        inboxOpening = InboxRule.open(.thread(subject), from: inboxOpening, rows: InboxRule.selectable(board.sections), machines: inboxMachines)
         destination = .inbox
     }
 
