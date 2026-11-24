@@ -247,7 +247,7 @@ def an_approval_thread_lays_out_its_evidence(c):
     c.app.go("inbox")
     row = wait_row(c, "Approval", "Evidence escalate", 60)
     open_thread(c, row)
-    c.app.see(r"^May this program run .* with write access to /Users/Shared/loom-desktop-escalation-test\?$", 20)
+    c.app.see(r"^May fs_write have write access to /Users/Shared/loom-desktop-escalation-test\?$", 20)
     texts = tree_texts(c)
     start = position(texts, "Tool")
     expected = [
@@ -265,7 +265,7 @@ def an_approval_thread_lays_out_its_evidence(c):
     check(any(t.startswith("Evidence escalate") and "waiting since" in t for t in texts), "the eyebrow should date the wait")
 
     # The card that decides is under the evidence, and the answers read Deny, then Allow.
-    check(position(texts, "DECIDE") > position(texts, "Policy today"), "the card should come after the evidence")
+    check(position(texts, "Decide") > position(texts, "Policy today"), "the card should come after the evidence")
     check(position(texts, "Deny") < position(texts, "Allow"), "Deny should come first")
 
     # The session's own page words the same card from the same read.
@@ -362,6 +362,7 @@ def a_review_thread_opens_on_the_first_file_and_sends_through_the_outbox(c):
     check("+12" in texts and "\u22120" in texts and "1 file" in texts, "the count pills are missing")
     check(any(t.startswith("last command: python3") and t.endswith("exit 0") for t in texts), "the last command should be named")
     check(any(t.startswith("fetch.py, added, +12") for t in texts), "the file's line should name how it changed")
+    check(not any(t.startswith("I noted the risk") and len(t) > 40 for t in texts[:8]), "the agent's message must not be the headline")
     check("@@ -0,0 +1,12 @@" in texts, "the first file should be open on its hunk")
 
     # The find sits under the line it names, so the pane has no separate list for it.
@@ -370,7 +371,7 @@ def a_review_thread_opens_on_the_first_file_and_sends_through_the_outbox(c):
     after = position(texts, "try:")
     check(at7 < pinned < after, f"the find should sit between lines 7 and 8: {at7} {pinned} {after}")
     check("The agent noticed (risk), untrusted text" in texts, "the find should be labelled as the agent's")
-    check(not any(t.startswith("NOTICED ALONG THE WAY") for t in texts), "a pinned find should not be listed apart")
+    check(not any(t.startswith("Noticed along the way") for t in texts), "a pinned find should not be listed apart")
 
     # Nothing is staged until a person stages it.
     c.app.see(r"^Not sent\.$", 5)
@@ -379,10 +380,10 @@ def a_review_thread_opens_on_the_first_file_and_sends_through_the_outbox(c):
     c.app.see(r"^To Reviewing demo \u00b7 1 staged\.$", 5)
     wait_for(lambda: c.app.enabled("Send"), 5, "Send to arm")
 
-    # Pressing the verdict again takes it back.
-    c.app.press("Approve")
-    c.app.see(r"^Not sent\.$", 5)
+    # The verdict is a segmented control: choosing another segment replaces the verdict,
+    # and Clear takes it back.
     c.app.press("Request changes")
+    c.app.not_see(r"^Verdict: approved$")
     c.app.see(r"^Verdict: changes requested$", 5)
     c.app.press("Dismiss")
     c.app.see(r"^Close find-\w+ as dismissed$", 5)
