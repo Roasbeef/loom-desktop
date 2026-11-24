@@ -697,3 +697,34 @@ def the_inbox_menu_follows_the_open_thread_and_a_thread_opens_in_its_own_window(
         return (c.app.dir / "state.txt").read_text()
 
     wait_for(lambda: "Menu ask askowner|" in windows(), 10, "a window of its own for the thread")
+
+
+# Notifications.
+
+
+@scenario("AI-45")
+def a_notification_plans_for_an_ask_and_a_click_opens_its_thread(c):
+    """A new ask is planned as a notice, a click on it opens its thread in the inbox, and answering the ask plans its removal."""
+    repo = fresh_repo("inbox-notice")
+
+    # An ask raised before the session's first feed read is taken as backlog, so the
+    # session is made first and asked only once the feed has answered for it.
+    sid = c.app.dispatch("Noticed session", repo)
+    wait_for(lambda: sid in c.app.snap()["notices"]["checked"], FEED_WAIT, "the feed to answer for the session")
+    c.app.prompt(sid, "askowner")
+    row = wait_row(c, "Ask", "Noticed session")
+    notice = "ask/" + row["id"]
+    wait_for(lambda: notice in c.app.snap()["notices"]["posted"], 30, "the ask to be planned as a notice")
+
+    # A click on the notification opens the thread, from any other page.
+    c.app.go("mission")
+    c.app.cmd("noticeclick " + row["id"])
+    wait_for(lambda: c.app.snap()["inbox"]["open"] == row["id"], 10, "the click to open the ask's thread")
+    c.app.see(r"^The agent asks, untrusted text$", 10)
+
+    # Nothing in the notification decides: the thread's own controls do.
+    c.app.press("Shared")
+    c.app.press("Yes")
+    c.app.press("Send answers")
+    wait_for(lambda: find_row(c, "Ask", "Noticed session") is None, 60, "the answered ask to leave the inbox")
+    wait_for(lambda: notice in c.app.snap()["notices"]["removed"], 30, "the notice to be removed")

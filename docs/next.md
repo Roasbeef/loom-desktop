@@ -23,7 +23,8 @@ Its in-flight items either landed in the parity work below or moved to
 | Native pass slice 1 (#3) | `main` | Merged 2026-11-21. |
 | Ask card above the composer, approval arming (#6) | `main` | Merged 2026-11-23. |
 | Native pass slice 2: the inbox as an `HSplitView` with a toolbar folder picker, one selection on the model, a refresh never moves it (`InboxRule.settle`) | branch `native/split-inbox`, worktree `/Users/roasbeef/gocode/src/github.com/roasbeef/ld-native` | Rebased on `107bf9d`, three commits (model, view, tests). `make test` 405 tests pass, the release bundle builds, and the full UI run was 134 passed, 7 failed. Two failures are known on main, four passed when run alone, and `an_executor_loss_is_reported` fails alone and on main. See "Verification state". Not pushed, no PR. |
-| Slices 3-5 (commands and keyboard, native controls in the pane, notifications) | `docs/native-pass.md` | Not started. |
+| Slices 3-4 (commands and keyboard, native controls in the pane) | `docs/native-pass.md` | Not started. |
+| Slice 5 (notifications) | `docs/native-pass.md` | PR open on `native/notifications`. |
 
 ### The attention inbox port
 
@@ -113,9 +114,10 @@ In the order and with the guardrails in `docs/native-pass.md`. The guardrails
 that matter most: no notification, row or toolbar button decides an approval;
 no unread or archive state on Needs-you rows; a menu Allow/Deny only while an
 armed card is visible (now in the Inbox menu, one action list with the context
-menus: `MissionKit/InboxCommands.swift`). Slice 5 must also settle the notifier change slice 1
-made: notifications are keyed per session row now, so a second approval on a
-session with one already waiting sends no new notification.
+menus: `MissionKit/InboxCommands.swift`). Slice 5 settled the notifier change slice 1
+made: a notice is keyed per row and kind, so a second approval on a session with
+one already waiting sends no new notification, by ruling (see slice 5 in
+`docs/native-pass.md`).
 
 ### 3. Verification of slice 2
 

@@ -290,9 +290,20 @@ public struct InboxBoard: Sendable, Equatable {
     public let tally: InboxTally
     /// How many threads the daemon gave a usable report for.
     public let reported: Int
+    /// The sessions the attention feed has answered for, which may hold no item. A
+    /// session outside this set has not had its asks and stuck strands read, which is
+    /// not the same as having none, so the notifier does not take a first read as news.
+    public let checked: Set<String>
 
     /// The board of nothing read yet.
-    public static let empty = InboxBoard(sections: [], tally: InboxTally(), reported: 0)
+    public static let empty = InboxBoard(sections: [], tally: InboxTally(), reported: 0, checked: [])
+
+    init(sections: [InboxSection], tally: InboxTally, reported: Int, checked: Set<String> = []) {
+        self.sections = sections
+        self.tally = tally
+        self.reported = reported
+        self.checked = checked
+    }
 
     /// Every row, in the order the groups are drawn.
     public var rows: [InboxRow] { sections.flatMap(\.rows) }
@@ -323,7 +334,7 @@ public struct InboxBoard: Sendable, Equatable {
     public func aged(now: Int) -> InboxBoard {
         InboxBoard(
             sections: sections.map { InboxSection(group: $0.group, rows: $0.rows.map { $0.aged(now: now) }) },
-            tally: tally, reported: reported
+            tally: tally, reported: reported, checked: checked
         )
     }
 }
@@ -466,6 +477,22 @@ public enum InboxRule {
         }
     }
 
+    // MARK: Feed reads
+
+    /// The feed rows to keep after one read. The daemon may leave a resident session
+    /// out of an answer, and the client treats that as not read rather than as empty,
+    /// so a session that is still resident and missing from this read keeps its last
+    /// row. A session that is no longer resident keeps none.
+    public static func keptFeed(
+        previous: [String: AttentionRow], read: [String: AttentionRow], resident: [String]
+    ) -> [String: AttentionRow] {
+        var kept = read.filter { resident.contains($0.key) }
+        for session in resident where kept[session] == nil {
+            if let old = previous[session] { kept[session] = old }
+        }
+        return kept
+    }
+
     // MARK: Raise times
 
     /// The raise time of each session's oldest pending approval after a refresh.
@@ -567,7 +594,8 @@ public enum InboxRule {
         InboxBoard(
             sections: sections(rows(threads: threads, feed: feed, raised: raised, reviewing: reviewing, now: now, clock: clock)),
             tally: tally(threads: threads, feed: feed, saved: saved),
-            reported: threads.filter { $0.activity != nil }.count
+            reported: threads.filter { $0.activity != nil }.count,
+            checked: Set(feed.keys)
         )
     }
 

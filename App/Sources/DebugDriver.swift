@@ -286,6 +286,9 @@ enum DebugDriver {
             // Moves the open thread one step through the list as Next Thread and
             // Previous Thread do, without a key window.
             model.stepInbox(parts[1] == "next" ? .next : .previous)
+        case "noticeclick" where parts.count > 1:
+            // Handles a click on a delivered notification for the row, as the center's delegate does.
+            NoticeClicks.shared.open(row: parts[1], session: parts[1].split(separator: "/").dropFirst().first.map(String.init))
         case "inboxfolder" where parts.count > 1:
             // Chooses an inbox folder by title, as the toolbar picker does. A menu-style
             // picker opens a tracking menu that an accessibility press cannot reach.
@@ -649,6 +652,9 @@ enum Snapshot {
         }
         body["sidebar"] = SidebarSnapshot.encode(model)
         body["inbox"] = InboxSnapshot.encode(model)
+        body["notices"] = [
+            "posted": Announcer.shared.posted, "removed": Announcer.shared.removed, "checked": model.board.checked.sorted(),
+        ]
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }

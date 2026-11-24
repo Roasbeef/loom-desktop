@@ -174,6 +174,40 @@ scenarios, merged when its gates pass. The order puts correctness first.
   words with untrusted text labelled.
 - Clicking one opens the thread. One thread identifier per session. A delivered
   notification is removed once its item resolves.
+- Done on `native/notifications`. `Notices.plan` in MissionKit diffs the previous
+  `InboxRule.board` against the new one: a new approval, ask, stuck strand or
+  failed run is posted, an identifier that left the board is removed, and an
+  unchanged board or any other kind does nothing. `Announcer` keeps the previous
+  board (`InboxBoard.empty` at first) and hands the plan to the notification
+  center, and `NoticeClicks`, set as the center's delegate in `LoomApp.init`, takes
+  the clicks. The title is the app's words ("Approval waiting", "Asks you a
+  question", "Strand stuck", "Run failed") and the session's name is the subtitle;
+  a session title can be derived from agent text and is shown bare, as the menu
+  bar and inbox show it. An ask's question is the only session text a body quotes,
+  on one line, with control and bidirectional scalars made visible, cut at 140
+  characters and prefixed "Untrusted text from the agent". An approval's body is
+  fixed, since its authority line is almost never read in time, and a failed run's
+  carries no session text.
+  The backlog is decided by the two boards, not by a flag. A row posts only when
+  its session had a row on the previous board, and an ask or stuck strand only when
+  the previous board had read that session's feed (`InboxBoard.checked`), so a
+  daemon that connects later, a remote that becomes reachable in the background and
+  a feed read that lands late post nothing for what was already open. The cost: an
+  ask raised before a new session's first feed read is taken as backlog. A resident
+  session that a feed read omits keeps its last row (`InboxRule.keptFeed`), so its
+  notices are not removed and posted again. The first board that holds a session
+  clears delivered notices that are not on it, from a run that quit with items
+  open. A click opens the row's thread, or the session's own thread when the row
+  has gone, raises or restores the main window (opening one only when none is on
+  screen or minimized), and waits for the model if it arrived first. The
+  notification has no actions. The thread identifier is the session id, and a
+  notice's identifier carries the kind, so an approval that is decided and then
+  fails the run swaps one notice for another. An approval is one row per session,
+  so a second approval on a session already waiting posts nothing, and an approval
+  decided and replaced inside one poll interval looks unchanged. Authorization is
+  requested at launch whatever the toggle says, since the toggle gates posting. The
+  scenario drives the plan and the click through the debug driver, since a test run
+  posts nothing to the center.
 
 ### Later, not in this pass
 
