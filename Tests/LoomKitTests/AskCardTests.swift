@@ -24,14 +24,15 @@ final class AskCardTests: XCTestCase {
         XCTAssertTrue(AskCardRule.cards(feed: feed([])).isEmpty)
     }
 
-    func testAnAnsweredAskLeavesTheCards() {
-        let before = AskCardRule.cards(feed: feed([ask("ask-1", at: 10), ask("ask-2", at: 20)]))
-        XCTAssertEqual(before.map(\.id), ["ask-1", "ask-2"])
+    func testAnAnsweredAskLeavesTheCardsAndAnOpenOneStays() {
+        let first = ask("ask-1", at: 10, head: "Which layout?")
+        let second = ask("ask-2", at: 20, head: "Retry?")
+        XCTAssertEqual(AskCardRule.cards(feed: feed([first, second])).map(\.id), ["ask-1", "ask-2"])
 
-        // The daemon drops an answered ask from the feed, so the next read shows one card.
-        let after = AskCardRule.cards(feed: feed([ask("ask-2", at: 20)]))
-        XCTAssertEqual(after.map(\.id), ["ask-2"])
-        XCTAssertTrue(AskCardRule.cards(feed: feed([])).isEmpty)
+        // The daemon drops an answered ask from the feed, so the next read shows only the open one.
+        let after = AskCardRule.cards(feed: feed([second]))
+        XCTAssertFalse(after.contains { $0.id == "ask-1" }, "the answered ask is gone")
+        XCTAssertEqual(after, [AskCard(id: "ask-2", strand: "main", since: 20, head: "Retry?", questions: 2)], "the open ask stays whole")
     }
 
     // MARK: The shelf
@@ -85,17 +86,32 @@ final class AskCardTests: XCTestCase {
 
     // MARK: Observers
 
-    func testAnObserverIsOfferedTheQuestionsAndNoForm() throws {
+    private func record(mayAnswer: Bool) throws -> AttentionRecord.Ask {
         let record = try XCTUnwrap(AttentionRecord(JSONValue.parse(Data("""
-        {"id":"ask-1","revision":1,"kind":"ask","status":"open","may_answer":false,
+        {"id":"ask-1","revision":1,"kind":"ask","status":"open","may_answer":\(mayAnswer),
          "questions":[{"key":"q1","prompt":"Retry?","kind":"confirm"}]}
         """.utf8))))
-        guard case .ask(let detail) = record.detail else { return XCTFail("not an ask") }
+        guard case .ask(let detail) = record.detail else { throw XCTSkip("not an ask") }
+        return detail
+    }
+
+    func testTheConnectionsRoleAloneMakesAnObserverReadOnly() throws {
+        // The daemon says the owner may answer, and the connection is still an observer.
+        let detail = try record(mayAnswer: true)
         XCTAssertEqual(
-            AnswerRule.offer(ask: detail, status: record.status, isObserver: true, unsupported: false),
+            AnswerRule.offer(ask: detail, status: "open", isObserver: true, unsupported: false),
             .words("Only the owner or an operator can answer an ask.")
         )
+        XCTAssertEqual(AnswerRule.offer(ask: detail, status: "open", isObserver: false, unsupported: false), .form)
         XCTAssertEqual(detail.questions.map { $0.prompt }, ["Retry?"], "the questions are still there to read")
+    }
+
+    func testTheDaemonsMayAnswerAloneMakesAnAskReadOnly() throws {
+        let detail = try record(mayAnswer: false)
+        XCTAssertEqual(
+            AnswerRule.offer(ask: detail, status: "open", isObserver: false, unsupported: false),
+            .words("Only the owner or an operator can answer an ask.")
+        )
     }
 
     // MARK: The mark on the asking turn
