@@ -79,12 +79,44 @@ final class AskCardTests: XCTestCase {
     // MARK: The head
 
     func testTheHeadSaysWhenTheAskWasRaisedAndWhoAsked() {
-        let card = AskCardRule.cards(feed: feed([ask("ask-1", at: 1_795_178_430_000)]))[0]
-        let utc = { (ms: Int) in ClockTime.words(ms, in: TimeZone(secondsFromGMT: 0)!) }
-        XCTAssertEqual(AskCardRule.header(card, strand: "main", clock: utc), "Ask \u{00B7} waiting since 12:40 \u{00B7} main")
+        let raised = 1_795_178_430_000 // 2026-11-20 12:40:30 UTC.
+        let card = AskCardRule.cards(feed: feed([ask("ask-1", at: raised)]))[0]
+        let utc = TimeZone(secondsFromGMT: 0)!
+        let clock = { (ms: Int) in ClockTime.words(ms, in: utc) }
+        let later = raised + 3 * 3_600_000
+        XCTAssertEqual(
+            AskCardRule.header(card, strand: "main", now: later, zone: utc, clock: clock),
+            "Ask \u{00B7} waiting since 12:40 \u{00B7} main"
+        )
     }
 
-    // MARK: Observers
+    func testTheHeadNamesTheDayWhenTheAskIsNotFromToday() {
+        let raised = 1_795_178_430_000
+        let card = AskCardRule.cards(feed: feed([ask("ask-1", at: raised)]))[0]
+        let utc = TimeZone(secondsFromGMT: 0)!
+        let clock = { (ms: Int) in ClockTime.words(ms, in: utc) }
+        let day = { (_: Date) in "Nov 20" }
+        let nextDay = raised + 24 * 3_600_000
+        XCTAssertEqual(
+            AskCardRule.header(card, strand: "main", now: nextDay, zone: utc, clock: clock, day: day),
+            "Ask \u{00B7} waiting since Nov 20, 12:40 \u{00B7} main"
+        )
+
+        // The zone decides what day it is. 23:00 UTC and 01:00 UTC the next day are
+        // both Nov 21 in UTC+2, so there the ask is from today.
+        let evening = 1_795_215_600_000 // 2026-11-20 23:00 UTC.
+        let late = AskCardRule.cards(feed: feed([ask("ask-2", at: evening)]))[0]
+        let plus2 = TimeZone(secondsFromGMT: 2 * 3600)!
+        let local = { (ms: Int) in ClockTime.words(ms, in: plus2) }
+        XCTAssertEqual(
+            AskCardRule.header(late, strand: "main", now: evening + 2 * 3_600_000, zone: plus2, clock: local, day: day),
+            "Ask \u{00B7} waiting since 01:00 \u{00B7} main"
+        )
+        XCTAssertEqual(
+            AskCardRule.header(late, strand: "main", now: evening + 2 * 3_600_000, zone: utc, clock: clock, day: day),
+            "Ask \u{00B7} waiting since Nov 20, 23:00 \u{00B7} main"
+        )
+    }
 
     private func record(mayAnswer: Bool) throws -> AttentionRecord.Ask {
         let record = try XCTUnwrap(AttentionRecord(JSONValue.parse(Data("""

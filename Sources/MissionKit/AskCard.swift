@@ -69,9 +69,21 @@ public enum AskCardRule {
     }
 
     /// The card's head, "Ask · waiting since 13:40 · main". `strand` is the name the
-    /// page draws for the asking strand.
-    public static func header(_ card: AskCard, strand: String, clock: (Int) -> String = ClockTime.local) -> String {
-        "Ask \u{00B7} waiting since \(clock(card.since)) \u{00B7} \(strand)"
+    /// page draws for the asking strand. An ask from another day names the day too,
+    /// "waiting since Nov 22, 13:40", as the app writes dates elsewhere (abbreviated),
+    /// since a time of day alone would read as today's.
+    public static func header(
+        _ card: AskCard, strand: String, now: Int = Int(Date().timeIntervalSince1970 * 1000),
+        zone: TimeZone = .current,
+        clock: (Int) -> String = ClockTime.local,
+        day: (Date) -> String = { $0.formatted(date: .abbreviated, time: .omitted) }
+    ) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = zone
+        let raised = Date(timeIntervalSince1970: Double(card.since) / 1000)
+        let isToday = calendar.isDate(raised, inSameDayAs: Date(timeIntervalSince1970: Double(now) / 1000))
+        let when = isToday ? clock(card.since) : day(raised) + ", " + clock(card.since)
+        return "Ask \u{00B7} waiting since \(when) \u{00B7} \(strand)"
     }
 
     /// The ids of the blocks the transcript marks with "Ask": for each turn that asked
