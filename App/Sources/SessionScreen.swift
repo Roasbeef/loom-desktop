@@ -823,7 +823,7 @@ private struct ComposerStack: View {
                         .padding(12)
                         .glassEffect(.regular, in: .rect(cornerRadius: Theme.radiusFloating))
                 } else {
-                    Composer(controller: controller)
+                    Composer(controller: controller, askCards: shelf.cards.count)
                 }
             }
         }
