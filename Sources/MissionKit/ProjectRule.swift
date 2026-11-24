@@ -312,6 +312,59 @@ public enum ProjectRule {
 
     // MARK: Router
 
+    /// What a session is doing, in a word, from the daemon's activity read. A session
+    /// the daemon gave no report for reads as not read, never as idle.
+    public static func activityWords(_ activity: SessionActivity?) -> String {
+        guard let activity else { return "not read" }
+        switch activity.state {
+        case .needsYou: return "needs you"
+        case .working: return "working"
+        case .idle: return "idle"
+        case .unknown: return "not read"
+        }
+    }
+
+    /// How long ago the router declined a message, or nothing when the daemon sent no
+    /// time.
+    public static func declinedAge(_ item: ProjectUnrouted, now: Int) -> String? {
+        InboxRule.age(since: item.atMs, now: now)?.words
+    }
+
+    /// The words for offering a declined message again.
+    public static func requeueRefusal(code: String, message: String) -> String {
+        switch code {
+        case "bad_request":
+            let said = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            return said.isEmpty || said == "request refused" ? "That message is not waiting." : ProjectText.safe(said, limit: 600)
+        case "forbidden": return "Only the owner can offer a message again."
+        case "not_found": return "The project or message is gone."
+        default: return "The daemon refused it (\(ProjectText.safe(code, limit: 32)))."
+        }
+    }
+
+    // MARK: A ticket's changes
+
+    /// What the Changes section can say before a read: nothing without a worker
+    /// session, and a saved session's tree is not read, since reading it would mean
+    /// resuming a session the owner did not choose to resume.
+    public static func changesPrecondition(session: String?, state: SessionState?) -> String? {
+        guard session != nil else { return "No worker session is bound to this ticket yet." }
+        guard let state else { return "The worker's session is not listed on this daemon." }
+        guard state.isResident else { return "The worker's session is \(state.label.lowercased()), so its working tree is not read." }
+        return nil
+    }
+
+    /// The caption under the changes: what the read is. Measured against a daemon, the
+    /// read lists the files the worker committed as well as those it left uncommitted,
+    /// so the caption claims no more than the daemon's own read.
+    public static let changesCaption =
+        "Read from the worker's session, as the daemon reports its working tree. It is not a check of the work."
+
+    /// The words for a session that reports no change.
+    public static func cleanTreeWords(_ review: ReviewRead) -> String? {
+        review.files.isEmpty ? "The worker's session reports no change." : nil
+    }
+
     /// What the router's session is doing, in a few words, from the session list's
     /// record of it. A router the list does not hold reads as not running, never as
     /// healthy.

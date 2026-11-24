@@ -234,3 +234,39 @@ def a_project_is_created_set_up_and_given_work(c):
         c.app.snap()["projects"]["results"].get(f"{pid}/{asked['id']}", "").startswith("Closed"),
         "the result is kept for the ticket",
     )
+
+
+@scenario("PJ-10")
+def a_tickets_changes_are_drawn_as_a_diff(c):
+    """A worker's uncommitted edit and its committed file are both drawn as the ticket's diff."""
+    pid = project(c)
+    known = {t["id"] for t in tickets(c, pid)}
+
+    def fresh(stage):
+        return wait_for(
+            lambda: next((t for t in tickets(c, pid) if t["id"] not in known and t["stage"] == stage), None),
+            TICKET_WAIT, f"a new ticket at {stage}",
+        )
+
+    # An edit left uncommitted in the worker's clone is a worktree diff against its head.
+    raw(c, "projects.post", {"project": pid, "request_id": "post-edit", "text": "edit then wait: raise the retry count"})
+    edited = fresh("person/answer")
+    known.add(edited["id"])
+    c.app.go("projects")
+    c.app.cmd(f"projectpick {pid} {edited['id']}")
+    c.app.see("Changes")
+    c.app.see("review-file/a.gleam|a.gleam", 30)
+    c.app.see("Read from the worker's session")
+    shoot(c, "projects-ticket-diff")
+
+    # A file the worker committed is in the daemon's read too.
+    raw(c, "projects.post", {"project": pid, "request_id": "post-commit-2", "text": "commit then wait: add a retry log"})
+    committed = fresh("person/check")
+    c.app.cmd(f"projectpick {pid} {committed['id']}")
+    c.app.see("review-file/retry.log|retry.log", 30)
+
+    for ticket in (edited, committed):
+        c.app.cmd(f"projectpick {pid} {ticket['id']}")
+        c.app.press("Stop")
+        c.app.press("Confirm Stop")
+        wait_for(lambda: any(t["id"] == ticket["id"] and t["stage"].startswith("ended/") for t in tickets(c, pid)), 30, "the ticket to end")

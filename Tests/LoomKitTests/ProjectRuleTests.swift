@@ -390,4 +390,47 @@ final class ProjectRuleTests: XCTestCase {
         XCTAssertEqual(ProjectRule.done(.close, stage: .ended("closed")), "Closed \u{00B7} the ticket is now ended/closed")
         XCTAssertEqual(ProjectRule.done(.stop, stage: nil), "Stopped")
     }
+
+    // MARK: The router page and a ticket's changes
+
+    func testWhatASessionIsDoingIsAWordAndAnUnreadOneIsNeverIdle() {
+        func activity(_ state: String) -> SessionActivity { SessionActivity(.object(["session_id": "s", "state": .string(state), "approvals": 0]))! }
+        XCTAssertEqual(ProjectRule.activityWords(activity("working")), "working")
+        XCTAssertEqual(ProjectRule.activityWords(activity("needs_you")), "needs you")
+        XCTAssertEqual(ProjectRule.activityWords(activity("idle")), "idle")
+        XCTAssertEqual(ProjectRule.activityWords(nil), "not read")
+        XCTAssertEqual(ProjectRule.activityWords(activity("sulking")), "not read")
+    }
+
+    func testADeclinedMessageIsAgedOnlyFromItsOwnTime() {
+        let timed = ProjectUnrouted(["trigger": "t", "at_ms": 1_000])!
+        let untimed = ProjectUnrouted(["trigger": "t"])!
+        XCTAssertEqual(ProjectRule.declinedAge(timed, now: 1_000 + 125_000), "2m")
+        XCTAssertNil(ProjectRule.declinedAge(untimed, now: 5_000_000))
+    }
+
+    func testTheChangesSayWhyTheyAreNotReadBeforeAnyReadIsMade() {
+        XCTAssertEqual(ProjectRule.changesPrecondition(session: nil, state: nil), "No worker session is bound to this ticket yet.")
+        XCTAssertEqual(ProjectRule.changesPrecondition(session: "s", state: nil), "The worker's session is not listed on this daemon.")
+        XCTAssertEqual(
+            ProjectRule.changesPrecondition(session: "s", state: .saved),
+            "The worker's session is saved, so its working tree is not read."
+        )
+        XCTAssertNil(ProjectRule.changesPrecondition(session: "s", state: .resident(incarnation: "i")))
+    }
+
+    func testASessionThatReportsNoChangeSaysSo() {
+        let clean = ReviewRead(.object([
+            "observed_at_ms": 1, "repository": "head", "stat": ["files": 0, "added": 0, "removed": 0], "omitted": 0,
+            "extent": "whole", "files": [],
+        ]))!
+        XCTAssertEqual(ProjectRule.cleanTreeWords(clean), "The worker's session reports no change.")
+        XCTAssertTrue(ProjectRule.changesCaption.contains("daemon"))
+    }
+
+    func testARequeueRefusalIsTheEnginesSentence() {
+        XCTAssertEqual(ProjectRule.requeueRefusal(code: "bad_request", message: "that message is not waiting"), "that message is not waiting")
+        XCTAssertEqual(ProjectRule.requeueRefusal(code: "bad_request", message: "request refused"), "That message is not waiting.")
+        XCTAssertEqual(ProjectRule.requeueRefusal(code: "forbidden", message: ""), "Only the owner can offer a message again.")
+    }
 }
