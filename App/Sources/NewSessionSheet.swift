@@ -247,13 +247,18 @@ struct DispatchSheet: View {
             guard let daemon else { return }
             projects = await daemon.pickerProjects()
         }
-        .task(id: daemonID) {
-            // The walk is bounded (FolderIndex) and runs off the main actor. It is
-            // a task of its own so a slow `projects.list` cannot delay it.
-            foundFolders = []
-            guard let daemon, !daemon.isRemote else { return }
-            let roots = model.pickerRoots
-            foundFolders = await Task.detached { FolderIndex.scan(roots: roots) }.value
+        .onChange(of: daemonID) { foundFolders = [] }
+        .task(id: isPickingFolder) {
+            // The walk starts when the popover first opens and not when the form
+            // does, because reading Desktop, Documents and Downloads can raise a
+            // macOS privacy prompt, and a person should meet that after asking to
+            // choose a folder. It is bounded (FolderIndex), runs off the main
+            // actor, and is a task of its own so a slow `projects.list` cannot
+            // delay it. A walk already done is kept.
+            guard isPickingFolder, foundFolders.isEmpty, let daemon, !daemon.isRemote else { return }
+            let walked = await FolderIndex.scanOffMain(roots: model.pickerRoots)
+            guard !Task.isCancelled else { return }
+            foundFolders = walked
         }
         .task(id: placement) {
             remoteWorkspaces = []
@@ -276,6 +281,14 @@ struct DispatchSheet: View {
         }
     }
 
+    /// What the picker says when it has no row and nothing is typed.
+    private var pickerEmptyNote: String {
+        switch placement {
+        case .pool: "Type the workspace name the pool serves."
+        case .local, .executor: "No folders yet. Type a path."
+        }
+    }
+
     private var isLocalDisk: Bool { placement == .local && daemon?.isRemote != true }
 
     /// The chip, and under it the daemon-independent judgement of a typed folder.
@@ -292,8 +305,11 @@ struct DispatchSheet: View {
                         source: FolderPickerSource(
                             recent: places,
                             projects: placement == .local ? projects : [],
-                            found: isLocalDisk ? foundFolders : [],
+                            found: isLocalDisk ? foundFolders.filter { !forgotten.contains($0) } : [],
                             canOpenPanel: isLocalDisk,
+                            canForget: placement == .local,
+                            recentTitle: placement == .local ? "Recent" : "Registered workspaces",
+                            emptyNote: pickerEmptyNote,
                             currentIsChosen: !workspace.isEmpty,
                             current: workspace,
                             onPick: { workspace = $0 },
@@ -304,7 +320,7 @@ struct DispatchSheet: View {
                     )
                 }
                 if !workspace.isEmpty {
-                    Text((workspace as NSString).deletingLastPathComponent.isEmpty ? "" : FolderPicker.abbreviate((workspace as NSString).deletingLastPathComponent))
+                    Text(FolderPicker.abbreviate((workspace as NSString).deletingLastPathComponent))
                         .font(Theme.meta)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)

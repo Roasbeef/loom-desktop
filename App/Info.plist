@@ -13,6 +13,9 @@
 	<key>LSMinimumSystemVersion</key><string>26.0</string>
 	<key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 	<key>NSHighResolutionCapable</key><true/>
+	<key>NSDesktopFolderUsageDescription</key><string>Loom lists folders here so you can pick one for a session.</string>
+	<key>NSDocumentsFolderUsageDescription</key><string>Loom lists folders here so you can pick one for a session.</string>
+	<key>NSDownloadsFolderUsageDescription</key><string>Loom lists folders here so you can pick one for a session.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key><true/>

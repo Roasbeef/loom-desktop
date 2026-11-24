@@ -71,6 +71,17 @@ struct FolderPickerSource {
     /// Whether the folder can be browsed with the system panel and judged on this
     /// Mac. A remote daemon's folders and an executor's names cannot.
     var canOpenPanel: Bool
+
+    /// Whether a recent row can be forgotten. Forgetting is this app's own list
+    /// of local folders, so an executor's registered names cannot be.
+    var canForget: Bool
+
+    /// The heading of the first section: "Recent" for folders, and the registered
+    /// workspaces' own name for an executor.
+    var recentTitle: String
+
+    /// What an empty list says with nothing typed.
+    var emptyNote: String
     var currentIsChosen: Bool
     var current: String
     var onPick: (String) -> Void
@@ -95,16 +106,22 @@ struct FolderPickerPopover: View {
     let source: FolderPickerSource
     let dismiss: () -> Void
     @State private var query = ""
-    @State private var selection = 0
+    @State private var requested = 0
     @FocusState private var isSearchFocused: Bool
 
     private var sections: PickerSections {
         FolderPicker.sections(query: query, recent: source.recent, projects: source.projects, found: source.found)
     }
 
+    /// The selected row, kept inside the list as the list changes under it.
+    private func selection(in rows: [PickerChoice]) -> Int {
+        min(max(requested, 0), max(rows.count - 1, 0))
+    }
+
     var body: some View {
         let sections = sections
         let rows = sections.all
+        let selection = selection(in: rows)
         VStack(spacing: 0) {
             TextField("Search folders…", text: $query)
                 .textFieldStyle(.plain)
@@ -116,7 +133,7 @@ struct FolderPickerPopover: View {
                 .onSubmit { pick(rows) }
                 .onKeyPress(.downArrow) { move(1, in: rows); return .handled }
                 .onKeyPress(.upArrow) { move(-1, in: rows); return .handled }
-                .onChange(of: query) { selection = 0 }
+                .onChange(of: query) { requested = 0 }
 
             Divider()
 
@@ -139,19 +156,19 @@ struct FolderPickerPopover: View {
                             .accessibilityLabel("No folder")
                         }
                         if sections.typedLeads { section("Use what you typed", sections.typed, rows: rows) }
-                        section("Recent", sections.recent, rows: rows)
+                        section(source.recentTitle, sections.recent, rows: rows)
                         section("Projects", sections.projects, rows: rows)
                         section("Folders", sections.found, rows: rows)
                         if !sections.typedLeads { section("Use what you typed", sections.typed, rows: rows) }
                         if rows.isEmpty {
-                            Text("Nothing matches.")
+                            Text(query.isEmpty ? source.emptyNote : "Nothing matches.")
                                 .font(Theme.caption)
                                 .foregroundStyle(.secondary)
                                 .padding(12)
                         }
                     }
                 }
-                .onChange(of: selection) {
+                .onChange(of: requested) {
                     if rows.indices.contains(selection) { proxy.scrollTo(rows[selection].id) }
                 }
             }
@@ -173,7 +190,13 @@ struct FolderPickerPopover: View {
             }
         }
         .frame(width: 380)
-        .onAppear { isSearchFocused = true }
+        .onAppear {
+            isSearchFocused = true
+
+            // Return with nothing typed keeps the current folder.
+            let rows = sections.all
+            requested = rows.firstIndex { $0.path == source.current } ?? 0
+        }
     }
 
     // MARK: Rows
@@ -187,8 +210,8 @@ struct FolderPickerPopover: View {
                     FolderRow(
                         choice: choice,
                         isCurrent: choice.path == source.current,
-                        isSelected: index == selection,
-                        canForget: choice.kind == .recent && source.canOpenPanel,
+                        isSelected: index == selection(in: rows),
+                        canForget: choice.kind == .recent && source.canForget,
                         onPick: { choose(choice) },
                         onForget: { source.onForget(choice.path) }
                     )
@@ -210,12 +233,12 @@ struct FolderPickerPopover: View {
 
     private func move(_ step: Int, in rows: [PickerChoice]) {
         guard !rows.isEmpty else { return }
-        selection = min(max(selection + step, 0), rows.count - 1)
+        requested = min(max(selection(in: rows) + step, 0), rows.count - 1)
     }
 
     private func pick(_ rows: [PickerChoice]) {
-        guard rows.indices.contains(selection) else { return }
-        choose(rows[selection])
+        guard !rows.isEmpty else { return }
+        choose(rows[selection(in: rows)])
     }
 
     private func choose(_ choice: PickerChoice) {
