@@ -11,12 +11,29 @@ import LoomKit
 //
 // ## Flow
 //
-// `Notices.plan` takes the board the notifier saw last (nil before the first read)
-// and the board it sees now. A row that is new in the second and is one of the four
-// kinds becomes a `Notice` to post. An identifier that was open in the first and is
-// not in the second goes in `remove`, because its item was answered, decided,
-// retried or dismissed, or changed into something that no longer needs the owner.
-// `Notices.content` words one row.
+// `Notices.plan` takes the board the notifier saw last (`InboxBoard.empty` before
+// anything was read) and the board it sees now. A row that is new in the second and
+// is one of the four kinds becomes a `Notice` to post, unless the first board
+// cannot vouch that the row is news (see "What counts as news"). An identifier that
+// was open in the first and is not in the second goes in `remove`, because its
+// item was answered, decided, retried or dismissed, or changed into something that
+// no longer needs the owner. `Notices.notice` words one row and is nil for the kinds
+// that have no notice, so the four kinds are listed once.
+//
+// ## What counts as news
+//
+// A row is news only when its session had a row on the previous board, and an ask
+// or a stuck strand only when the previous board had also read that session's
+// attention feed (`InboxBoard.checked`). That makes the backlog a property of the
+// two boards and not of a flag in the adapter: a second daemon that connects later,
+// a remote that becomes reachable while the app is in the background, and a feed
+// read that lands after the session list all arrive as sessions or feed entries the
+// previous board lacked, so none posts its backlog. The cost is that an ask raised
+// before a new session's first feed read is taken as backlog and never notified.
+//
+// One approval is one row per session, so a second approval on a session that
+// already has one waiting posts no notice, and an approval decided and replaced by a
+// new one inside one poll interval looks unchanged and does not post again.
 //
 // ## What a notice says
 //
@@ -24,7 +41,9 @@ import LoomKit
 // approval is decided only beside its evidence. Its title is the app's own words
 // for the kind. Whatever a session wrote (an ask's question, a command an approval
 // requests) is the body, and the body says whose words they are, so a notice is
-// never read as the app speaking. The session's name is the subtitle.
+// never read as the app speaking. The session's name is the subtitle. A session's
+// title can be derived from what an agent wrote, and the subtitle shows it bare, as
+// the menu bar and the inbox already do.
 
 /// One notification to deliver.
 public struct Notice: Sendable, Equatable {
@@ -59,68 +78,68 @@ public enum Notices {
     /// The longest stretch of session text a notice carries, in characters.
     public static let quoteCharacters = 140
 
-    /// The identifier of a row's notice, or nil for a kind that has none.
-    public static func identifier(of row: InboxRow) -> String? {
-        switch row.kind {
-        case .approval, .failed, .ask, .stuck: return "\(row.kind.chip.lowercased())/\(row.id)"
-        case .review, .waiting, .working, .quiet, .find: return nil
-        }
-    }
-
-    /// Compares two boards. `previous` is nil before the first read, which is a
-    /// backlog and not news, so it posts nothing and removes nothing.
-    ///
-    /// `authority` gives the line an approval's card requests, when the session's
-    /// card has been read, since the board's own line for an approval is the
-    /// session's last message.
+    /// Compares two boards. A notice is posted only for a row that is news, as the
+    /// header says, and removed when its identifier left the board.
     ///
     /// ## Examples
     ///
-    /// A board with one new ask against an empty one posts one notice; the same
-    /// board twice posts none; the empty board against the first removes it.
-    public static func plan(
-        previous: InboxBoard?, next: InboxBoard, authority: (InboxRow) -> String? = { _ in nil }
-    ) -> NoticePlan {
-        guard let previous else { return NoticePlan(post: [], remove: []) }
-        let before = Set(previous.rows.compactMap(identifier(of:)))
-        let after = Set(next.rows.compactMap(identifier(of:)))
+    /// A board with one new ask against one that had read the session's feed and
+    /// held none posts one notice; the same board twice posts none; the empty board
+    /// against the first removes it.
+    public static func plan(previous: InboxBoard, next: InboxBoard) -> NoticePlan {
+        let before = Set(previous.rows.compactMap(notice(of:)).map(\.identifier))
+        let known = Set(previous.rows.map(\.sessionID))
         let post = next.rows.compactMap { row -> Notice? in
-            guard let id = identifier(of: row), !before.contains(id) else { return nil }
-            return content(of: row, identifier: id, authority: authority(row))
+            guard let notice = notice(of: row), !before.contains(notice.identifier) else { return nil }
+            guard known.contains(row.sessionID) else { return nil }
+            switch row.kind {
+            case .ask, .stuck: return previous.checked.contains(row.sessionID) ? notice : nil
+            default: return notice
+            }
         }
+        let after = Set(next.rows.compactMap(notice(of:)).map(\.identifier))
         return NoticePlan(post: post, remove: before.subtracting(after).sorted())
     }
 
-    /// Words one row's notice. Only the quoted part is session text.
-    static func content(of row: InboxRow, identifier: String, authority: String?) -> Notice {
+    /// The notice a row makes, or nil for a kind that has none. Only the quoted part
+    /// is session text.
+    public static func notice(of row: InboxRow) -> Notice? {
+        let kind: String
         let title: String
         let body: String
         switch row.kind {
         case .approval:
+            kind = "approval"
             title = "Approval waiting"
-            body = authority.map { "Requests, untrusted text from the agent: \(quote($0))" }
-                ?? "Open the thread to read what it asks for."
+            body = "Open the thread to read what it asks for."
         case .ask:
+            kind = "ask"
             title = "Asks you a question"
             body = "Untrusted text from the agent: \(quote(row.head))"
         case .stuck:
             // The head is the daemon's own account of why the strand stopped.
+            kind = "stuck"
             title = "Strand stuck"
             body = row.head
-        case .failed, .review, .waiting, .working, .quiet, .find:
+        case .failed:
+            kind = "failed"
             title = "Run failed"
             body = "The last run failed. Open the thread to read why."
+        case .review, .waiting, .working, .quiet, .find:
+            return nil
         }
         return Notice(
-            identifier: identifier, thread: row.sessionID, subject: row.subject,
+            identifier: "\(kind)/\(row.id)", thread: row.sessionID, subject: row.subject,
             title: title, subtitle: row.name, body: body
         )
     }
 
-    /// One line of session text, cut to `quoteCharacters`.
+    /// One line of session text with control and bidirectional scalars made visible,
+    /// cut to `quoteCharacters`.
     static func quote(_ text: String) -> String {
-        let line = text.split(whereSeparator: \.isNewline).joined(separator: " ")
+        let flat = text.split(whereSeparator: \.isNewline).joined(separator: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let line = Escalation.escapeForDisplay(flat)
         guard line.count > quoteCharacters else { return line }
         return String(line.prefix(quoteCharacters - 1)) + "\u{2026}"
     }

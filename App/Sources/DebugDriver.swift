@@ -652,7 +652,9 @@ enum Snapshot {
         }
         body["sidebar"] = SidebarSnapshot.encode(model)
         body["inbox"] = InboxSnapshot.encode(model)
-        body["notices"] = ["posted": Announcer.shared.posted, "removed": Announcer.shared.removed]
+        body["notices"] = [
+            "posted": Announcer.shared.posted, "removed": Announcer.shared.removed, "checked": model.board.checked.sorted(),
+        ]
         guard let data = try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) else { return "{}" }
         return String(decoding: data, as: UTF8.self)
     }

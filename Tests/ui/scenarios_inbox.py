@@ -706,8 +706,13 @@ def the_inbox_menu_follows_the_open_thread_and_a_thread_opens_in_its_own_window(
 def a_notification_plans_for_an_ask_and_a_click_opens_its_thread(c):
     """A new ask is planned as a notice, a click on it opens its thread in the inbox, and answering the ask plans its removal."""
     repo = fresh_repo("inbox-notice")
-    c.app.dispatch("Noticed askowner", repo)
-    row = wait_row(c, "Ask", "Noticed askowner")
+
+    # An ask raised before the session's first feed read is taken as backlog, so the
+    # session is made first and asked only once the feed has answered for it.
+    sid = c.app.dispatch("Noticed session", repo)
+    wait_for(lambda: sid in c.app.snap()["notices"]["checked"], FEED_WAIT, "the feed to answer for the session")
+    c.app.prompt(sid, "askowner")
+    row = wait_row(c, "Ask", "Noticed session")
     notice = "ask/" + row["id"]
     wait_for(lambda: notice in c.app.snap()["notices"]["posted"], 30, "the ask to be planned as a notice")
 
@@ -721,5 +726,5 @@ def a_notification_plans_for_an_ask_and_a_click_opens_its_thread(c):
     c.app.press("Shared")
     c.app.press("Yes")
     c.app.press("Send answers")
-    wait_for(lambda: find_row(c, "Ask", "Noticed askowner") is None, 60, "the answered ask to leave the inbox")
+    wait_for(lambda: find_row(c, "Ask", "Noticed session") is None, 60, "the answered ask to leave the inbox")
     wait_for(lambda: notice in c.app.snap()["notices"]["removed"], 30, "the notice to be removed")

@@ -354,8 +354,10 @@ final class DaemonConnection: Identifiable {
     private func refreshAttention(_ control: ControlClient, resident: [String], activity: [String: SessionActivity]) async {
         if let rows = try? await control.attention(sessions: resident) {
             // Only sessions still resident keep a row, so a stopped session's old
-            // asks do not linger.
-            if attentionRows != rows { attentionRows = rows }
+            // asks do not linger. A resident session this read left out keeps its
+            // last row, so its notices are not removed and posted again.
+            let kept = InboxRule.keptFeed(previous: attentionRows, read: rows, resident: resident)
+            if attentionRows != kept { attentionRows = kept }
         }
         await refreshSaved(control)
         var read: [String: Int] = [:]

@@ -8,6 +8,13 @@ struct LoomApp: App {
     @State private var model = AppModel()
     @Environment(\.openWindow) private var openWindow
 
+    init() {
+        // The center delivers a click that launched the app as soon as a delegate is
+        // set, which can be before any window and its model exist, so the delegate is
+        // set here and a click waits in `NoticeClicks` for the model.
+        if !Announcer.isUnderTest { UNUserNotificationCenter.current().delegate = NoticeClicks.shared }
+    }
+
     var body: some Scene {
         WindowGroup("Loom", id: "main") {
             RootView()
@@ -17,11 +24,7 @@ struct LoomApp: App {
                     model.appearance.apply()
                     model.start()
                     Announcer.shared.watch(model)
-                    NoticeClicks.shared.showWindow = {
-                        // A second main window would open beside one already there.
-                        let hasMain = NSApp.windows.contains { $0.identifier?.rawValue.hasPrefix("main") == true }
-                        if !hasMain { openWindow(id: "main") }
-                    }
+                    NoticeClicks.shared.showWindow = { raiseMainWindow { openWindow(id: "main") } }
                     #if DEBUG
                     DebugDriver.start(model: model)
                     #endif
@@ -162,6 +165,18 @@ private struct SessionMenuItems: View {
     }
 }
 
+/// Brings the main window forward: a minimized one is restored, one on screen is
+/// raised, and with neither `open` makes one, so a second main window never opens
+/// beside a window that is already there. A closed window is not visible and not
+/// minimized, so it is opened again.
+@MainActor
+func raiseMainWindow(open: () -> Void) {
+    let mains = NSApp.windows.filter { $0.identifier?.rawValue.hasPrefix("main") == true }
+    guard let window = mains.first(where: { $0.isVisible || $0.isMiniaturized }) else { return open() }
+    if window.isMiniaturized { window.deminiaturize(nil) }
+    window.makeKeyAndOrderFront(nil)
+}
+
 private struct MenuBarContent: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
@@ -190,13 +205,13 @@ private struct MenuBarContent: View {
 
     private func show(_ subject: InboxSubject) {
         model.openInbox(subject)
-        openWindow(id: "main")
+        raiseMainWindow { openWindow(id: "main") }
         NSApplication.shared.activate()
     }
 
     private func show(_ destination: Destination) {
         model.destination = destination
-        openWindow(id: "main")
+        raiseMainWindow { openWindow(id: "main") }
         NSApplication.shared.activate()
     }
 }
@@ -208,24 +223,27 @@ private struct MenuBarContent: View {
 @MainActor
 final class Announcer {
     static let shared = Announcer()
-    private var previous: InboxBoard?
+    private var previous = InboxBoard.empty
     private var isWatching = false
+    private var hasSwept = false
 
+    #if DEBUG
     /// The identifiers of every notice the plan listed. A real run posts those while
-    /// the app is in the background; a test posts none and only records them. A scenario reads them to see the plan.
+    /// the app is in the background; a test posts none and only records them.
     private(set) var posted: [String] = []
 
     /// The identifiers removed after their item resolved, in the same spirit.
     private(set) var removed: [String] = []
+    #endif
 
     func watch(_ model: AppModel) {
         guard !isWatching else { return }
         isWatching = true
-        let notifies = UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true
-        if !isUnderTest {
-            let center = UNUserNotificationCenter.current()
-            center.delegate = NoticeClicks.shared
-            if notifies { center.requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in } }
+
+        // Asking is not gated on the toggle, which gates posting, so turning it on
+        // later finds the permission already settled.
+        if !Self.isUnderTest {
+            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
         }
         NoticeClicks.shared.model = model
         Task {
@@ -237,7 +255,7 @@ final class Announcer {
         }
     }
 
-    private var isUnderTest: Bool {
+    static var isUnderTest: Bool {
         #if DEBUG
         ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] != nil
         #else
@@ -249,27 +267,26 @@ final class Announcer {
         let board = model.board
         NSApp.dockTile.badgeLabel = board.dockLabel
 
-        // Until a daemon has reported a session the board is empty because nothing was
-        // read, not because nothing waits, so that board is not the backlog's baseline.
-        guard board.reported > 0 || previous != nil else { return }
-        let plan = Notices.plan(previous: previous, next: board) { row in
-            guard row.kind == .approval else { return nil }
-            return model.controller(for: row.sessionID)?.escalations.first?.authorityLines.first
+        // The first board that holds a session is the baseline. Notices a previous run
+        // delivered for items that resolved while the app was quit are cleared against it.
+        if !hasSwept, board.reported > 0 {
+            hasSwept = true
+            sweep(keeping: Set(board.rows.compactMap(Notices.notice(of:)).map(\.identifier)))
         }
+        let plan = Notices.plan(previous: previous, next: board)
         previous = board
         guard !plan.isEmpty else { return }
 
         // A resolved item's notice goes whether or not notifications are on or the
         // app is in front, so nothing stale is left in the center.
+        #if DEBUG
         removed += plan.remove
-        if !isUnderTest {
-            let center = UNUserNotificationCenter.current()
-            center.removeDeliveredNotifications(withIdentifiers: plan.remove)
-            center.removePendingNotificationRequests(withIdentifiers: plan.remove)
-        }
-
         posted += plan.post.map(\.identifier)
-        guard !isUnderTest else { return }
+        #endif
+        guard !Self.isUnderTest else { return }
+        let center = UNUserNotificationCenter.current()
+        center.removeDeliveredNotifications(withIdentifiers: plan.remove)
+        center.removePendingNotificationRequests(withIdentifiers: plan.remove)
 
         // An owner looking at the app is told by the app itself.
         guard !NSApp.isActive, UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true else { return }
@@ -281,7 +298,16 @@ final class Announcer {
             content.sound = .default
             content.threadIdentifier = notice.thread
             content.userInfo = [NoticeClicks.rowKey: notice.subject.key, NoticeClicks.sessionKey: notice.thread]
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: notice.identifier, content: content, trigger: nil))
+            center.add(UNNotificationRequest(identifier: notice.identifier, content: content, trigger: nil))
+        }
+    }
+
+    /// Removes delivered notices whose identifier is not in `keeping`.
+    private func sweep(keeping: Set<String>) {
+        guard !Self.isUnderTest else { return }
+        UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+            let stale = delivered.map(\.request.identifier).filter { !keeping.contains($0) }
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: stale)
         }
     }
 }
@@ -294,8 +320,18 @@ final class NoticeClicks: NSObject, UNUserNotificationCenterDelegate, @unchecked
     static let rowKey = "row"
     static let sessionKey = "session"
 
-    /// Set once, on the main actor, before the center can call back.
-    @MainActor var model: AppModel?
+    /// Set once, on the main actor. A click that arrived first waits in `pending`
+    /// and is opened here.
+    @MainActor var model: AppModel? {
+        didSet {
+            guard model != nil, let waiting = pending else { return }
+            pending = nil
+            open(row: waiting.row, session: waiting.session)
+        }
+    }
+
+    /// A click that arrived before the model existed.
+    @MainActor private var pending: (row: String?, session: String?)?
 
     /// Raises the main window, which a click should do even when it was closed.
     @MainActor var showWindow: () -> Void = {}
@@ -313,7 +349,10 @@ final class NoticeClicks: NSObject, UNUserNotificationCenterDelegate, @unchecked
     /// an item that resolved while the notification sat in the center is.
     @MainActor
     func open(row: String?, session: String?) {
-        guard let model else { return }
+        guard let model else {
+            pending = (row, session)
+            return
+        }
         let rows = model.board.rows
         let subject = rows.first { $0.id == row }?.subject ?? session.map { InboxSubject.session($0) }
         showWindow()
