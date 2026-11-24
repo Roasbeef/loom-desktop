@@ -23,7 +23,7 @@ Its in-flight items either landed in the parity work below or moved to
 | Native pass slice 1 (#3) | `main` | Merged 2026-11-21. |
 | Ask card above the composer, approval arming (#6) | `main` | Merged 2026-11-23. |
 | Native pass slice 2: the inbox as an `HSplitView` with a toolbar folder picker, one selection on the model, a refresh never moves it (`InboxRule.settle`) | branch `native/split-inbox`, worktree `/Users/roasbeef/gocode/src/github.com/roasbeef/ld-native` | Rebased on `107bf9d`, three commits (model, view, tests). `make test` 405 tests pass, the release bundle builds, and the full UI run was 134 passed, 7 failed. Two failures are known on main, four passed when run alone, and `an_executor_loss_is_reported` fails alone and on main. See "Verification state". Not pushed, no PR. |
-| Slices 3-4 (commands and keyboard, native controls in the pane) | `docs/native-pass.md` | Not started. |
+| Slice 4 (native controls in the reading pane) | branch `native/reading-pane` | PR open. See slice 4 in `docs/native-pass.md`; the answer options were deliberately not converted. |
 | Slice 5 (notifications) | `docs/native-pass.md` | PR open on `native/notifications`. |
 
 ### The attention inbox port
