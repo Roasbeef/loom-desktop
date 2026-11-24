@@ -71,6 +71,9 @@ public enum AnswerRule {
     /// The longest `fill` of any other format, in bytes.
     public static let maxFillBytes = 1000
 
+    /// What the session page's card says when the daemon cannot take an answer.
+    public static let cardUnsupportedWords = "This daemon cannot take answers here. Answer it in the web view."
+
     /// The line an ask keeps when the daemon cannot take an answer, which is what the
     /// app said before the command existed.
     public static let unsupportedWords = "Answer on the session's page; this window shows an ask and does not answer it."
@@ -79,7 +82,13 @@ public enum AnswerRule {
 
     /// Whether an ask shows a form. `status` is the record's (`open`, `answered`);
     /// `unsupported` is true when the daemon has refused the command as unknown.
-    public static func offer(ask: AttentionRecord.Ask, status: String, isObserver: Bool, unsupported: Bool) -> AnswerOffer {
+    ///
+    /// `unsupportedWords` is what an older daemon's ask says; the session page's card
+    /// passes its own, since the default sends a reader to the page they are on.
+    public static func offer(
+        ask: AttentionRecord.Ask, status: String, isObserver: Bool, unsupported: Bool,
+        unsupportedWords: String = AnswerRule.unsupportedWords
+    ) -> AnswerOffer {
         if unsupported { return .words(unsupportedWords) }
         if status == "answered" { return .words("This ask has been answered.") }
         if let routing = ask.routing, routing != "owner" {

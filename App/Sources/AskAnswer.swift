@@ -29,13 +29,17 @@ struct AskAnswering: View {
     let record: AttentionRecord
     let ask: AttentionRecord.Ask
     let isObserver: Bool
+    /// What the ask says when the daemon cannot take an answer. The session page's
+    /// card passes its own, since the default sends a reader to the page they are on.
+    var unsupportedWords: String = AnswerRule.unsupportedWords
     /// Reads the record again and answers whether the read landed.
     let reread: () async -> Bool
 
     var body: some View {
         let offer = AnswerRule.offer(
             ask: ask, status: record.status, isObserver: isObserver,
-            unsupported: model.daemon(holding: sessionID)?.cannotTakeAnswers ?? false
+            unsupported: model.daemon(holding: sessionID)?.cannotTakeAnswers ?? false,
+            unsupportedWords: unsupportedWords
         )
         switch offer {
         case .form:

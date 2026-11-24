@@ -12,6 +12,9 @@ import UniformTypeIdentifiers
 /// arrow keys, Tab, Return and Escape drive it instead of the editor.
 struct Composer: View {
     let controller: SessionController
+    /// How many ask cards are drawn above. A card that leaves while one of its fields
+    /// has the caret leaves nothing focused, so the editor takes the caret back.
+    var askCards = 0
     @FocusState private var isFocused: Bool
     @State private var isChoosingFiles = false
     @State private var isDropTarget = false
@@ -207,6 +210,9 @@ struct Composer: View {
         // Closing the side question panel leaves nothing focused, so the editor takes it back.
         .onChange(of: controller.showsSideQuestion) {
             if !controller.showsSideQuestion { isFocused = true }
+        }
+        .onChange(of: askCards) { old, new in
+            if new < old { isFocused = true }
         }
         .onChange(of: isFocused, initial: true) {
             if isFocused { PasteBridge.target = composer }
