@@ -12,20 +12,37 @@ import SwiftUI
 struct ProjectComposer: View {
     @Environment(AppModel.self) private var model
     let project: String
-    @State private var requestID = ProjectPost.requestID(UUID())
     @State private var isSending = false
     @State private var result: TicketResult?
 
     private var key: String { "post/\(project)" }
+    private var idKey: String { "postid/\(project)" }
+
+    /// The text of the request. Changing it makes it a new request, so it drops the id
+    /// that an earlier attempt of the old text may still hold.
     private var text: Binding<String> {
-        Binding(get: { model.projectFields[key] ?? "" }, set: { model.projectFields[key] = $0 })
+        Binding(get: { model.projectFields[key] ?? "" }, set: { model.projectFields[key] = $0; model.projectFields[idKey] = nil })
+    }
+
+    /// The id of the request being composed. It is kept beside the text, on the model, so
+    /// a sheet or pane that is closed and opened again after a reply was lost still sends
+    /// the same id, and the daemon posts the request once.
+    private func requestID() -> String {
+        if let held = model.projectFields[idKey] { return held }
+        let made = ProjectPost.requestID(UUID())
+        model.projectFields[idKey] = made
+        return made
     }
 
     var body: some View {
         PaneSection("Request work") {
             TextField("What should the router do?", text: text, axis: .vertical)
                 .textFieldStyle(.roundedBorder).lineLimit(2...8)
+                .disabled(isSending)
                 .accessibilityLabel("Request text")
+            if let problem = ProjectPost.problem(text.wrappedValue) {
+                Text(verbatim: problem).font(Theme.caption).foregroundStyle(Theme.failure)
+            }
             HStack {
                 Button(isSending ? "Posting…" : "Post Request") { post() }
                     .buttonStyle(.bordered)
@@ -41,7 +58,7 @@ struct ProjectComposer: View {
     private func post() {
         guard let words = ProjectPost.text(text.wrappedValue), let daemon = model.daemon(holdingProject: project),
               let control = daemon.control else { return }
-        let id = requestID
+        let id = requestID()
         isSending = true
         result = nil
         Task {
@@ -49,12 +66,14 @@ struct ProjectComposer: View {
             do {
                 let receipt = try await control.postToProject(project, requestID: id, text: words)
                 result = TicketResult(words: ProjectPost.receiptWords(receipt), isRefusal: false)
-                text.wrappedValue = ""
-                requestID = ProjectPost.requestID(UUID())
+                model.projectFields[key] = nil
+                model.projectFields[idKey] = nil
                 await daemon.readProjectsNow()
             } catch LoomError.server(let code, let message, _) {
                 result = TicketResult(words: ProjectPost.refusal(code: code, message: message), isRefusal: true)
-                requestID = ProjectPost.requestID(UUID())
+
+                // A refusal means nothing was posted, so the next attempt is a new request.
+                model.projectFields[idKey] = nil
             } catch {
                 // The id is kept: the request may have been taken, and sending it
                 // again with the same id changes nothing if it was.
@@ -71,6 +90,9 @@ struct ProjectSettingsView: View {
     let project: String
     @State private var read: ProjectSettings?
     @State private var draft = SettingsDraft()
+
+    /// The form as the last read gave it, which says which fields the owner has touched.
+    @State private var base = SettingsDraft()
     @State private var isSaving = false
     @State private var result: TicketResult?
 
@@ -91,10 +113,12 @@ struct ProjectSettingsView: View {
 
     private func load() async {
         guard let control = daemon?.control, let settings = try? await control.projectSettings(project) else { return }
-        // A field the person has edited is left as it is.
-        let untouched = read.map { ProjectSetup.draft($0) == draft } ?? true
+        // A field the owner has edited keeps what was typed; every other field takes what
+        // is in force now, so a save never sends back another writer's change.
+        let fresh = ProjectSetup.draft(settings)
+        draft = ProjectSetup.rebase(draft, from: base, onto: fresh)
+        base = fresh
         read = settings
-        if untouched { draft = ProjectSetup.draft(settings) }
     }
 
     private func source(_ key: String) -> String {
@@ -134,7 +158,7 @@ struct ProjectSettingsView: View {
                 .pickerStyle(.segmented).labelsHidden().accessibilityLabel("Publish mode")
                 if draft.publish == .pullRequest {
                     Text(verbatim: settings.publishURL.map { "The host will push branches to \($0) and open pull requests, never merge." }
-                        ?? ProjectSettingsRefusal.noRemote).font(Theme.caption).foregroundStyle(.secondary)
+                        ?? SettingsRefusal.noRemote.words).font(Theme.caption).foregroundStyle(.secondary)
                 }
             }
             HStack {
@@ -165,7 +189,8 @@ struct ProjectSettingsView: View {
                         project, revision: settings.revision, changes: plan.changes, publishTo: plan.publishTo
                     )
                     read = now
-                    draft = ProjectSetup.draft(now)
+                    base = ProjectSetup.draft(now)
+                    draft = base
                     result = TicketResult(words: "Saved. A changed check or setup takes effect with no restart.", isRefusal: false)
                 } catch LoomError.server(let code, let message, _) {
                     result = TicketResult(words: ProjectSetup.refusal(code: code, message: message), isRefusal: true)
@@ -178,8 +203,4 @@ struct ProjectSettingsView: View {
             }
         }
     }
-}
-
-private enum ProjectSettingsRefusal {
-    static let noRemote = SettingsRefusal.noRemote.words
 }

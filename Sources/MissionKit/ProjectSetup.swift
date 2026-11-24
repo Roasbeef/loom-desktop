@@ -62,8 +62,6 @@ public struct SettingsPlan: Sendable, Equatable {
 
 /// Why a Save was not sent.
 public enum SettingsRefusal: Error, Sendable, Equatable {
-    /// More than the five keys one write may hold.
-    case tooMany
     /// Publishing was turned on for a project with no remote.
     case noRemote
     /// Publishing is turned on beside other keys, which the daemon refuses whole.
@@ -71,7 +69,6 @@ public enum SettingsRefusal: Error, Sendable, Equatable {
 
     public var words: String {
         switch self {
-        case .tooMany: return "One save changes at most five settings."
         case .noRemote: return "This project has no remote, so there is nothing to publish to."
         case .publishAlone: return "Turning publishing on is saved on its own. Save the other settings first."
         }
@@ -126,6 +123,20 @@ public enum ProjectSetup {
         }
     }
 
+    /// The form after the settings were read again. A field the owner has not touched,
+    /// which still holds what the last read gave, takes the new value; a field the owner
+    /// changed keeps what was typed. Only the owner's own edits survive, so a save never
+    /// sends back a field another writer changed in the meantime.
+    public static func rebase(_ draft: SettingsDraft, from old: SettingsDraft, onto new: SettingsDraft) -> SettingsDraft {
+        func field<T: Equatable>(_ keyPath: KeyPath<SettingsDraft, T>) -> T {
+            draft[keyPath: keyPath] == old[keyPath: keyPath] ? new[keyPath: keyPath] : draft[keyPath: keyPath]
+        }
+        return SettingsDraft(
+            check: field(\.check), setup: field(\.setup), maxWorkers: field(\.maxWorkers), publish: field(\.publish),
+            protectedPaths: field(\.protectedPaths)
+        )
+    }
+
     // MARK: Save
 
     /// The lines of a protected-paths field: trimmed, and with blank lines dropped.
@@ -152,8 +163,12 @@ public enum ProjectSetup {
         command("check", draft.check)
         command("setup", draft.setup)
 
+        // An empty count gives back a count the project holds, as an empty command does,
+        // and is nothing to send for one the file or the default holds.
         let workers = draft.maxWorkers.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !workers.isEmpty, settings.setting("max_workers")?.value != [workers] {
+        if workers.isEmpty {
+            if settings.setting("max_workers")?.source == .project { changes.append(SettingChange(key: "max_workers", value: nil)) }
+        } else if settings.setting("max_workers")?.value != [workers] {
             changes.append(SettingChange(key: "max_workers", value: [workers]))
         }
 
@@ -172,7 +187,7 @@ public enum ProjectSetup {
             }
             changes.append(SettingChange(key: "publish", value: [draft.publish.rawValue]))
         }
-        return changes.count > 5 ? .failure(.tooMany) : .success(SettingsPlan(changes: changes, publishTo: publishTo))
+        return .success(SettingsPlan(changes: changes, publishTo: publishTo))
     }
 
     /// The words for a write the daemon refused. A `bad_request` carries the file's
@@ -227,10 +242,18 @@ public enum ProjectPost {
     /// keeps one paste from a request that cannot be sent.
     public static let limit = 16_000
 
-    /// The request's text, trimmed, or nil when there is none to send.
+    /// The request's text, trimmed, or nil when there is none to send or it is longer than
+    /// a request may be. Text is never cut, since a request that lost its end would be
+    /// posted as something the owner did not write.
     public static func text(_ typed: String) -> String? {
         let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
-        return text.isEmpty ? nil : String(text.prefix(limit))
+        return text.isEmpty || text.count > limit ? nil : text
+    }
+
+    /// Why the typed text cannot be posted, when it is too long.
+    public static func problem(_ typed: String) -> String? {
+        let count = typed.trimmingCharacters(in: .whitespacesAndNewlines).count
+        return count > limit ? "That is \(count - limit) characters over the \(limit) a request may hold." : nil
     }
 
     /// A request id of at most 64 letters, digits, `_`, `-` and `.`. The same id sent
