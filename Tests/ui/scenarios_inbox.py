@@ -611,3 +611,89 @@ def the_session_menu_decides_only_the_armed_card_in_view(c):
     c.app.menu("Allow fs_write")
     wait_for(lambda: not find_row(c, "Approval", "Menu pane escalate"), 20, "the approval to clear")
     wait_for(lambda: c.app.menu_state("Allow Request") == "disabled", 10, "the item to be disabled once the card is gone")
+
+
+# Commands and the keyboard.
+
+
+def drawn_ids(c):
+    """The ids of the selectable rows, in the order the list draws them."""
+    return [r["id"] for r in rows(c) if r["group"] != "Folded"]
+
+
+@scenario()
+def next_and_previous_step_through_the_list_as_drawn_and_stop_at_the_ends(c):
+    """Next and previous move the open thread through the drawn rows, never wrap, and a row's context menu offers only what applies and never a decision."""
+    repo = fresh_repo("inbox-commands")
+    c.app.dispatch("Cmd approval escalate", repo)
+    c.app.dispatch("Cmd ask askowner", repo)
+    c.app.dispatch("Cmd note noticefind", repo)
+    c.app.go("inbox")
+    approval = wait_row(c, "Approval", "Cmd approval escalate")
+    ask = wait_row(c, "Ask", "Cmd ask askowner")
+    find = wait_row(c, "Risk", "Cmd note noticefind")
+
+    ids = drawn_ids(c)
+    check(len(ids) >= 3, f"three threads should be listed: {ids}")
+    open_thread(c, {"id": ids[0]})
+
+    # Stepping forward visits each row in order, and past the last it stays.
+    for expected in ids[1:]:
+        c.app.cmd("inboxstep next")
+        wait_for(lambda: c.app.snap()["inbox"]["open"] == expected, 5, f"next to open {expected}")
+    c.app.cmd("inboxstep next")
+    time.sleep(0.5)
+    check(c.app.snap()["inbox"]["open"] == ids[-1], "next wrapped past the last row")
+
+    # And back again, stopping at the first.
+    for expected in reversed(ids[:-1]):
+        c.app.cmd("inboxstep previous")
+        wait_for(lambda: c.app.snap()["inbox"]["open"] == expected, 5, f"previous to open {expected}")
+    c.app.cmd("inboxstep previous")
+    time.sleep(0.5)
+    check(c.app.snap()["inbox"]["open"] == ids[0], "previous wrapped past the first row")
+
+    # Every row's context menu draws the same actions the menu does, minus navigation and decisions.
+    menus = c.app.snap()["inbox"]["contextMenus"]
+    for row in (approval, ask, find):
+        check("Open Session" in menus[row["id"]] and "Open in New Window" in menus[row["id"]], f"{row['id']}: {menus[row['id']]}")
+        check(not any(t.startswith(("Allow", "Deny", "Next", "Previous")) for t in menus[row["id"]]), f"{row['id']}: {menus[row['id']]}")
+    check("Close Find" in menus[find["id"]], f"a find should offer Close Find: {menus[find['id']]}")
+    check("Close Find" not in menus[approval["id"]], "an approval has no find to close")
+
+
+@scenario("AI-10", needs_display=True, foreground=True)
+def the_inbox_menu_follows_the_open_thread_and_a_thread_opens_in_its_own_window(c):
+    """The Inbox menu's Next and Previous are disabled at the ends, Close Find is offered for a find only, and Open in New Window gives the thread a window of its own."""
+    repo = fresh_repo("inbox-menu-commands")
+    c.app.dispatch("Menu ask askowner", repo)
+    c.app.dispatch("Menu note noticefind", repo)
+    c.app.go("inbox")
+    ask = wait_row(c, "Ask", "Menu ask askowner")
+    find = wait_row(c, "Risk", "Menu note noticefind")
+    c.app.take_focus()
+
+    ids = drawn_ids(c)
+    open_thread(c, {"id": ids[0]})
+    wait_for(lambda: c.app.menu_state("Previous Thread") == "disabled", 10, "Previous to be disabled on the first row")
+    check(c.app.menu_state("Next Thread") == "enabled", "Next should be enabled on the first row")
+    c.app.menu("Next Thread")
+    wait_for(lambda: c.app.snap()["inbox"]["open"] == ids[1], 5, "the menu's Next to open the second row")
+    wait_for(lambda: c.app.menu_state("Previous Thread") == "enabled", 10, "Previous to be enabled on the second row")
+
+    # Close Find follows the kind: a find offers it and an ask does not.
+    open_thread(c, find)
+    wait_for(lambda: c.app.menu_state("Dismiss Find") == "enabled", 10, "Dismiss Find to be offered on a find")
+    open_thread(c, ask)
+    wait_for(lambda: c.app.menu_state("Dismiss Find") == "disabled", 10, "Dismiss Find to be off on an ask")
+    check(c.app.menu_state("Message Session") == "enabled", "Message Session should be offered on an ask")
+    check(c.app.menu_state("Deny Request") == "disabled", "Deny should stay disabled with no approval card")
+
+    # Open in New Window puts the thread in a window of its own, named for its session.
+    c.app.menu("Open in New Window")
+
+    def windows():
+        c.app.cmd("state")
+        return (c.app.dir / "state.txt").read_text()
+
+    wait_for(lambda: "Menu ask askowner|" in windows(), 10, "a window of its own for the thread")

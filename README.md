@@ -52,6 +52,7 @@ make run
 | ⌘N | New agent | | ⇧↩ | New line |
 | ⌘1 ⌘2 ⌘3 | Inbox, Mission Control, Machines | | ⎋ or ⌘. | Stop the run |
 | ⌘J | Next session needing you | | ⇧⌘A, ⇧⌘D | Allow, deny the first request |
+| ⌘] ⌘[ | Next, previous inbox thread | | ⌥⌘O | Open the thread in a window |
 | ⌥⌘I | Inspector | | ⌘F | Find in transcript |
 
 ## Test it

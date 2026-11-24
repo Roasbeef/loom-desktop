@@ -508,7 +508,7 @@ The inbox the web view redesigned (loom `docs/design-notes/attention-inbox/final
 - Mission Control strips, with answers in place (MissionViews.swift:128) and a message to any agent from a popover (MissionViews.swift:249).
 - Failed runs and unhealthy machines as inbox items, with the sessions that depend on each machine (Attention.swift:138, :210).
 - Menu bar item with the waiting count (LoomApp.swift:46), Dock badge and background notifications (LoomApp.swift:190, :200), and a Settings toggle for them (LoomApp.swift:221).
-- Keys to answer an approval: ⇧⌘A and ⇧⌘D (LoomApp.swift:114, :118).
+- Keys to answer an approval: ⇧⌘A and ⇧⌘D, in the Inbox menu (InboxCommandViews.swift, `InboxMenu`).
 - Stop button and keys on the session: ⌘. and Escape (LoomApp.swift:123; SessionScreen.swift:691, :723). The web page removed its Stop button.
 - Next session needing you: ⌘J (LoomApp.swift:92). Direct keys for the views: ⌘1, ⌘2, ⌘3 (LoomApp.swift:85).
 - Find in transcript: ⌘F (SessionScreen.swift:119; LoomApp.swift:125). Refresh changes key: ⇧⌘R (LoomApp.swift:127).
