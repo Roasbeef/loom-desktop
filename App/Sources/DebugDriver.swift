@@ -107,6 +107,7 @@ enum DebugDriver {
             case "inbox": model.destination = .inbox
             case "mission": model.destination = .mission
             case "machines": model.destination = .machines
+            case "projects": model.destination = .projects
             case "session" where parts.count > 2: model.destination = .session(parts[2])
             default: break
             }
@@ -282,6 +283,21 @@ enum DebugDriver {
         case "inboxpick" where parts.count > 1:
             // Opens the inbox thread whose row identity is given, as a click on the row would.
             if let row = model.board.rows.first(where: { $0.id == parts[1] }) { model.chooseInbox(.thread(row.subject)) }
+        case "projectpick" where parts.count > 1:
+            // Selects a project's page, or one of its tickets, as a click on the list does.
+            // The list's rows are not in the accessibility tree.
+            model.projectSelection = parts.count > 2 ? .ticket(project: parts[1], ticket: parts[2]) : .project(parts[1])
+        case "ticketdraft" where parts.count > 2:
+            // Writes the answer to a ticket's question as typing would, without a key window.
+            model.ticketDrafts[.ticket(project: parts[1], ticket: parts[2])] = line.split(separator: " ", maxSplits: 3).dropFirst(3).first.map(String.init) ?? ""
+        case "projectraw" where parts.count > 1:
+            // Sends one `projects.*` command with a JSON body through the first daemon
+            // that holds a project table, and replies the daemon's answer. It is for
+            // set-up a scenario does not itself test, such as posting work.
+            let json = rest.dropFirst(parts[1].count).trimmingCharacters(in: .whitespaces)
+            let body = (try? JSONValue.parse(Data((json.isEmpty ? "{}" : json).utf8))) ?? .object([:])
+            do { reply = try await model.daemons.first?.control?.raw(parts[1], body: body).compactText ?? "error: no daemon" }
+            catch { reply = "error: \(error.localizedDescription)" }
         case "inboxstep" where parts.count > 1:
             // Moves the open thread one step through the list as Next Thread and
             // Previous Thread do, without a key window.
@@ -548,6 +564,7 @@ enum Snapshot {
         case .inbox: destination = "inbox"
         case .mission: destination = "mission"
         case .machines: destination = "machines"
+        case .projects: destination = "projects"
         case .session(let id): destination = "session:\(id)"
         case nil: destination = "none"
         }
@@ -683,6 +700,7 @@ enum Snapshot {
         }
         body["sidebar"] = SidebarSnapshot.encode(model)
         body["inbox"] = InboxSnapshot.encode(model)
+        body["projects"] = ProjectsSnapshot.encode(model)
         body["notices"] = [
             "posted": Announcer.shared.posted, "removed": Announcer.shared.removed, "checked": model.board.checked.sorted(),
         ]
@@ -947,5 +965,34 @@ enum AccessibilityAudit {
             + lines.joined(separator: "\n") + "\n"
     }
 }
+/// Project mode as the rule reads it: each project with its counts, its router and
+/// its tickets with the daemon's own words, which the list's rows do not put in the
+/// accessibility tree.
+enum ProjectsSnapshot {
+    @MainActor
+    static func encode(_ model: AppModel) -> [String: Any] {
+        let selection: String = switch model.projectSelection {
+        case .project(let id)?: "project/\(id)"
+        case .ticket(let project, let ticket)?: "ticket/\(project)/\(ticket)"
+        case nil: ""
+        }
+        return [
+            "selection": selection,
+            "projects": model.projectStates.map { project -> [String: Any] in
+                [
+                    "id": project.id, "name": project.summary.name, "router": project.summary.routerSession ?? "",
+                    "counts": project.summary.counts, "countWords": ProjectRule.countWords(project.summary),
+                    "needing": ProjectRule.needing(project.summary), "read": project.page != nil,
+                    "tickets": (project.page?.tickets ?? []).map { ticket -> [String: Any] in
+                        [
+                            "id": ticket.id, "title": ProjectRule.titleWords(ticket), "stage": ticket.stage.word,
+                            "session": ticket.session ?? "", "actions": ProjectRule.controls(ticket).map(\.title),
+                            "check": ticket.check.map { "\($0.outcome)" } ?? "", "question": ticket.question?.seq ?? -1,
+                        ]
+                    },
+                ]
+            },
+        ]
+    }
+}
 #endif
-

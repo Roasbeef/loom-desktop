@@ -1220,6 +1220,7 @@ import scenarios_lifecycle  # noqa: E402,F401
 import scenarios_admin  # noqa: E402,F401
 import scenarios_transcript  # noqa: E402,F401
 import scenarios_inbox  # noqa: E402,F401
+import scenarios_projects  # noqa: E402,F401
 
 
 # Faults. These run last among the functional scenarios, since they damage the cluster.
@@ -1230,7 +1231,7 @@ def monkey_keeps_the_app_alive(c):
     """A seeded random walk over safe controls never crashes or leaves an error state."""
     random = rng(c.args.seed)
     safe = lambda n: n["role"] in ("AXButton", "AXRadioButton", "AXCheckBox") and n["name"] and not any(
-        word in n["name"] for word in ("Allow", "Deny", "Stop", "Disconnect", "Remove", "Quit", "Close", "close", "minimize", "zoom", "Dispatch", "Connect", "Start", "Resume")
+        word in n["name"] for word in ("Allow", "Deny", "Stop", "Disconnect", "Remove", "Quit", "Close", "close", "minimize", "zoom", "Dispatch", "Connect", "Start", "Resume", "Retry", "Check Again", "Open Worker")
     )
     trail = []
     for step in range(60):

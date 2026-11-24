@@ -478,6 +478,19 @@ The inbox the web view redesigned (loom `docs/design-notes/attention-inbox/final
 | AI-44 | A row for each saved session that holds something open, with Resume | view/attention_thread.gleam:204 | `sessions.saved_attention`, `sessions.open` | no (saved sessions are counted in the headline and the rail note, AI-08, and not listed; the count says they came from the catalogue) | 2 |
 | AI-45 | Notifications outside the window for what needs the owner: an approval, an ask, a stuck strand or a failed run, one thread per session, removed when the item resolves, and a click opens the thread; no actions | in-process | local | yes (Notices.plan diffs two boards, Announcer and NoticeClicks are the thin adapter; the session's own text is labelled untrusted and a notification never decides; a_notification_plans_for_an_ask_and_a_click_opens_its_thread) | 1 |
 
+## Projects
+
+Project mode (loom issue #1167): one router per repository decides what becomes work, and each ticket runs in a worker session of its own. The desktop draws the same daemon commands the web project pages do (`projects.list`, `projects.board`, `projects.ticket` and the acts on a ticket), and is not a port of the web layout. A stage is drawn with the daemon's own word, `person/check` included.
+
+| ID | Capability | Web source (file:line) | Wire command or event | Native | Tier |
+|---|---|---|---|---|---|
+| PJ-01 | A Projects destination: each project with its tickets grouped by the daemon's stage word, and counts that say those words | view/projects.gleam | `projects.list`, `projects.board` | yes (ProjectsView, ProjectRule.groups and countWords; a_project_is_made_work_is_posted_and_its_ticket_is_acted_on) | 1 |
+| PJ-02 | A ticket that waits on a person is an inbox thread: an answer or a decision under Needs you, a review or a failed check under To review, and the badge counts the first | ticket_rule.gleam:lane | `projects.board` | yes (InboxRule.ticketRows, ProjectRule.lane; the same scenario) | 1 |
+| PJ-03 | A ticket's pane: why it exists, the thread, the worker's question labelled untrusted, an answer box, the check's output with its cause | view/ticket_thread.gleam | `projects.ticket`, `projects.answer` | yes (TicketPane; the same scenario) | 1 |
+| PJ-04 | A control for each action the daemon lists and none for any other: Answer, Check Again, Retry, Close, Publish, Stop; Close, Stop and Publish ask once | ticket_rule.gleam:controls | `projects.answer`, `projects.recheck`, `projects.retry`, `projects.close`, `projects.publish`, `projects.stop` | yes (ProjectRule.controls; TicketReader.press; Publish is listed by the daemon only while the project's publish setting is on, and no scenario publishes) | 1 |
+| PJ-05 | A project's router: its session, the replies it queued, the messages it declined, and the worker of each ticket | none | `projects.board`, `sessions.list` | yes (ProjectPanel; a project's router and workers are left out of the conversation list) | 2 |
+| PJ-06 | What the router decided: a trigger routed to a ticket, or declined with a typed reason, as a log | none | none | no (the daemon serves no such read; only messages declined three times are listed, under Not routed) | 2 |
+
 ## Not applicable natively
 
 | Web item | Source | Why |

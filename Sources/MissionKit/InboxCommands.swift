@@ -177,7 +177,9 @@ public enum InboxCommands {
         switch action {
         case .next: return context.neighbors.hasNext ? .enabled : .disabled
         case .previous: return context.neighbors.hasPrevious ? .enabled : .disabled
-        case .openSession: return context.row == nil ? .disabled : .enabled
+        // A ticket is not a session, so it has none to open or write to. Its pane
+        // carries its own controls.
+        case .openSession: return context.row == nil || context.row?.isTicket == true ? .disabled : .enabled
         case .openInWindow: return context.row == nil || context.isInOwnWindow ? .disabled : .enabled
         case .retry:
             guard let kind = context.row?.kind, kind == .stuck else { return .absent }
@@ -187,7 +189,7 @@ public enum InboxCommands {
             guard let kind = context.row?.kind, case .find = kind else { return .absent }
             return context.isObserver ? .disabled : .enabled
         case .message:
-            guard let kind = context.row?.kind else { return .disabled }
+            guard let kind = context.row?.kind, context.row?.isTicket != true else { return .disabled }
 
             // A finished session's reply goes through the review's outbox, not the
             // message bar the command focuses.

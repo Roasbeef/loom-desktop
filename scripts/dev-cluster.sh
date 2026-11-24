@@ -46,6 +46,14 @@ git -C "$base/wtrepo" add README.md
 git -C "$base/wtrepo" -c user.name=loom -c user.email=loom@example.com commit -q -m start
 git -C "$base/wtrepo" worktree add -q "$base/wtrepo-feature"
 
+# A repository with one commit for project mode: a project clones its workspace, so
+# the workspace needs a commit to clone.
+mkdir -p "$base/project-ws"
+git -C "$base/project-ws" init -q -b main
+echo "pub fn main() { Nil }" > "$base/project-ws/a.gleam"
+git -C "$base/project-ws" add a.gleam
+git -C "$base/project-ws" -c user.name=loom -c user.email=loom@example.com commit -q -m seed
+
 cat > "$base/plan.toml" <<EOF
 [[node]]
 name = "orch"
@@ -94,6 +102,11 @@ max_output_tokens = 4096
 [roles]
 main = ["fake"]
 advisor = ["fake"]
+
+# A check that always fails, so a project worker that commits and then waits
+# leaves its ticket at person/check once the worker has reported again.
+[project]
+check = "echo 'check: 2 tests failed'; exit 1"
 
 # The review profile also routes the summarizer, so a session that switches to it gets
 # labels for long reasoning. Routing it for every session makes background work that

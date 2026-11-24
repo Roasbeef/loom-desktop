@@ -393,7 +393,7 @@ struct InboxView: View {
 
         case .thread(let subject)?:
             if let row = InboxRule.selectable(all).first(where: { $0.subject == subject }) {
-                InboxPane(
+                ThreadPane(
                     row: row,
                     items: model.paneItems(for: subject),
                     draft: Binding(get: { drafts[row.id] ?? "" }, set: { drafts[row.id] = $0 })
@@ -435,10 +435,21 @@ struct ResolvedPane: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(row.kind.chip).font(Theme.caption).foregroundStyle(.secondary)
             Text(verbatim: row.name).font(.title3.weight(.semibold)).textSelection(.enabled)
-            Text(note)
-                .font(Theme.body)
-                .foregroundStyle(.secondary)
-            Button("Open Session") { model.destination = .session(row.sessionID) }
+            if case .ticket(let project, let ticket) = row.subject {
+                // The act's own result stays on screen, since the ticket left the inbox because of it.
+                let key = ProjectSelection.ticket(project: project, ticket: ticket)
+                Text(verbatim: model.ticketResults[key]?.words ?? "Resolved. This ticket no longer needs you.")
+                    .font(Theme.body).foregroundStyle(.secondary)
+                Button("Open in Projects") {
+                    model.projectSelection = key
+                    model.destination = .projects
+                }
+            } else {
+                Text(note)
+                    .font(Theme.body)
+                    .foregroundStyle(.secondary)
+                Button("Open Session") { model.destination = .session(row.sessionID) }
+            }
             Spacer()
         }
         .padding(20)
