@@ -214,7 +214,7 @@ struct InboxPane: View {
         case .ask(_, let id): return feedRow?.asks.items.first { $0.id == id }?.strand ?? "main"
         case .stuck(_, let strand): return strand
         case .find(_, let id): return feedRow?.finds.items.first { $0.id == id }?.strand ?? "main"
-        case .session: return "main"
+        case .session, .ticket: return "main"
         }
     }
 
@@ -310,7 +310,7 @@ struct InboxPane: View {
         }
         switch row.subject {
         case .ask, .stuck, .find: words += " \u{00B7} " + strand
-        case .session: break
+        case .session, .ticket: break
         }
         if row.kind == .working {
             words += " \u{00B7} " + (row.since.map { "working, " + ThreadRule.turnWords(started: $0, now: Self.nowMs) } ?? "working")
@@ -331,7 +331,7 @@ struct InboxPane: View {
         case .waiting, .review: return "idle, finished"
         case .working: return "working"
         case .quiet: return "quiet"
-        case .ask, .stuck, .find: return ""
+        case .ask, .stuck, .find, .ticket: return ""
         }
     }
 
@@ -384,13 +384,14 @@ struct InboxPane: View {
         case .ask: askBody
         case .stuck: stuckBody
         case .find: findBody
+        case .ticket: EmptyView()
         case .session:
             switch row.kind {
             case .approval: approvalBody
             case .failed: failedBody
             case .review: reviewBody
             case .waiting, .working: sessionBody
-            case .quiet, .ask, .stuck, .find: EmptyView()
+            case .quiet, .ask, .stuck, .find, .ticket: EmptyView()
             }
         }
     }

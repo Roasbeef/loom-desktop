@@ -295,7 +295,7 @@ struct ThreadWindow: View {
         let listed = row
         Group {
             if let listed {
-                InboxPane(row: listed, items: model.paneItems(for: subject), draft: $draft).id(listed.id)
+                ThreadPane(row: listed, items: model.paneItems(for: subject), draft: $draft).id(listed.id)
             } else if let held {
                 ResolvedPane(row: held, note: "Resolved. This thread no longer needs you. Close this window when you are done with it.")
             } else {

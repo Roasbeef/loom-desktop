@@ -125,7 +125,8 @@ public enum Notices {
             kind = "failed"
             title = "Run failed"
             body = "The last run failed. Open the thread to read why."
-        case .review, .waiting, .working, .quiet, .find:
+        case .review, .waiting, .working, .quiet, .find, .ticket:
+            // A ticket posts no notice yet; notifications are their own slice.
             return nil
         }
         return Notice(

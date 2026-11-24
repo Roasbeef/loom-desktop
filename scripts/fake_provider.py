@@ -499,6 +499,68 @@ def usage_for(prompt):
     return {"prompt_tokens": 1200, "completion_tokens": 300, "total_tokens": 1500}
 
 
+# Project mode. The router is the session that holds a `route` tool and a worker the
+# one that holds `project_report`, so the role is chosen by the tools a request offers.
+# Within a worker, what the post said chooses the script: "commit then wait" commits.
+
+def tool_names(request):
+    return {(tool.get("function") or {}).get("name") for tool in request.get("tools") or []}
+
+
+def called(messages):
+    """The names of the tools the assistant has called so far, oldest first."""
+    return [
+        (item.get("function") or {}).get("name")
+        for message in messages if message.get("role") == "assistant"
+        for item in message.get("tool_calls") or []
+    ]
+
+
+def router_script(messages):
+    """The router accepts the first candidate it is offered."""
+    if messages and messages[-1].get("role") == "tool":
+        yield from text_stream("Routed.")
+        return
+    offered = ""
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            content = message.get("content", "")
+            offered = content if isinstance(content, str) else " ".join(p.get("text", "") for p in content)
+            break
+    found = re.findall(r'"trigger":\s*"([^"]+)"', offered)
+    yield call(0, "route", {"items": [{"trigger": found[0] if found else "unknown", "action": "accept", "title": "Fix the retry loop"}]})
+    yield chunk({}, "tool_calls")
+
+
+def worker_script(messages):
+    """A worker asks a question and stops, which leaves its ticket at person/answer. A
+    post that holds "commit then wait" makes it commit a file and report waiting, and the
+    project's check then rejects the head and the ticket is at person/check."""
+    names = called(messages)
+    last = messages[-1] if messages else {}
+    if "commit then wait" in json.dumps(messages):
+        if last.get("role") == "tool":
+            if names and names[-1] == "bash":
+                yield call(0, "project_report", {"status": "waiting"})
+                yield chunk({}, "tool_calls")
+            else:
+                yield from text_stream("Waiting for a person.")
+        elif "bash" not in names:
+            command = ("printf 'retry log\\n' > retry.log && git add retry.log && "
+                       "git -c user.name=worker -c user.email=worker@example.com commit -qm 'Add a retry log'")
+            yield call(0, "bash", {"command": command})
+            yield chunk({}, "tool_calls")
+        else:
+            yield call(0, "project_report", {"status": "waiting"})
+            yield chunk({}, "tool_calls")
+        return
+    if last.get("role") == "tool":
+        yield from text_stream("Waiting for the answer.")
+        return
+    yield call(0, "project_report", {"status": "waiting", "question": "Which database should the retry log use?"})
+    yield chunk({}, "tool_calls")
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -517,7 +579,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Connection", "close")
         self.end_headers()
         try:
-            for event in script(request.get("messages", [])):
+            tools = tool_names(request)
+            chosen = router_script if "route" in tools else worker_script if "project_report" in tools else script
+            for event in chosen(request.get("messages", [])):
                 self.wfile.write(f"data: {json.dumps(event)}\n\n".encode())
                 self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError):

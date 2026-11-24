@@ -11,7 +11,15 @@ enum Destination: Hashable {
     case inbox
     case mission
     case machines
+    /// Project mode: each project with its tickets, router and workers.
+    case projects
     case session(String)
+}
+
+/// What the last act on a ticket came to, in words.
+struct TicketResult: Equatable {
+    let words: String
+    let isRefusal: Bool
 }
 
 /// A session that was created, whose first message never went out. The session is
@@ -115,6 +123,19 @@ final class DaemonConnection: Identifiable {
     /// says as "not checked" and never as "nothing waits".
     private(set) var attentionRows: [String: AttentionRow] = [:]
 
+    /// The projects this daemon holds, each with the last page zero of its board.
+    /// A project whose board did not read keeps the page it had, or none.
+    private(set) var projects: [ProjectState] = []
+
+    /// Whether a project table answered. A daemon that started none, or predates
+    /// the commands, refuses them, and the app then draws no Projects and does not
+    /// ask again until the epoch changes.
+    private(set) var projectsAnswered = false
+
+    /// The epoch of the daemon that said it holds no project table or does not know
+    /// `projects.list`.
+    private var projectsRefusedAtEpoch: String?
+
     /// What the catalogue's counts said of the saved sessions at the last read. It is
     /// `unchecked` until a read answers and again once the daemon refuses the command
     /// as unknown, and then the inbox says saved sessions are not checked.
@@ -161,6 +182,10 @@ final class DaemonConnection: Identifiable {
     /// neither caches nor pushes it, so it is read about every 30 seconds beside
     /// the 2 second catalogue poll.
     private static let attentionEvery = 15
+
+    /// Projects are read about every eight seconds: the list and each board's page
+    /// zero are fresh observations, and the daemon pushes no change.
+    private static let projectsEvery = 4
 
     /// The worktree scan starts at most one read about every six seconds, which
     /// keeps within the daemon's two reads in four seconds for a credential.
@@ -290,6 +315,9 @@ final class DaemonConnection: Identifiable {
         if ticks % Self.reviewEvery == 0 {
             scanReview(control, activity: activity)
         }
+        if ticks % Self.projectsEvery == 0 {
+            await refreshProjects(control)
+        }
         ticks += 1
     }
 
@@ -315,7 +343,45 @@ final class DaemonConnection: Identifiable {
 
     /// This daemon's resident sessions as the inbox reads them.
     func inboxThreads(activity: [String: SessionActivity]) -> [InboxThread] {
-        sessions.filter { $0.state.isResident }.map { InboxThread(id: $0.id, name: $0.title, activity: activity[$0.id]) }
+        sessions.filter { $0.state.isResident }.compactMap { record in
+            guard ProjectRule.listsThread(standing: record.standing, activity: activity[record.id], feed: attentionRows[record.id]) else { return nil }
+            let name = record.standing.map { ProjectRule.threadName(standing: $0, projects: projects) } ?? record.title
+            return InboxThread(id: record.id, name: name, activity: activity[record.id])
+        }
+    }
+
+    /// Reads the projects now, for a pane that has just acted on a ticket.
+    func readProjectsNow() async {
+        guard let control else { return }
+        await refreshProjects(control)
+    }
+
+    /// Reads the project list and each project's board. A daemon with no project
+    /// table, or one that predates the commands, is not asked again in this epoch.
+    /// Any other refusal leaves what was read in place, since it says nothing new
+    /// about the tickets.
+    private func refreshProjects(_ control: ControlClient) async {
+        if projectsRefusedAtEpoch != nil, projectsRefusedAtEpoch == hello?.epoch { return }
+        let listed: [ProjectSummary]
+        do {
+            listed = try await control.projects()
+        } catch let error as LoomError {
+            if error.isUnknownCommand || error.isNotFound {
+                projectsRefusedAtEpoch = hello?.epoch
+                if !projects.isEmpty { projects = [] }
+                projectsAnswered = false
+            }
+            return
+        } catch {
+            return
+        }
+        projectsAnswered = true
+        var next: [ProjectState] = []
+        for summary in listed {
+            let page = (try? await control.projectBoard(summary.id)) ?? projects.first { $0.id == summary.id }?.page
+            next.append(ProjectState(summary: summary, page: page))
+        }
+        if projects != next { projects = next }
     }
 
     /// Reads the attention feed now, for a pane that has just settled a find.
@@ -345,7 +411,8 @@ final class DaemonConnection: Identifiable {
 
     /// The saved sessions this daemon lists, which the catalogue's counts are read for.
     var savedSessionIDs: [String] {
-        sessions.filter { $0.state == .saved }.map(\.id)
+        // A saved router or worker is counted nowhere, as a resident one is not.
+        sessions.filter { $0.state == .saved && $0.standing == nil }.map(\.id)
     }
 
     /// Reads the attention feed for the resident sessions and the raise time of each
@@ -584,6 +651,8 @@ final class AppModel {
             (
                 InboxRule.board(
                     threads: inboxThreads, feed: attentionRows, raised: approvalRaised, reviewing: reviewing, saved: inboxSaved,
+                    tickets: ProjectRule.waiting(projectStates),
+                    ticketsLeftOut: projectStates.reduce(0) { $0 + ProjectRule.leftOutWaiting($1) },
                     now: Int(Date().timeIntervalSince1970 * 1000)
                 ),
                 inboxMachines,
@@ -600,6 +669,11 @@ final class AppModel {
         // thread then and not at launch, and leaving drops a resolved opening.
         let settled = InboxRule.settle(inboxOpening, rows: InboxRule.selectable(next.sections), machines: machines, place: place)
         if settled != inboxOpening { inboxOpening = settled }
+
+        // The Projects destination's selection is settled by the same read, so a ticket
+        // that has gone from its board never leaves the pane naming it.
+        let selection = ProjectSelection.settled(projectSelection, projects: projectStates)
+        if selection != projectSelection { projectSelection = selection }
 
         // A folder that has emptied is drawn as Everything. Forget it here, or a
         // later item in that folder would narrow the list again with no click.
@@ -697,11 +771,7 @@ final class AppModel {
     /// The resident sessions as the inbox reads them: the display name beside the
     /// daemon's activity report, which is nil when it gave none.
     var inboxThreads: [InboxThread] {
-        InboxRule.deduped(daemons.flatMap { daemon in
-            daemon.sessions.filter { $0.state.isResident }.map {
-                InboxThread(id: $0.id, name: $0.title, activity: daemon.activity[$0.id])
-            }
-        })
+        InboxRule.deduped(daemons.flatMap { $0.inboxThreads(activity: $0.activity) })
     }
 
     /// The rows whose retry is out, by row id. The pane's Retry and the menu's both
@@ -738,6 +808,30 @@ final class AppModel {
         let reply = try await controller.request(choice.command, body: ["strand": .string(strand), "text": .string(text)])
         return reply.body["status"]?.string
     }
+
+    /// Every project on every daemon, each with its board's page zero.
+    var projectStates: [ProjectState] {
+        daemons.flatMap(\.projects)
+    }
+
+    /// The daemon that holds a project. A project id is a function of its workspace,
+    /// so two daemons that hold the same folder hold the same id and the first wins.
+    func daemon(holdingProject project: String) -> DaemonConnection? {
+        daemons.first { daemon in daemon.projects.contains { $0.id == project } }
+    }
+
+    /// What the Projects destination has open: a project's page or one of its
+    /// tickets. Only the owner's choice moves it, and a refresh that drops what it
+    /// names settles it back to nothing.
+    var projectSelection: ProjectSelection?
+
+    /// An answer half written to a ticket's question, by ticket.
+    var ticketDrafts: [ProjectSelection: String] = [:]
+
+    /// What the last act on a ticket came to, by ticket. It outlives the inbox row the
+    /// act was made from: a ticket that moves to a stage nobody waits on leaves the
+    /// inbox, and the pane that stays says what was done.
+    var ticketResults: [ProjectSelection: TicketResult] = [:]
 
     var attentionRows: [String: AttentionRow] {
         daemons.reduce(into: [:]) { $0.merge($1.attentionRows) { _, new in new } }

@@ -79,6 +79,10 @@ public struct SessionRecord: Sendable, Identifiable, Equatable {
     public let executorNode: String?
     /// A moved session is this daemon's tombstone and is not listed as openable.
     public let hasMoved: Bool
+    /// What project mode made this session, when it did. A project's router and a
+    /// ticket's worker are listed with every other session, and a client that offers
+    /// a list of conversations leaves them out and reaches a worker from its ticket.
+    public let standing: ProjectStanding?
 
     init?(_ body: JSONValue) {
         guard let id = body["session_id"]?.string else { return nil }
@@ -93,6 +97,7 @@ public struct SessionRecord: Sendable, Identifiable, Equatable {
         movingTo = body["moving"]?["to"]?.string
         executorNode = body["executor_node"]?.string
         hasMoved = body["moved"] != nil
+        standing = ProjectStanding(body["standing"])
     }
 
     /// The name to draw, preferring what a person typed over a default.
@@ -392,5 +397,24 @@ public struct DeploymentEdge: Sendable, Equatable {
         kind = body["kind"]?.string ?? ""
         link = body["link"]?.string ?? "unknown"
         sessions = body["sessions"]?.int ?? 0
+    }
+}
+
+/// The part a session plays in a project (protocol-change/106).
+public enum ProjectStanding: Sendable, Equatable {
+    /// The project's long-lived router.
+    case router(project: String)
+    /// The worker of one ticket.
+    case worker(project: String, ticket: String)
+
+    init?(_ value: JSONValue?) {
+        guard let value, let kind = value["kind"]?.string, let project = value["project"]?.string else { return nil }
+        switch kind {
+        case "router": self = .router(project: project)
+        case "worker":
+            guard let ticket = value["ticket"]?.string else { return nil }
+            self = .worker(project: project, ticket: ticket)
+        default: return nil
+        }
     }
 }
