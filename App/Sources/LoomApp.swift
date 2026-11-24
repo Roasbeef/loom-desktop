@@ -38,6 +38,17 @@ struct LoomApp: App {
         .defaultSize(width: 820, height: 760)
         .windowToolbarStyle(.unified)
 
+        // A thread of the inbox in its own window, beside the session it is about.
+        WindowGroup("Thread", id: "thread", for: InboxSubject.self) { $subject in
+            if let subject {
+                ThreadWindow(subject: subject)
+                    .environment(model)
+                    .frame(minWidth: 520, minHeight: 420)
+            }
+        }
+        .defaultSize(width: 640, height: 720)
+        .windowToolbarStyle(.unified)
+
         Settings {
             SettingsView().environment(model)
         }
@@ -62,6 +73,7 @@ struct LoomApp: App {
 private struct LoomCommands: Commands {
     let model: AppModel
     @FocusedValue(\.armedApproval) private var approval
+    @FocusedValue(\.inboxContext) private var inboxContext
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -106,49 +118,28 @@ private struct LoomCommands: Commands {
                 UserDefaults.standard.set(!UserDefaults.standard.bool(forKey: "sidebarSavedOpen"), forKey: "sidebarSavedOpen")
             }
         }
+        CommandMenu("Inbox") {
+            InboxMenu(model: model, context: inboxContext, approval: approval)
+        }
         CommandMenu("Session") {
-            SessionMenuItems(model: model, approval: approval)
+            SessionMenuItems(model: model)
             Divider()
             SessionLifecycleMenuItems(model: model)
         }
     }
 }
 
-/// The Session menu's items. Most stay enabled and check at the moment they run,
+/// The Session menu's items. They stay enabled and check at the moment they run,
 /// because SwiftUI does not refresh a menu item's enabled state from observable
 /// model changes, and a stale disabled item would swallow the shortcut. The three
-/// that decide an approval are the exception: their state follows the focused
-/// window's armed approval card, which a focused scene value publishes.
+/// that decide an approval are in the Inbox menu instead (`InboxMenu`), whose state
+/// follows the focused window's armed approval card and the thread it shows.
 private struct SessionMenuItems: View {
     let model: AppModel
 
     private var session: SessionController? { model.currentSession }
 
-    /// The armed approval card in the focused window, if one is on screen. The
-    /// Commands value reads it, since a focused value is delivered to it and not
-    /// reliably to a view nested inside a menu.
-    let approval: ArmedApproval?
-
     var body: some View {
-        // These decide the armed approval card in the focused window, and nothing
-        // else: a decision is made beside its evidence, so with no such card they are
-        // disabled. The titles name the tool the card asks for.
-        Button { approval?.controller.approve(approval!.record) } label: {
-            Text(verbatim: approval.map { "Allow \($0.toolName)" } ?? "Allow Request")
-        }
-        .keyboardShortcut("a", modifiers: [.command, .shift])
-        .disabled(approval?.canAllow != true)
-        Button { approval?.controller.approve(approval!.record, remember: true) } label: {
-            Text(verbatim: approval.map { "Allow \($0.toolName) for This Session" } ?? "Allow Request for This Session")
-        }
-        .keyboardShortcut("a", modifiers: [.command, .shift, .option])
-        .disabled(approval?.canRemember != true)
-        Button { approval?.controller.deny(approval!.record) } label: {
-            Text(verbatim: approval.map { "Deny \($0.toolName)" } ?? "Deny Request")
-        }
-        .keyboardShortcut("d", modifiers: [.command, .shift])
-        .disabled(approval == nil)
-        Divider()
         Button("Stop Run") {
             if session?.isBusy == true { session?.abort() }
         }

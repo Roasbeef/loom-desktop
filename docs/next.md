@@ -107,12 +107,13 @@ before or alongside slice 2, each with a UI scenario.
   on navigation and the ask thread's layout apply here wherever the desktop
   draws the same thing.
 
-### 2. Slices 3, 4 and 5 of the native pass (slice 2 is done)
+### 2. Slices 4 and 5 of the native pass (slices 2 and 3 are done)
 
 In the order and with the guardrails in `docs/native-pass.md`. The guardrails
 that matter most: no notification, row or toolbar button decides an approval;
 no unread or archive state on Needs-you rows; a menu Allow/Deny only while an
-armed card is visible. Slice 5 must also settle the notifier change slice 1
+armed card is visible (now in the Inbox menu, one action list with the context
+menus: `MissionKit/InboxCommands.swift`). Slice 5 must also settle the notifier change slice 1
 made: notifications are keyed per session row now, so a second approval on a
 session with one already waiting sends no new notification.
 

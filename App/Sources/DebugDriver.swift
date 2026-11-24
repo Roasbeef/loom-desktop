@@ -282,6 +282,10 @@ enum DebugDriver {
         case "inboxpick" where parts.count > 1:
             // Opens the inbox thread whose row identity is given, as a click on the row would.
             if let row = model.board.rows.first(where: { $0.id == parts[1] }) { model.chooseInbox(.thread(row.subject)) }
+        case "inboxstep" where parts.count > 1:
+            // Moves the open thread one step through the list as Next Thread and
+            // Previous Thread do, without a key window.
+            model.stepInbox(parts[1] == "next" ? .next : .previous)
         case "inboxfolder" where parts.count > 1:
             // Chooses an inbox folder by title, as the toolbar picker does. A menu-style
             // picker opens a tracking menu that an accessibility press cannot reach.
@@ -676,6 +680,12 @@ enum InboxSnapshot {
                     "rows": section.rows.map { ["id": $0.id, "kind": $0.kind.chip, "name": $0.name, "head": $0.head, "age": $0.age?.words ?? ""] },
                 ]
             },
+            // What each row's context menu draws, from the same list the menus use.
+            // A session two daemons both list has two rows with one id, so a repeat
+            // keeps the first.
+            "contextMenus": Dictionary(InboxRule.selectable(sections).map { row in
+                (row.id, InboxCommands.contextActions(for: model.commandContext(for: row)).map { $0.title() })
+            }, uniquingKeysWith: { first, _ in first }),
             "folders": InboxRule.folderEntries(sections).map { ["title": $0.folder.title, "count": $0.count ?? -1] as [String: Any] },
             "headline": InboxRule.headline(tally),
             "needing": tally.needing,

@@ -320,7 +320,7 @@ private struct SessionRow: View {
             return (ask, true)
         }
         guard let line = activity?.lastMessage, line != row.title else { return nil }
-        return (Markdown.plainPreview(line), false)
+        return (InboxRule.oneLine(Markdown.plainPreview(line)), false)
     }
 
     /// Whether where the session stands is worth a word: always when it is failed,

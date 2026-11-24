@@ -615,6 +615,29 @@ final class AppModel {
     /// the chosen folder has emptied.
     private(set) var inboxFolder: InboxFolder = .everything
 
+    /// The thread whose message field the owner asked to write in, by row id. The
+    /// pane that draws it takes the request, focuses its field and clears it, so a
+    /// request made before the pane exists (a row's context menu opens the thread
+    /// first) is still met when the pane appears.
+    var messageRequest: String?
+
+    /// The selections the inbox list draws, in its drawn order: the threads of the
+    /// folder it shows, then the unhealthy machines. Next and previous step through
+    /// exactly these.
+    var inboxDrawn: [InboxSelection] {
+        let sections = board.sections
+        let shown = InboxRule.shownFolder(chosen: inboxFolder, sections: sections)
+        return InboxRule.selectable(InboxRule.visible(sections, in: shown)).map { InboxSelection.thread($0.subject) }
+            + inboxMachines.map { InboxSelection.machine($0) }
+    }
+
+    /// Moves the open thread one step through the list, as the owner's own choice.
+    /// Past either end it does nothing.
+    func stepInbox(_ step: InboxCommands.Step) {
+        guard let next = InboxCommands.neighbor(of: inboxOpening.selection, in: inboxDrawn, step: step) else { return }
+        chooseInbox(next)
+    }
+
     /// The owner picked a row. A nil choice, which a list reports when its selection
     /// is cleared, leaves the open thread as it is.
     func chooseInbox(_ selection: InboxSelection?) {
@@ -672,12 +695,16 @@ final class AppModel {
     /// The resident sessions as the inbox reads them: the display name beside the
     /// daemon's activity report, which is nil when it gave none.
     var inboxThreads: [InboxThread] {
-        daemons.flatMap { daemon in
+        InboxRule.deduped(daemons.flatMap { daemon in
             daemon.sessions.filter { $0.state.isResident }.map {
                 InboxThread(id: $0.id, name: $0.title, activity: daemon.activity[$0.id])
             }
-        }
+        })
     }
+
+    /// The rows whose retry is out, by row id. The pane's Retry and the menu's both
+    /// read it, so a second press while one is out queues nothing.
+    var retrying: Set<String> = []
 
     /// The sessions listed under "To review", across daemons.
     var reviewing: Set<String> {

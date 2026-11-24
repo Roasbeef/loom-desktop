@@ -181,6 +181,11 @@ struct InboxPane: View {
     @State private var outcome = SendOutcome.unsent
     @State private var outbox = ReviewOutbox()
 
+    /// How many times the owner has asked to write to this thread's session. The
+    /// message bar focuses its field on each, and one that arrived before the bar
+    /// existed is still met.
+    @State private var messageRequests = 0
+
     private var sessionID: String { row.sessionID }
 
     private var reads: ThreadReads { ThreadRule.reads(for: row) }
@@ -199,7 +204,7 @@ struct InboxPane: View {
         ThreadRule.retryOffer(
             isObserver: isObserver,
             stuckListed: feedRow?.stuck.items.contains { $0.strand == strand } == true,
-            sending: outcome.isSending
+            sending: model.retrying.contains(row.id)
         )
     }
 
@@ -223,8 +228,8 @@ struct InboxPane: View {
                         Button("Open Session") { model.destination = .session(sessionID) }
                             .buttonStyle(.bordered)
                             .keyboardShortcut(.return, modifiers: .command)
-                        if case .stuck(_, let strand) = row.subject, retry != .hidden {
-                            Button("Retry") { send(text: ThreadRule.retryPrompt, choice: .send, strand: strand) }
+                        if case .stuck = row.subject, retry != .hidden {
+                            Button("Retry") { retryStrand() }
                                 .buttonStyle(.bordered)
                                 .disabled(retry == .disabled)
                         }
@@ -242,7 +247,7 @@ struct InboxPane: View {
                 )
             } else if ThreadRule.offersMessage(kind: row.kind, hasReview: reader.review != nil, isObserver: isObserver) {
                 MessageBar(
-                    name: row.name, kind: row.kind, draft: $draft, outcome: outcome,
+                    name: row.name, kind: row.kind, draft: $draft, outcome: outcome, focusRequests: messageRequests,
                     send: { choice in send(text: draft, choice: choice, strand: strand) }
                 )
             } else if isObserver {
@@ -252,6 +257,18 @@ struct InboxPane: View {
             }
         }
         .accessibilityIdentifier("inbox-pane/\(row.id)")
+
+        // The Inbox menu's "Message Session" names this thread by row id, and the pane
+        // that draws it takes the request, so it is met whichever window shows it.
+        // Every pane that shows the row focuses its own field, and the request is cleared
+        // on the next main-actor turn, after each of them has seen it. Clearing it at
+        // once would leave the field to whichever pane observed it first.
+        .onChange(of: model.messageRequest, initial: true) {
+            guard model.messageRequest == row.id else { return }
+            messageRequests += 1
+            let id = row.id
+            Task { @MainActor in if model.messageRequest == id { model.messageRequest = nil } }
+        }
         // The reads follow the kind as well as the row: a session opened as "Waiting" becomes
         // "To review" once the scan has read its tree, and the review is read only for the
         // second, so a task keyed on the row alone would never read it.
@@ -576,6 +593,14 @@ struct InboxPane: View {
         }
     }
 
+    /// Retries through the model, which holds the row while one is out, so the menu's
+    /// Retry and this button cannot queue two.
+    private func retryStrand() {
+        guard !model.retrying.contains(row.id) else { return }
+        outcome = .sending
+        Task { outcome = .said(await model.retry(row).words) }
+    }
+
     private func send(text: String, choice: ThreadSend.Choice, strand: String) {
         guard ThreadSend.sendable(text), !outcome.isSending else { return }
         outcome = .sending
@@ -619,7 +644,9 @@ private struct MessageBar: View {
     let kind: InboxKind
     @Binding var draft: String
     let outcome: SendOutcome
+    let focusRequests: Int
     let send: (ThreadSend.Choice) -> Void
+    @FocusState private var isWriting: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -631,6 +658,8 @@ private struct MessageBar: View {
                 .font(Theme.body)
                 .lineLimit(1...5)
                 .padding(.horizontal, 24)
+                .focused($isWriting)
+                .onChange(of: focusRequests, initial: true) { _, count in if count > 0 { isWriting = true } }
                 .accessibilityLabel(Text(verbatim: "Message to \(name)"))
             HStack(spacing: 8) {
                 Text(verbatim: statusWords).font(Theme.caption).foregroundStyle(.secondary).lineLimit(3)

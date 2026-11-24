@@ -152,6 +152,7 @@ private struct NeedsYouRow: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .inboxContextMenu(for: row)
         .help("Open in the Inbox")
         .accessibilityLabel("Open \(row.name) in the Inbox, \(row.kind.chip)")
     }
@@ -166,7 +167,7 @@ private struct AgentStrip: View {
     @State private var steer = ""
 
     private var digest: String {
-        let line = Markdown.plainPreview(card.lines.first?.text.isEmpty == false ? card.lines[0].text : card.digest)
+        let line = InboxRule.oneLine(Markdown.plainPreview(card.lines.first?.text.isEmpty == false ? card.lines[0].text : card.digest))
         return line == card.name ? "" : line
     }
 
@@ -232,6 +233,7 @@ private struct AgentStrip: View {
         .contentShape(.rect)
         .onHover { isHovering = $0 }
         .onTapGesture { model.destination = .session(card.sessionID) }
+        .inboxContextMenu(for: model.threadRow(forSession: card.sessionID))
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isButton)
         .accessibilityLabel("\(card.name), \(card.liveness.label)")
@@ -360,6 +362,18 @@ struct InboxView: View {
         #if DEBUG
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
         #endif
+        .focusedSceneValue(\.inboxContext, openContext)
+    }
+
+    /// What the Inbox menu acts on while this view is in the focused window: the open
+    /// thread, and whether the list has a thread before and after it.
+    private var openContext: InboxCommandContext {
+        let opening = model.inboxOpening
+        var row: InboxRow?
+        if case .thread(let subject)? = opening.selection, !opening.isResolved {
+            row = InboxRule.selectable(model.board.sections).first { $0.subject == subject }
+        }
+        return model.commandContext(for: row, neighbors: InboxCommands.neighbors(of: opening.selection, in: model.inboxDrawn))
     }
 
     @ViewBuilder
@@ -381,10 +395,7 @@ struct InboxView: View {
             if let row = InboxRule.selectable(all).first(where: { $0.subject == subject }) {
                 InboxPane(
                     row: row,
-                    items: model.attention.filter { item in
-                        if case .session(let id, _) = item.source { return id == subject.sessionID && item.kind != .machine }
-                        return false
-                    },
+                    items: model.paneItems(for: subject),
                     draft: Binding(get: { drafts[row.id] ?? "" }, set: { drafts[row.id] = $0 })
                 ).id(row.id)
             } else if let held = opening.held, held.subject == subject {
@@ -415,15 +426,16 @@ enum InboxPaneWidth {
 /// says it no longer needs the owner, and offers the session. It draws none of the
 /// thread's own words, which are agent text, and none of its controls, which would act
 /// on a thread that has already been decided.
-private struct ResolvedPane: View {
+struct ResolvedPane: View {
     @Environment(AppModel.self) private var model
     let row: InboxRow
+    var note = "Resolved. This thread no longer needs you. It stays open here until you pick another row."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(row.kind.chip).font(Theme.caption).foregroundStyle(.secondary)
             Text(verbatim: row.name).font(.title3.weight(.semibold)).textSelection(.enabled)
-            Text("Resolved. This thread no longer needs you. It stays open here until you pick another row.")
+            Text(note)
                 .font(Theme.body)
                 .foregroundStyle(.secondary)
             Button("Open Session") { model.destination = .session(row.sessionID) }
@@ -471,7 +483,7 @@ private struct InboxList: View {
                 } else {
                     Section {
                         ForEach(section.rows) { row in
-                            InboxRowView(row: row).tag(InboxSelection.thread(row.subject))
+                            InboxRowView(row: row).tag(InboxSelection.thread(row.subject)).inboxContextMenu(for: row)
                         }
                     } header: { band(section) }
                 }

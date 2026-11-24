@@ -130,6 +130,33 @@ scenarios, merged when its gates pass. The order puts correctness first.
 - The same action list feeds a context menu on inbox rows and Mission Control
   rows, minus anything that decides.
 - A thread can open in its own window.
+- Done on `native/inbox-commands`. `InboxAction` and `InboxCommands`
+  (`MissionKit/InboxCommands.swift`) are the one action list: the Inbox menu, the
+  context menu on an inbox row and the context menu on a Mission Control row all
+  draw from it, and `InboxCommands.state` says which actions a thread offers. A
+  context menu draws only what can run for its row, minus navigation, anything
+  that decides, and Retry and Close Find, which act on a thread the owner has not
+  opened; those stay in the Inbox menu and the pane. A retry in flight is held
+  on the model (`AppModel.retrying`), so the menu and the pane cannot queue two. Allow, Allow for This Session and Deny moved from the
+  Session menu into the Inbox menu with the same shortcuts and titles, so there
+  is one list; they follow the armed approval card in the focused window as
+  before and work from a session's page too. Next Thread (⌘]) and Previous
+  Thread (⌘[) step through `AppModel.inboxDrawn`, the folder's rows and then the
+  machines, as the list draws them, and stop at the ends without wrapping. A
+  selection the list does not draw (a resolved thread, or one outside the
+  folder) enters the list at the end the step moves toward. Retry Stuck Strand
+  and Close Find send what the pane's buttons send, and a refusal is said in the
+  main window's existing alert. Message Session opens the thread and focuses its
+  message field; it is off for a review, whose reply goes through the outbox.
+  Open in New Window opens a `ThreadWindow` for the thread (`InboxSubject` is now
+  `Codable`, since it is the window's value); a thread that resolves stays on
+  screen marked resolved. Mission Control's agent strips carry the same context
+  menu, on the session's own thread when it has one.
+  `last_message` can hold newlines (loom #1364). The strip's digest and the
+  sidebar's preview now read `InboxRule.oneLine` over the markdown preview, which
+  also folds carriage returns and Unicode line separators that the preview kept; a
+  row's head is the first line, folded the same way. The failed run's detail is
+  read as markdown and keeps the message's own lines.
 
 ### 4. Native controls in the reading pane
 
