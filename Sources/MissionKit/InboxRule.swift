@@ -148,7 +148,7 @@ public enum InboxFolder: Sendable, CaseIterable, Equatable, Hashable {
 }
 
 /// What a row opens: a session's thread, or one record of the attention feed.
-public enum InboxSubject: Sendable, Equatable, Hashable {
+public enum InboxSubject: Sendable, Equatable, Hashable, Codable {
     case session(String)
     case ask(session: String, id: String)
     case stuck(session: String, strand: String)
@@ -388,13 +388,21 @@ public enum InboxRule {
         if let activity = thread.activity {
             if let message = said(activity), let line = message.split(separator: "\n", omittingEmptySubsequences: true)
                 .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).first(where: { !$0.isEmpty }) {
-                return cut(line)
+                return cut(oneLine(line))
             }
             if let summary = activity.glances.first?.summary.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
                 return cut(summary)
             }
         }
         return cut(shownName(thread))
+    }
+
+    /// Text on one line: every run of whitespace, newlines of any kind included,
+    /// becomes one space. The daemon's `last_message` can hold newlines, so a digest or
+    /// a row that must stay on one line reads it through this. A detail view keeps the
+    /// text as written.
+    public static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
     /// Cuts a line to `headCharacters` grapheme clusters, so a combined character

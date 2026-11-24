@@ -141,6 +141,7 @@ public enum Mission {
                     source: .session(id: session.id, escalation: nil),
                     agent: session.title,
                     title: "The last run failed",
+                    // The detail is read as markdown and keeps the message's own lines.
                     detail: row.lastMessage ?? "The session reported no final message."
                 ))
             }
@@ -183,6 +184,8 @@ public enum Mission {
                 name: session.title,
                 context: session.workspaceName,
                 liveness: liveness(session: session, activity: row),
+                // As written, since the strip reads it as markdown before it is put on
+                // one line (`InboxRule.oneLine`), and a message can hold newlines.
                 digest: row?.lastMessage ?? session.subtitle ?? "",
                 model: row?.model,
                 lines: lines,
