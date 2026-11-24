@@ -24,6 +24,7 @@ Its in-flight items either landed in the parity work below or moved to
 | Ask card above the composer, approval arming (#6) | `main` | Merged 2026-11-23. |
 | Native pass slice 2: the inbox as an `HSplitView` with a toolbar folder picker, one selection on the model, a refresh never moves it (`InboxRule.settle`) | branch `native/split-inbox`, worktree `/Users/roasbeef/gocode/src/github.com/roasbeef/ld-native` | Rebased on `107bf9d`, three commits (model, view, tests). `make test` 405 tests pass, the release bundle builds, and the full UI run was 134 passed, 7 failed. Two failures are known on main, four passed when run alone, and `an_executor_loss_is_reported` fails alone and on main. See "Verification state". Not pushed, no PR. |
 | Slice 4 (native controls in the reading pane) | branch `native/reading-pane` | PR open. See slice 4 in `docs/native-pass.md`; the answer options were deliberately not converted. |
+| Projects slice 1: the Projects destination, project tickets as inbox threads, a ticket's pane with the daemon's controls, the router page | branch `native/projects` | PR open. Create, settings, the composer and the diff are the next slices. Parity rows PJ-01 to PJ-06; PJ-06 (a log of what the router decided) is `no` because the daemon serves no such read. |
 | Slice 5 (notifications) | `docs/native-pass.md` | PR open on `native/notifications`. |
 
 ### The attention inbox port

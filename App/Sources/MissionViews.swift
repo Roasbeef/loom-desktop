@@ -393,7 +393,7 @@ struct InboxView: View {
 
         case .thread(let subject)?:
             if let row = InboxRule.selectable(all).first(where: { $0.subject == subject }) {
-                InboxPane(
+                ThreadPane(
                     row: row,
                     items: model.paneItems(for: subject),
                     draft: Binding(get: { drafts[row.id] ?? "" }, set: { drafts[row.id] = $0 })

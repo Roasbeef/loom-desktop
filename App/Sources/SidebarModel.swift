@@ -35,6 +35,9 @@ extension AppModel {
 
     /// A reservation without a failure is a create still in flight, not a session.
     private func isListed(_ record: SessionRecord) -> Bool {
+        // A project's router and a ticket's worker are reached from the Projects
+        // destination, so the conversation list leaves them out.
+        if record.standing != nil { return false }
         if case .reserved(let failure) = record.state { return failure != nil }
         return true
     }

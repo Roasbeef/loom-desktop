@@ -46,6 +46,7 @@ struct RootView: View {
             switch model.destination {
             case .inbox: InboxView()
             case .machines: MachinesView()
+            case .projects: ProjectsView()
             case .session(let id): SessionScreen(sessionID: id).id(id)
             case .mission, nil: MissionControlView()
             }
@@ -152,6 +153,11 @@ private struct SidebarView: View {
                     .tag(Destination.inbox)
                 Label("Mission Control", systemImage: "square.grid.2x2")
                     .tag(Destination.mission)
+                if !model.projectStates.isEmpty {
+                    Label("Projects", systemImage: "folder.badge.gearshape")
+                        .badge(model.projectStates.reduce(0) { $0 + ProjectRule.needing($1.summary) })
+                        .tag(Destination.projects)
+                }
                 if model.isMultiMachine {
                     Label("Machines", systemImage: "server.rack")
                         .tag(Destination.machines)
