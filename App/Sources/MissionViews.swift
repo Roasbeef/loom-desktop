@@ -397,10 +397,12 @@ struct InboxView: View {
     }
 }
 
-/// The widths of the inbox's two sides. The window's minimum leaves the detail column
-/// at least the sum of the two minimums, so nothing clips at the smallest size.
+/// The widths of the inbox's two sides. The window is at least 880 pt wide and the
+/// sidebar may be dragged to 380 pt, which leaves the detail column 500 pt. The two
+/// minimums sum to that, so nothing clips even then: the pane keeps the width it can
+/// be read at, and the list gives way down to a width that still shows a name.
 enum InboxPaneWidth {
-    static let listMinimum: CGFloat = 260
+    static let listMinimum: CGFloat = 160
     static let listIdeal: CGFloat = 330
     static let listMaximum: CGFloat = 480
     /// The least the pane is ever given, at the window's smallest size.
@@ -633,7 +635,10 @@ struct CommandPalette: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openSettings) private var openSettings
     @State private var query = ""
-    @State private var highlighted = 0
+    /// The result the highlight is on, by id. Results re-sort as sessions change, so
+    /// an index would run a different row than the one the person was looking at.
+    /// A highlight whose result left the list falls back to the first row.
+    @State private var highlightedID: String?
     @FocusState private var isFocused: Bool
 
     struct Command: Identifiable {
@@ -731,9 +736,9 @@ struct CommandPalette: View {
                         LazyVStack(spacing: 2) {
                             ForEach(Array(results.prefix(40).enumerated()), id: \.element.id) { index, command in
                                 PaletteRow(command: command, isHighlighted: index == highlighted)
-                                    .id(index)
+                                    .id(command.id)
                                     .onTapGesture {
-                                        highlighted = index
+                                        highlightedID = command.id
                                         run(results)
                                     }
                             }
@@ -744,7 +749,9 @@ struct CommandPalette: View {
                         .padding(6)
                     }
                     .frame(maxHeight: 360)
-                    .onChange(of: highlighted) { _, next in reader.scrollTo(next) }
+                    .onChange(of: highlighted) { _, next in
+                        if results.indices.contains(next) { reader.scrollTo(results[next].id) }
+                    }
                 }
             }
             .frame(width: 580)
@@ -753,13 +760,13 @@ struct CommandPalette: View {
             .padding(.top, 72)
         }
         .onAppear { isFocused = true }
-        .onChange(of: query) { highlighted = 0 }
+        .onChange(of: query) { highlightedID = nil }
         .onKeyPress(.upArrow) {
-            highlighted = max(0, highlighted - 1)
+            highlightedID = id(at: highlighted - 1, in: results)
             return .handled
         }
         .onKeyPress(.downArrow) {
-            highlighted = min(max(results.count, 1) - 1, highlighted + 1)
+            highlightedID = id(at: highlighted + 1, in: results)
             return .handled
         }
         .onKeyPress(.escape) {
@@ -768,9 +775,21 @@ struct CommandPalette: View {
         }
     }
 
+    /// The id of the result at `index`, clamped to the results, so an arrow key at
+    /// either end stays on the first or last row.
+    private func id(at index: Int, in results: [Command]) -> String? {
+        results.isEmpty ? nil : results[min(max(index, 0), results.count - 1)].id
+    }
+
+    /// Where the highlight is in the current results.
+    private func highlightedIndex(in results: [Command]) -> Int {
+        results.firstIndex { $0.id == highlightedID } ?? 0
+    }
+
     private func run(_ results: [Command]) {
-        guard results.indices.contains(highlighted) else { return }
-        let command = results[highlighted]
+        let index = highlightedIndex(in: results)
+        guard results.indices.contains(index) else { return }
+        let command = results[index]
         close()
         command.action()
     }
