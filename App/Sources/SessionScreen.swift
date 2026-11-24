@@ -236,11 +236,6 @@ private struct TranscriptView: View {
     @State private var isAtBottom = true
     @State private var viewport: CGFloat = 0
 
-    // The folds the reader opened or closed, by fold id. A fold the reader has not
-    // touched is open while its turn runs. The choice lives here, above the rows,
-    // because a fold's header and its steps are separate rows of the lazy stack.
-    @State private var openedFolds: [String: Bool] = [:]
-
     // Whether the reader is following the end. Only the reader's own scrolling
     // changes it, so content that changes height under the viewport cannot.
     @State private var isFollowing = true
@@ -304,15 +299,11 @@ private struct TranscriptView: View {
     private enum Item: Identifiable {
         case block(TranscriptBlock)
         case answerPart(id: String, part: MarkdownRun, text: String, isFirst: Bool)
-        case foldHeader(Fold)
-        case foldRow(row: TranscriptRow, isFirst: Bool)
 
         var id: String {
             switch self {
             case .block(let block): return block.id
             case .answerPart(let id, _, _, _): return id
-            case .foldHeader(let fold): return fold.id
-            case .foldRow(let row, _): return row.id
             }
         }
     }
@@ -332,28 +323,14 @@ private struct TranscriptView: View {
 
     private var items: [Item] {
         visibleBlocks.flatMap { block -> [Item] in
-            switch block {
-            case .fold(let fold):
-                // The fold's header and each of its steps are rows of their own, so
-                // no row grows with the number of steps.
-                var rows: [Item] = [.foldHeader(fold)]
-                if isOpen(fold) {
-                    rows += fold.rows.enumerated().map { .foldRow(row: $1, isFirst: $0 == 0) }
-                }
-                return rows
-            case .row(let row):
-                guard case .assistant(let text) = row.kind else { return [.block(block)] }
-                let parts = MarkdownView.parsed(text)
-                guard parts.count > Self.splitAbove else { return [.block(block)] }
-                return parts.enumerated().map { index, part in
-                    .answerPart(id: index == 0 ? block.id : "\(block.id)#\(index)", part: part, text: text, isFirst: index == 0)
-                }
+            guard case .row(let row) = block, case .assistant(let text) = row.kind else { return [.block(block)] }
+            let parts = MarkdownView.parsed(text)
+            guard parts.count > Self.splitAbove else { return [.block(block)] }
+            return parts.enumerated().map { index, part in
+                .answerPart(id: index == 0 ? block.id : "\(block.id)#\(index)", part: part, text: text, isFirst: index == 0)
             }
         }
     }
-
-    /// Whether a fold shows its steps: what the reader chose, else whether its turn is running.
-    private func isOpen(_ fold: Fold) -> Bool { openedFolds[fold.id] ?? fold.isLive }
 
     var body: some View {
         let asking = self.asking
@@ -382,20 +359,6 @@ private struct TranscriptView: View {
                         switch item {
                         case .block(let block):
                             BlockView(block: block, controller: controller)
-                        case .foldHeader(let fold):
-                            GutterRow(at: nil) {
-                                FoldHeader(fold: fold, isOpen: isOpen(fold), isAsking: asking.contains(fold.id)) {
-                                    openedFolds[fold.id] = !isOpen(fold)
-                                }
-                            }
-                        case .foldRow(let row, let isFirst):
-                            // The lazy stack spaces rows alike, and a fold's steps sit
-                            // closer than turns do, so the gap is taken back here.
-                            GutterRow(at: nil) {
-                                FoldRow(row: row, tail: row.callID.flatMap { controller.toolTails[$0] }, summary: controller.summaries[row.id])
-                                    .padding(.leading, 22)
-                            }
-                            .padding(.top, isFirst ? -10 : -8)
                         case .answerPart(let id, let part, let text, let isFirst):
                             GutterRow(at: isFirst ? Self.time(of: id, in: controller.blocks) : nil) {
                                 AskMarked(isMarked: isFirst && asking.contains(id)) {
@@ -619,9 +582,10 @@ private struct BlockView: View {
             GutterRow(at: Self.showsTime(row) ? row.at : nil) {
                 AskMarked(isMarked: asking.contains(row.id)) { RowView(row: row) }
             }
-        case .fold:
-            // A fold is drawn as a header and a row per step, never as one block.
-            EmptyView()
+        case .fold(let fold):
+            GutterRow(at: nil) {
+                FoldView(fold: fold, tails: controller.toolTails, summaries: controller.summaries, isAsking: asking.contains(fold.id))
+            }
         }
     }
 }

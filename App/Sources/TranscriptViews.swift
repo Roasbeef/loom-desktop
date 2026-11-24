@@ -3,56 +3,70 @@ import LoomKit
 import Markup
 import SwiftUI
 
-/// The line a turn's work folds behind: `Worked 48s · 4 steps · 2 files`.
+/// A turn's work behind one line: `Worked 48s · 4 steps · 2 files`.
 ///
 /// It opens by itself while the turn runs, so the step that is asking or failing is
-/// visible as it happens, and closes to one line when the turn is done. The header
-/// is only the line. The steps of an open fold are rows of the transcript's own
-/// lazy stack (see `TranscriptView.items`), not children of this view: a fold with
-/// a few hundred steps was one row taller than the renderer can draw, and the page
-/// went blank around it and stayed blank after the fold closed.
-struct FoldHeader: View {
+/// visible as it happens, and closes to one line when the turn is done.
+struct FoldView: View {
     let fold: Fold
-    let isOpen: Bool
+    let tails: [String: String]
+    var summaries: [String: String] = [:]
     /// The turn called `ask`, so the fold says there is a question in it.
     var isAsking = false
-    let toggle: () -> Void
+    @State private var userOpened: Bool?
+
+    private var isOpen: Bool { userOpened ?? fold.isLive }
 
     private var status: ToolSummary.Status { ToolSummary.status(fold.rows) }
 
     var body: some View {
-        Button {
-            withAnimation(.smooth(duration: 0.18)) { toggle() }
-        } label: {
-            HStack(spacing: 8) {
-                statusIcon
-                Text(fold.title)
-                    .font(Theme.label)
-                    .foregroundStyle(.secondary)
-                    .layoutPriority(1)
-                if fold.changeText != nil {
-                    ChangeCounts(added: fold.added, removed: fold.removed)
-                        .accessibilityHidden(true)
-                }
-                if isAsking { AskMark() }
-                if !isOpen {
-                    Text(ToolSummary.describe(fold.rows.filter { if case .tool = $0.kind { return true }; return false }))
-                        .font(Theme.caption)
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(.smooth(duration: 0.18)) { userOpened = !isOpen }
+            } label: {
+                HStack(spacing: 8) {
+                    statusIcon
+                    Text(fold.title)
+                        .font(Theme.label)
+                        .foregroundStyle(.secondary)
+                        .layoutPriority(1)
+                    if fold.changeText != nil {
+                        ChangeCounts(added: fold.added, removed: fold.removed)
+                            .accessibilityHidden(true)
+                    }
+                    if isAsking { AskMark() }
+                    if !isOpen {
+                        Text(ToolSummary.describe(fold.rows.filter { if case .tool = $0.kind { return true }; return false }))
+                            .font(Theme.caption)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    Spacer(minLength: 0)
                 }
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .rotationEffect(.degrees(isOpen ? 90 : 0))
-                Spacer(minLength: 0)
+                .contentShape(.rect)
             }
-            .contentShape(.rect)
+            .buttonStyle(.plain)
+            .accessibilityLabel(isAsking ? "\(fold.title), asked a question" : fold.title)
+            .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+
+            if isOpen {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(fold.rows) { row in
+                        FoldRow(row: row, tail: row.callID.flatMap { tails[$0] }, summary: summaries[row.id])
+                    }
+                }
+                .padding(.leading, 22)
+                .transition(.opacity)
+            }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(isAsking ? "\(fold.title), asked a question" : fold.title)
-        .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
+        // The fold opens as its turn starts and closes when it ends. Closing a
+        // tall run of steps in one frame moves everything below it, so it eases.
+        .animation(.smooth(duration: 0.25), value: fold.isLive)
     }
 
     @ViewBuilder
