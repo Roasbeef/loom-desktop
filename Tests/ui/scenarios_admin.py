@@ -161,7 +161,8 @@ def a_session_starts_on_another_daemon(c):
             c.app.press("other")
             c.app.focus("Prompt")
             c.app.type("Other daemon check demo")
-            c.app.fill("Folder", WORKSPACE)
+            from scenarios_lifecycle import choose_folder
+            choose_folder(c, WORKSPACE)
             c.app.fill("Configuration", str(BASE / "orch/.loom/loom.toml"))
             wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
             c.app.press("Dispatch")
@@ -257,7 +258,8 @@ def a_refused_creation_is_worded(c):
         c.app.press(find_box_label(c, "box ·"))
         c.app.focus("Prompt")
         c.app.type("Refusal check demo")
-        c.app.fill("Folder", "unregistered")
+        from scenarios_lifecycle import choose_folder
+        choose_folder(c, "unregistered")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
         c.app.press("Dispatch")
         c.app.see(r"The session was created but did not open.*serves no workspace named", 30)

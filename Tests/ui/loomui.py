@@ -147,7 +147,7 @@ class App:
         self.seq = 0
 
     def launch(self):
-        env = dict(os.environ, LOOM_DEBUG_DRIVER=str(self.dir), LOOM_STATE_DIR=str(self.state_root))
+        env = dict(os.environ, LOOM_DEBUG_DRIVER=str(self.dir), LOOM_STATE_DIR=str(self.state_root), LOOM_PICKER_ROOTS=str(BASE))
         if self.active:
             env["LOOM_FORCE_ACTIVE"] = "1"
         self.log = open(self.dir / "app.log", "ab")
