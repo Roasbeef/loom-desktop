@@ -643,7 +643,12 @@ def a_turn_of_many_steps_keeps_the_page_drawn(c):
     from PIL import Image
 
     def ink():
-        shot = Image.open(c.app.shot(c.out / "many-steps" / "frame.png")).convert("L").crop((290, 90, 1260, 700))
+        # The capture's pixel size follows the display's scale, so the transcript
+        # is cut out by fractions of the window: right of the sidebar, below the
+        # strand line, above the composer, and short of the scroll thumb.
+        shot = Image.open(c.app.shot(c.out / "many-steps" / "frame.png")).convert("L")
+        w, h = shot.size
+        shot = shot.crop((int(w * 0.28), int(h * 0.15), int(w * 0.97), int(h * 0.82)))
         pixels = list(shot.getdata())
         background = max(set(pixels), key=pixels.count)
         return sum(1 for v in pixels if abs(v - background) > 25) / len(pixels)
@@ -662,6 +667,8 @@ def a_turn_of_many_steps_keeps_the_page_drawn(c):
         if not busy and time.monotonic() - started > 5:
             break
         time.sleep(1)
+    session = c.app.session()
+    check(not session["isBusy"], "the turn of 300 steps should have finished")
     time.sleep(2)
     if ink() < 0.001:
         blank.append("after")
