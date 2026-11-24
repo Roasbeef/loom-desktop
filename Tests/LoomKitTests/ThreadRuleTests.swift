@@ -122,11 +122,11 @@ final class ThreadRuleTests: XCTestCase {
     func testApprovalTitles() {
         XCTAssertEqual(
             ThreadRule.approvalTitle(item(preview: "sqlite3 x", wanted: [("writable_root", "~/.loom")])),
-            [.words("May this program run "), .code("sqlite3 x"), .words(" with write access to "), .code("~/.loom"), .words("?")]
+            [.words("May "), .code("bash"), .words(" have write access to "), .code("~/.loom"), .words("?")]
         )
         XCTAssertEqual(
             ThreadRule.approvalTitle(item(wanted: [("writable_root", "~/.loom")])),
-            [.words("May this program have write access to "), .code("~/.loom"), .words("?")]
+            [.words("May "), .code("bash"), .words(" have write access to "), .code("~/.loom"), .words("?")]
         )
         XCTAssertEqual(
             ThreadRule.approvalTitle(item(wanted: [("network", "full")])),
@@ -141,7 +141,7 @@ final class ThreadRuleTests: XCTestCase {
 
     func testWriteGrantIsWordedBeforeNetwork() {
         let both = ThreadRule.approvalTitle(item(wanted: [("network", "full"), ("writable_root", "/w")]))
-        XCTAssertEqual(both, [.words("May this program have write access to "), .code("/w"), .words("?")])
+        XCTAssertEqual(both, [.words("May "), .code("bash"), .words(" have write access to "), .code("/w"), .words("?")])
     }
 
     func testEvidenceRowsLeaveOutWhatTheDaemonDidNotSay() {
