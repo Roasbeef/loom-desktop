@@ -24,7 +24,14 @@ struct NewProjectSheet: View {
     @State private var settings: ProjectSettings?
     @State private var proposal: ProjectProposal?
 
-    private var daemon: DaemonConnection? { model.projectDaemon }
+    /// The daemon the project was made on, kept from the create so step two writes to
+    /// the same daemon even if the list of daemons changes under the sheet.
+    @State private var made: DaemonConnection?
+
+    /// Whether the folder already had a project when the create answered.
+    @State private var existed = false
+
+    private var daemon: DaemonConnection? { made ?? model.projectDaemon }
 
     private func field(_ key: String) -> Binding<String> {
         Binding(get: { model.projectFields[key] ?? "" }, set: { model.projectFields[key] = $0 })
@@ -68,7 +75,7 @@ struct NewProjectSheet: View {
                 .accessibilityLabel("Project name")
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(isWorking)
                 Button(isWorking ? "Making…" : "Create Project") { create() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!judged.isUsable || isWorking || daemon == nil)
@@ -84,20 +91,22 @@ struct NewProjectSheet: View {
         Task {
             defer { isWorking = false }
             do {
-                let made = try await control.createProject(workspace: folder, name: name)
+                let created = try await control.createProject(workspace: folder, name: name)
+                existed = daemon.projects.contains { $0.id == created.project }
+                made = daemon
                 await daemon.readProjectsNow()
-                model.projectSelection = .project(made.project)
+                model.projectSelection = .project(created.project)
 
                 // The proposal and the settings are reads. A daemon that cannot give
                 // them still made the project, so the sheet then closes.
-                let read = try? await control.projectSettings(made.project)
-                proposal = try? await control.proposeProject(made.project)
+                let read = try? await control.projectSettings(created.project)
+                proposal = try? await control.proposeProject(created.project)
                 guard let read else { dismiss(); return }
                 settings = read
                 let draft = ProjectSetup.draft(read, proposal: proposal)
                 model.projectFields["new/check"] = draft.check
                 model.projectFields["new/setup"] = draft.setup
-                step = .settings(project: made.project)
+                step = .settings(project: created.project)
             } catch LoomError.server(let code, let message, _) {
                 problem = ProjectSetup.createRefusal(code: code, message: message)
             } catch {
@@ -112,8 +121,13 @@ struct NewProjectSheet: View {
     private var settingsStep: some View {
         if case .settings(let project) = step {
             VStack(alignment: .leading, spacing: 12) {
-                Text("The project is made. The daemon read its repository and suggests the check and setup below. Nothing has run.")
+                Text(existed
+                    ? "This folder already has a project; these are its settings. The daemon suggests nothing over a command that is set."
+                    : "The project is made. The daemon read its repository and suggests the check and setup below. Nothing has run.")
                     .font(Theme.caption).foregroundStyle(.secondary)
+                if model.daemons.count > 1, let daemon {
+                    Text(verbatim: "On \(daemon.label)").font(Theme.meta).foregroundStyle(.secondary)
+                }
                 if let proposal {
                     ForEach(Array(ProjectSetup.proposalWords(proposal).enumerated()), id: \.offset) { _, line in
                         Text(verbatim: line).font(Theme.meta).foregroundStyle(.secondary).textSelection(.enabled)
@@ -151,6 +165,10 @@ struct NewProjectSheet: View {
                 dismiss()
             } catch LoomError.server(let code, let message, _) {
                 problem = ProjectSetup.refusal(code: code, message: message)
+
+                // The settings are read again, so the next save is made against what is there
+                // now, and the fields the owner typed are left as they are.
+                if code == "conflict", let fresh = try? await control.projectSettings(project) { self.settings = fresh }
             } catch {
                 problem = error.localizedDescription
             }

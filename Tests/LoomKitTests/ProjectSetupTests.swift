@@ -125,7 +125,10 @@ final class ProjectSetupTests: XCTestCase {
     func testARequestIsTrimmedBoundedAndNeverEmpty() {
         XCTAssertNil(ProjectPost.text(" \n "))
         XCTAssertEqual(ProjectPost.text("  fix it \n"), "fix it")
-        XCTAssertEqual(ProjectPost.text(String(repeating: "x", count: 20_000))?.count, ProjectPost.limit)
+        XCTAssertNil(ProjectPost.text(String(repeating: "x", count: ProjectPost.limit + 1)), "text is refused, never cut")
+        XCTAssertEqual(ProjectPost.text(String(repeating: "x", count: ProjectPost.limit))?.count, ProjectPost.limit)
+        XCTAssertEqual(ProjectPost.problem(String(repeating: "x", count: ProjectPost.limit + 5)), "That is 5 characters over the 16000 a request may hold.")
+        XCTAssertNil(ProjectPost.problem("short"))
     }
 
     func testARequestIdFitsTheDaemonsAlphabetAndBound() {
@@ -147,5 +150,38 @@ final class ProjectSetupTests: XCTestCase {
         XCTAssertEqual(ProjectRule.done(.close, stage: .ended("closed")), "Closed \u{00B7} the ticket is now ended/closed")
         XCTAssertEqual(ProjectRule.done(.recheck, stage: .personCheck), "Check started \u{00B7} the ticket is now person/check")
         XCTAssertEqual(ProjectRule.done(.stop, stage: nil), "Stopped")
+    }
+
+    func testAFieldAnotherWriterChangedIsTakenAndOnlyTheOwnersEditsSurvive() {
+        let before = ProjectSetup.draft(settings(check: ["make check"], checkSource: "project", workers: "4"))
+        var edited = before
+        edited.maxWorkers = "8"
+        // Someone else changed the check and the setup while the owner edited the count.
+        let after = ProjectSetup.draft(settings(check: ["make unit"], checkSource: "project", setup: ["make deps"], workers: "4", revision: 4))
+        let rebased = ProjectSetup.rebase(edited, from: before, onto: after)
+        XCTAssertEqual(rebased.check, "make unit")
+        XCTAssertEqual(rebased.setup, "make deps")
+        XCTAssertEqual(rebased.maxWorkers, "8", "the owner's own edit is kept")
+
+        // A save of the rebased form against the new settings sends only the owner's edit.
+        let sent = try? ProjectSetup.plan(settings(check: ["make unit"], checkSource: "project", setup: ["make deps"], workers: "4", revision: 4), draft: rebased).get()
+        XCTAssertEqual(sent?.changes.map(\.key), ["max_workers"])
+    }
+
+    func testARebaseWithNothingEditedIsTheNewSettings() {
+        let old = ProjectSetup.draft(settings())
+        let new = ProjectSetup.draft(settings(check: ["make"], checkSource: "file", workers: "2", publish: "pull_request", paths: ["a", "b"]))
+        XCTAssertEqual(ProjectSetup.rebase(old, from: old, onto: new), new)
+    }
+
+    func testAClearedCountTheProjectHoldsGivesItBackToTheFile() {
+        func settingsWith(source: String) -> ProjectSettings {
+            let rows: [JSONValue] = [["key": "max_workers", "value": ["6"], "source": .string(source)]]
+            return ProjectSettings(.object(["project": "p", "revision": 1, "settings": .array(rows)]))!
+        }
+        var draft = ProjectSetup.draft(settingsWith(source: "project"))
+        draft.maxWorkers = " "
+        XCTAssertEqual(try ProjectSetup.plan(settingsWith(source: "project"), draft: draft).get().changes, [SettingChange(key: "max_workers", value: nil)])
+        XCTAssertEqual(try ProjectSetup.plan(settingsWith(source: "file"), draft: draft).get().changes, [], "nothing to give back")
     }
 }
