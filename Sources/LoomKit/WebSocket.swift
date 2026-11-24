@@ -1,7 +1,15 @@
 import Foundation
 
+/// The frames a control connection exchanges: what `ControlClient` needs of a socket,
+/// so a test can stand in for the daemon.
+protocol ControlTransport: Sendable {
+    func send(_ text: String) async throws
+    func receive() async throws -> String
+    func close()
+}
+
 /// One authenticated text-frame WebSocket to the daemon.
-final class WebSocket: Sendable {
+final class WebSocket: ControlTransport, Sendable {
     private let task: URLSessionWebSocketTask
     private let session: URLSession
 
