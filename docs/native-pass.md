@@ -174,6 +174,28 @@ scenarios, merged when its gates pass. The order puts correctness first.
   words with untrusted text labelled.
 - Clicking one opens the thread. One thread identifier per session. A delivered
   notification is removed once its item resolves.
+- Done on `native/notifications`. `Notices.plan` in MissionKit diffs the previous
+  `InboxRule.board` against the new one: a new approval, ask, stuck strand or
+  failed run is posted, an identifier that left the board is removed, and an
+  unchanged board or any other kind does nothing. `Announcer` keeps the previous
+  board and hands the plan to the notification center, and `NoticeClicks` is the
+  center's delegate. The title is the app's words ("Approval waiting", "Asks you a
+  question", "Strand stuck", "Run failed"), the session's name is the subtitle, and
+  session text (an ask's question, the authority line an approval requests) is
+  quoted on one line, cut at 140 characters and prefixed "untrusted text from the
+  agent". A failed run's notice carries none. A click opens the row's thread, or
+  the session's own thread when the row has since gone, and raises the main window
+  if it was closed. The notification has no actions. The thread identifier is the
+  session id, and the notice's identifier carries the kind, so an approval that is
+  decided and then fails the run swaps one notice for another. The notice is
+  removed when its row leaves the four kinds, whether the app is in front or not.
+  The notifier waits for a first report before taking its baseline, so sessions
+  already waiting at launch are a backlog, not news; a feed read that arrives after
+  the sessions can still post a backlog ask. An approval is one row per session, so
+  a second approval on a session already waiting posts no second notice; the
+  inbox row stays the one place that shows how many. The scenario drives the plan
+  and the click through the debug driver, since a test run posts nothing to the
+  center.
 
 ### Later, not in this pass
 

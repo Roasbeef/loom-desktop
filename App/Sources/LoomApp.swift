@@ -6,6 +6,7 @@ import UserNotifications
 @main
 struct LoomApp: App {
     @State private var model = AppModel()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
         WindowGroup("Loom", id: "main") {
@@ -16,6 +17,11 @@ struct LoomApp: App {
                     model.appearance.apply()
                     model.start()
                     Announcer.shared.watch(model)
+                    NoticeClicks.shared.showWindow = {
+                        // A second main window would open beside one already there.
+                        let hasMain = NSApp.windows.contains { $0.identifier?.rawValue.hasPrefix("main") == true }
+                        if !hasMain { openWindow(id: "main") }
+                    }
                     #if DEBUG
                     DebugDriver.start(model: model)
                     #endif
@@ -195,21 +201,33 @@ private struct MenuBarContent: View {
     }
 }
 
-/// Reports new attention items outside the window: the Dock badge always, and a
-/// notification while the app is in the background.
+/// Reports what needs the owner outside the window: the Dock badge always, and a
+/// notification while the app is in the background. What to post and what to remove
+/// is `Notices.plan`, a diff of two boards; this class only keeps the previous board
+/// and hands the plan to the notification center.
 @MainActor
 final class Announcer {
     static let shared = Announcer()
-    private var known: Set<String> = []
+    private var previous: InboxBoard?
     private var isWatching = false
+
+    /// The identifiers of every notice the plan listed. A real run posts those while
+    /// the app is in the background; a test posts none and only records them. A scenario reads them to see the plan.
+    private(set) var posted: [String] = []
+
+    /// The identifiers removed after their item resolved, in the same spirit.
+    private(set) var removed: [String] = []
 
     func watch(_ model: AppModel) {
         guard !isWatching else { return }
         isWatching = true
         let notifies = UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true
-        if notifies, !isUnderTest {
-            UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in }
+        if !isUnderTest {
+            let center = UNUserNotificationCenter.current()
+            center.delegate = NoticeClicks.shared
+            if notifies { center.requestAuthorization(options: [.alert, .badge, .sound]) { _, _ in } }
         }
+        NoticeClicks.shared.model = model
         Task {
             while true {
                 try? await Task.sleep(for: .seconds(1))
@@ -230,27 +248,78 @@ final class Announcer {
     private func update(_ model: AppModel) {
         let board = model.board
         NSApp.dockTile.badgeLabel = board.dockLabel
-        let rows = board.needsYou
-        let current = Set(rows.map(\.id))
-        let fresh = rows.filter { !known.contains($0.id) }
 
-        // The first read is a backlog, not news.
-        let isFirstRead = known.isEmpty && !hasRead
-        hasRead = true
-        known = current
-        guard !isFirstRead, !NSApp.isActive, !isUnderTest,
-              UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true else { return }
-        for row in fresh {
+        // Until a daemon has reported a session the board is empty because nothing was
+        // read, not because nothing waits, so that board is not the backlog's baseline.
+        guard board.reported > 0 || previous != nil else { return }
+        let plan = Notices.plan(previous: previous, next: board) { row in
+            guard row.kind == .approval else { return nil }
+            return model.controller(for: row.sessionID)?.escalations.first?.authorityLines.first
+        }
+        previous = board
+        guard !plan.isEmpty else { return }
+
+        // A resolved item's notice goes whether or not notifications are on or the
+        // app is in front, so nothing stale is left in the center.
+        removed += plan.remove
+        if !isUnderTest {
+            let center = UNUserNotificationCenter.current()
+            center.removeDeliveredNotifications(withIdentifiers: plan.remove)
+            center.removePendingNotificationRequests(withIdentifiers: plan.remove)
+        }
+
+        posted += plan.post.map(\.identifier)
+        guard !isUnderTest else { return }
+
+        // An owner looking at the app is told by the app itself.
+        guard !NSApp.isActive, UserDefaults.standard.object(forKey: "notifications") as? Bool ?? true else { return }
+        for notice in plan.post {
             let content = UNMutableNotificationContent()
-            content.title = row.name
-            content.subtitle = row.kind.chip
-            content.body = model.summary(of: row)
+            content.title = notice.title
+            content.subtitle = notice.subtitle
+            content.body = notice.body
             content.sound = .default
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: row.id, content: content, trigger: nil))
+            content.threadIdentifier = notice.thread
+            content.userInfo = [NoticeClicks.rowKey: notice.subject.key, NoticeClicks.sessionKey: notice.thread]
+            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: notice.identifier, content: content, trigger: nil))
         }
     }
+}
 
-    private var hasRead = false
+/// Receives a click on a delivered notification and opens its thread in the inbox.
+/// A click never decides anything: an approval is decided only beside its evidence,
+/// so the notification carries no actions.
+final class NoticeClicks: NSObject, UNUserNotificationCenterDelegate, @unchecked Sendable {
+    static let shared = NoticeClicks()
+    static let rowKey = "row"
+    static let sessionKey = "session"
+
+    /// Set once, on the main actor, before the center can call back.
+    @MainActor var model: AppModel?
+
+    /// Raises the main window, which a click should do even when it was closed.
+    @MainActor var showWindow: () -> Void = {}
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse
+    ) async {
+        let info = response.notification.request.content.userInfo
+        let row = info[Self.rowKey] as? String
+        let session = info[Self.sessionKey] as? String
+        await MainActor.run { open(row: row, session: session) }
+    }
+
+    /// Opens the row's thread, or the session's own thread when the row is gone, as
+    /// an item that resolved while the notification sat in the center is.
+    @MainActor
+    func open(row: String?, session: String?) {
+        guard let model else { return }
+        let rows = model.board.rows
+        let subject = rows.first { $0.id == row }?.subject ?? session.map { InboxSubject.session($0) }
+        showWindow()
+        NSApplication.shared.activate()
+        if let subject { model.openInbox(subject) } else { model.destination = .inbox }
+    }
 }
 
 struct SettingsView: View {

@@ -449,6 +449,7 @@ The app keeps no conversation data: the daemon's stores are the only record, and
 | Digest of the last reply seen per session | `UserDefaults` key `seenReplyDigests` | `AppModel.markSeen`, `recordFirstReplies` |
 | Sidebar choices | `AppStorage` keys `sidebarGrouping`, `sidebarMachine`, `sidebarSavedOpen` | `SidebarView` |
 | Inspector, appearance, notifications | `showsInspector`, the `AppearanceChoice` key, `notifications` | `AppModel`, `SettingsView` |
+| Notifications posted and removed | the previous `InboxBoard` and `Notices.plan` | `Announcer`, `NoticeClicks` (LoomApp.swift) |
 | New-session form memory | `lastWorkspace`, `forgottenFolders` | `DispatchSheet` |
 | Inspector tab, todo board open | `SceneStorage` key `inspectorTab`, `AppStorage` key `todoBoardOpen` | `SessionInspector`, `TodoDock` |
 
