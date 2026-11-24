@@ -163,7 +163,7 @@ enum DebugDriver {
         case "clear":
             // Empties the focused text field, which a select-all key cannot do
             // reliably in a sheet.
-            if let text = (window?.attachedSheet ?? window)?.firstResponder as? NSTextView {
+            if let text = inputWindow?.firstResponder as? NSTextView {
                 text.selectAll(nil)
                 text.delete(nil)
             } else {
@@ -408,27 +408,58 @@ enum DebugDriver {
     private static func capture(to url: URL) {
         // An open sheet is its own window, and it is what a person is looking at.
         guard let window = window?.attachedSheet ?? window else { return }
-        let handle = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW)
-        guard let symbol = dlsym(handle, "CGWindowListCreateImage") else { return }
-        let create = unsafeBitCast(symbol, to: WindowListCreateImage.self)
+        guard let base = snapshot(of: window) else { return }
 
-        // Below the window, and only this window, with its bounds and no shadow.
+        // An open popover is a window of its own too. It is drawn onto the sheet
+        // where it sits, on a canvas that holds both, so the capture shows what a
+        // person sees and not a sheet with a hole where the picker is.
+        let popovers = (window.childWindows ?? []).filter { $0.isVisible && NSStringFromClass(type(of: $0)).contains("Popover") }
+        var frame = window.frame
+        for popover in popovers { frame = frame.union(popover.frame) }
+        let scale = CGFloat(base.width) / window.frame.width
+        let canvas = NSImage(size: NSSize(width: frame.width * scale, height: frame.height * scale))
+        canvas.lockFocus()
+        func draw(_ image: CGImage, _ at: NSRect) {
+            NSImage(cgImage: image, size: at.size).draw(in: NSRect(
+                x: (at.minX - frame.minX) * scale, y: (at.minY - frame.minY) * scale,
+                width: at.width * scale, height: at.height * scale
+            ))
+        }
+        draw(base, window.frame)
+        for popover in popovers { if let image = snapshot(of: popover) { draw(image, popover.frame) } }
+        canvas.unlockFocus()
+        guard let tiff = canvas.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) else { return }
+        try? bitmap.representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    /// One window's pixels, below nothing else and with no shadow.
+    private static func snapshot(of window: NSWindow) -> CGImage? {
+        let handle = dlopen("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics", RTLD_NOW)
+        guard let symbol = dlsym(handle, "CGWindowListCreateImage") else { return nil }
+        let create = unsafeBitCast(symbol, to: WindowListCreateImage.self)
         let optionIncludingWindow: UInt32 = 1 << 3
         let imageBoundsIgnoreFraming: UInt32 = 1 << 0
-        guard let image = create(.null, optionIncludingWindow, UInt32(window.windowNumber), imageBoundsIgnoreFraming)?.takeRetainedValue() else { return }
-        let bitmap = NSBitmapImageRep(cgImage: image)
-        try? bitmap.representation(using: .png, properties: [:])?.write(to: url)
+        return create(.null, optionIncludingWindow, UInt32(window.windowNumber), imageBoundsIgnoreFraming)?.takeRetainedValue()
     }
 
     /// Finds an accessibility element of the open sheet (or window) by role and name.
     private static func element(role wanted: [String], named label: String) -> NSObject? {
-        guard let target = window?.attachedSheet ?? window else { return nil }
+        guard let target = inputWindow else { return nil }
         var found: NSObject?
         AccessibilityAudit.visitElements(of: target) { node, role, name in
             guard found == nil, wanted.contains(role), name == label || name.hasPrefix(label + ",") else { return }
             found = node
         }
         return found
+    }
+
+    /// Where typing and focus go: an open popover first, then the sheet, then the
+    /// window, which is the order a person's keystrokes would find them in. A
+    /// popover is a child window of the sheet (or the window) that opened it.
+    private static var inputWindow: NSWindow? {
+        let owner = window?.attachedSheet ?? window
+        if let popover = owner?.childWindows?.last(where: { $0.isVisible && NSStringFromClass(type(of: $0)).contains("Popover") }) { return popover }
+        return owner
     }
 
     private static func focusField(labelled label: String) -> Bool {
@@ -482,7 +513,7 @@ enum DebugDriver {
 
     private static func send(key: String, code: UInt16, flags: NSEvent.ModifierFlags) {
         // Typing goes to a sheet when one is up, as it does for a person.
-        guard let window = window?.attachedSheet ?? window else { return }
+        guard let window = inputWindow else { return }
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard let event = NSEvent.keyEvent(
                 with: type, location: .zero, modifierFlags: flags, timestamp: ProcessInfo.processInfo.systemUptime,

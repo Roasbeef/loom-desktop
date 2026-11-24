@@ -38,9 +38,11 @@ extension DaemonConnection {
 /// others can join it. The prompt comes first because it is why a person opened the
 /// form, and the place defaults to the last choice so a repeat takes one keystroke.
 ///
-/// The folder field doubles as a search over the places already used, since a person
-/// who has worked in a folder once usually wants it again. The form judges a typed
-/// folder while it is typed, so a mistake is named before any request is made.
+/// The folder is a chip under the prompt that opens a popover (`FolderPickerPopover`):
+/// a search over recent folders, projects and any folder below the home directory,
+/// so a person who has worked in a folder once, or never, finds it by a few letters.
+/// The form judges the chosen folder while it is shown, so a mistake is named
+/// before any request is made.
 struct DispatchSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -58,7 +60,9 @@ struct DispatchSheet: View {
     @State private var visionKey = ""
     @State private var catalogue = ModelCatalogue()
     @State private var isShareable = false
-    @State private var isListingProjects = false
+    @State private var isPickingFolder = false
+    @State private var projects: [ProjectRef] = []
+    @State private var foundFolders: [String] = []
     @State private var error: String?
     @State private var createdID: String?
     @State private var isSending = false
@@ -104,6 +108,8 @@ struct DispatchSheet: View {
                 .padding(18)
                 .accessibilityLabel("Prompt")
 
+            folderRow
+
             Divider()
 
             Form {
@@ -128,7 +134,6 @@ struct DispatchSheet: View {
                             .foregroundStyle(Theme.attention)
                     }
                 }
-                workspaceField
                 TextField("Name", text: $name, prompt: Text("The first line of your message"))
                     .accessibilityLabel("Session name")
                 if !catalogue.profiles.isEmpty {
@@ -234,6 +239,22 @@ struct DispatchSheet: View {
             if !catalogue.imageReaders.contains(where: { $0.key == visionKey }) { visionKey = "" }
         }
         .onChange(of: isShareable) { requestKey = UUID().uuidString }
+        .task(id: daemonID) {
+            // Projects fill the picker while the form is being read, so the popover
+            // has them by the time it opens. A daemon slow to answer leaves the
+            // list empty and holds up nothing else.
+            projects = []
+            guard let daemon else { return }
+            projects = await daemon.pickerProjects()
+        }
+        .task(id: daemonID) {
+            // The walk is bounded (FolderIndex) and runs off the main actor. It is
+            // a task of its own so a slow `projects.list` cannot delay it.
+            foundFolders = []
+            guard let daemon, !daemon.isRemote else { return }
+            let roots = model.pickerRoots
+            foundFolders = await Task.detached { FolderIndex.scan(roots: roots) }.value
+        }
         .task(id: placement) {
             remoteWorkspaces = []
             if case .executor(let name) = placement, let daemon {
@@ -245,90 +266,51 @@ struct DispatchSheet: View {
 
     // MARK: Folder
 
-    /// The places the typed text could mean: used folders for a local session, or
-    /// the executor's registered names. With nothing typed, all of them.
-    private var suggestions: [String] {
-        let all: [String]
+    /// The places already used for this placement: used folders for a local
+    /// session, or the executor's registered names.
+    private var places: [String] {
         switch placement {
-        case .local: all = daemon.map { model.recentPlaces(on: $0, forgotten: forgotten) } ?? []
-        case .executor: all = remoteWorkspaces
-        case .pool: all = []
-        }
-        let query = workspace.trimmingCharacters(in: .whitespaces)
-
-        // A field that already holds one of the places shows all of them, so a
-        // remembered default does not hide the alternatives.
-        if query.isEmpty || all.contains(query) { return Array(all.prefix(6)) }
-        return Array(all.filter { $0 != workspace && $0.localizedCaseInsensitiveContains(query) }.prefix(6))
-    }
-
-    /// Every place already used, as a menu of project names, so a person can pick
-    /// one without typing and without the field's current text hiding the rest.
-    /// Each item names the folder and shows where it is.
-    @ViewBuilder
-    private var projectsMenu: some View {
-        let places: [String] = switch placement {
         case .local: daemon.map { model.recentPlaces(on: $0, forgotten: forgotten) } ?? []
         case .executor: remoteWorkspaces
         case .pool: []
         }
-        if !places.isEmpty {
-            Button {
-                isListingProjects = true
-            } label: {
-                Label("Projects", systemImage: "chevron.down").labelStyle(.titleAndIcon)
-            }
-            .accessibilityLabel("Projects")
-            .help("Folders used lately")
-            .popover(isPresented: $isListingProjects, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(places.prefix(15), id: \.self) { place in
-                        Button {
-                            workspace = place
-                            isListingProjects = false
-                        } label: {
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text((place as NSString).lastPathComponent)
-                                if placement == .local {
-                                    Text((place as NSString).deletingLastPathComponent)
-                                        .font(Theme.meta)
-                                        .foregroundStyle(.tertiary)
-                                        .lineLimit(1)
-                                        .truncationMode(.head)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Project \(place)")
-                    }
-                }
-                .padding(6)
-                .frame(width: 340)
-            }
-        }
     }
 
-    @ViewBuilder
-    private var workspaceField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            LabeledContent(placement == .local ? "Folder" : "Workspace") {
-                HStack(spacing: 6) {
-                    // A field holding a long path asks for its whole width, which would push the
-                    // fixed-width sheet out past both edges. It takes the width it is given instead.
-                    TextField("Folder", text: $workspace, prompt: Text(placement == .local ? "Search places or type a path" : "Name registered on that machine"))
-                        .labelsHidden()
-                        .font(.system(size: 12).monospaced())
-                        .frame(minWidth: 120, maxWidth: .infinity)
-                        .accessibilityLabel("Folder")
-                    projectsMenu
-                    if placement == .local, daemon?.isRemote != true {
-                        Button("Choose…", action: choose)
-                    }
+    private var isLocalDisk: Bool { placement == .local && daemon?.isRemote != true }
+
+    /// The chip, and under it the daemon-independent judgement of a typed folder.
+    private var folderRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                FolderChip(
+                    workspace: workspace,
+                    placeholder: placement == .local ? "Choose folder" : "Choose workspace",
+                    isOpen: $isPickingFolder
+                )
+                .popover(isPresented: $isPickingFolder, arrowEdge: .bottom) {
+                    FolderPickerPopover(
+                        source: FolderPickerSource(
+                            recent: places,
+                            projects: placement == .local ? projects : [],
+                            found: isLocalDisk ? foundFolders : [],
+                            canOpenPanel: isLocalDisk,
+                            currentIsChosen: !workspace.isEmpty,
+                            current: workspace,
+                            onPick: { workspace = $0 },
+                            onForget: { forgottenText = forgotten.union([$0]).sorted().joined(separator: "\n") },
+                            onClear: { workspace = "" }
+                        ),
+                        dismiss: { isPickingFolder = false }
+                    )
                 }
+                if !workspace.isEmpty {
+                    Text((workspace as NSString).deletingLastPathComponent.isEmpty ? "" : FolderPicker.abbreviate((workspace as NSString).deletingLastPathComponent))
+                        .font(Theme.meta)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+                Spacer(minLength: 0)
             }
             if let words = folderJudgement.words {
                 Text(words).font(Theme.caption).foregroundStyle(Theme.failure)
@@ -336,42 +318,15 @@ struct DispatchSheet: View {
             if placement == .local, daemon?.isRemote == true, workspace.isEmpty {
                 Text("A folder on that machine.").font(Theme.caption).foregroundStyle(.secondary)
             }
-            ForEach(suggestions, id: \.self) { place in
-                HStack(spacing: 6) {
-                    Button {
-                        workspace = place
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "folder").foregroundStyle(.secondary)
-                            Text((place as NSString).lastPathComponent)
-                            Text(place).font(Theme.meta).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
-                            Spacer(minLength: 0)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Use folder \(place)")
-                    if placement == .local {
-                        Button {
-                            forgottenText = (forgotten.union([place])).sorted().joined(separator: "\n")
-                        } label: {
-                            Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.tertiary)
-                        .help("Forget this folder")
-                        .accessibilityLabel("Forget folder \(place)")
-                    }
-                }
-                .padding(.leading, 80)
-            }
         }
+        .padding(.horizontal, 18)
+        .padding(.bottom, 12)
     }
 
     /// Says why the button is disabled, rather than leaving a person to guess.
     private var dispatchHint: String {
         if prompt.isEmpty { return "Describe the work to dispatch." }
-        if workspace.isEmpty { return "Choose a folder to dispatch." }
+        if workspace.isEmpty { return "Choose a folder to dispatch (⌘O)." }
         if let words = folderJudgement.words { return words }
         return "⌘↩ to dispatch"
     }
@@ -393,15 +348,6 @@ struct DispatchSheet: View {
         if let free = option.freeScopes, option.state == "ready" { parts.append("\(free) free") }
         if option.state != "ready" { parts.append(option.state) }
         return parts.joined(separator: " · ")
-    }
-
-    private func choose() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        if panel.runModal() == .OK, let url = panel.url {
-            workspace = url.path
-        }
     }
 
     private func send() {
