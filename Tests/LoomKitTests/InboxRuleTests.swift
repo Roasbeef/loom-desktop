@@ -637,10 +637,49 @@ final class InboxRuleTests: XCTestCase {
         XCTAssertEqual(InboxRule.open(.thread(.session("n")), rows: gone, machines: []).selection, .thread(.session("n")))
     }
 
-    /// A choice that was never listed has no row to keep showing, so the first thread opens.
-    func testAChoiceThatWasNeverListedOpensTheFirstThread() {
-        let list = rows([thread("n", "need", activity("needs_you", approvals: 1))])
-        XCTAssertEqual(InboxRule.open(.thread(.session("ghost")), rows: list, machines: []).selection, .thread(.session("n")))
+    /// A choice that is not listed has no row to show, so the opening stands. The
+    /// menu-bar extra can offer a row that resolves while its menu is open.
+    func testAChoiceThatIsNotListedLeavesTheOpeningAlone() {
+        let list = rows([thread("n", "need", activity("needs_you", approvals: 1)), thread("w", "work", activity("needs_you", approvals: 1))])
+        let current = InboxRule.open(.thread(.session("w")), rows: list, machines: [])
+        XCTAssertEqual(InboxRule.open(.thread(.session("ghost")), from: current, rows: list, machines: []), current)
+        XCTAssertEqual(InboxRule.open(.thread(.session("ghost")), rows: list, machines: []), .none)
+        XCTAssertEqual(InboxRule.open(.machine("gone"), from: current, rows: list, machines: []), current)
+    }
+
+    /// Off the Inbox nothing opens for the owner, so a first fallback taken at launch
+    /// cannot freeze whichever row was listed first, and the Inbox opens the first
+    /// thread only once the owner is looking at it.
+    func testNothingOpensWhileTheOwnerIsElsewhere() {
+        let list = rows([thread("w", "work", activity("working"))])
+        XCTAssertEqual(InboxRule.settle(.none, rows: list, machines: [], place: .elsewhere), .none)
+        XCTAssertEqual(InboxRule.settle(.none, rows: [], machines: ["m"], place: .elsewhere), .none)
+        XCTAssertEqual(InboxRule.settle(.none, rows: list, machines: [], place: .inbox).selection, .thread(.session("w")))
+    }
+
+    /// A thread the owner opened keeps its place off the Inbox, but a resolved one is
+    /// dropped there, so the next visit does not say "resolved" about a thread the
+    /// owner may not remember.
+    func testAResolvedOpeningIsDroppedWhenTheOwnerLeaves() {
+        let both = rows([thread("w", "work", activity("needs_you", approvals: 1))])
+        let opening = InboxRule.open(.thread(.session("w")), rows: both, machines: [])
+        XCTAssertEqual(InboxRule.settle(opening, rows: both, machines: [], place: .elsewhere), opening)
+        XCTAssertEqual(InboxRule.settle(opening, rows: [], machines: [], place: .elsewhere), .none)
+        let healed = InboxRule.open(.machine("m"), rows: [], machines: ["m"])
+        XCTAssertEqual(InboxRule.settle(healed, rows: [], machines: [], place: .elsewhere), .none)
+    }
+
+    /// A folder that emptied is drawn as Everything, and the model forgets it, so a
+    /// later item in that folder does not narrow the list again unasked.
+    func testAnEmptiedFolderIsForgottenWhenItFillsAgain() {
+        let needing = sections([thread("n", "need", activity("needs_you", approvals: 1))])
+        let working = sections([thread("w", "work", activity("working"))])
+        var chosen = InboxFolder.needing
+        XCTAssertEqual(InboxRule.shownFolder(chosen: chosen, sections: needing), .needing)
+
+        chosen = InboxRule.shownFolder(chosen: chosen, sections: working)
+        XCTAssertEqual(chosen, .everything)
+        XCTAssertEqual(InboxRule.shownFolder(chosen: chosen, sections: needing), .everything)
     }
 
     /// A machine behaves as a thread does: it stays open when it recovers, marked resolved.
@@ -688,8 +727,10 @@ final class InboxRuleTests: XCTestCase {
             // Nothing open yet is the one case a refresh may open something.
             guard let opened = opening.selection else { continue }
             for _ in 0..<8 {
-                opening = InboxRule.settle(opening, rows: refresh(), machines: [])
+                let listed = refresh()
+                opening = InboxRule.settle(opening, rows: listed, machines: [])
                 XCTAssertEqual(opening.selection, opened)
+                XCTAssertEqual(opening.isResolved, !listed.contains { InboxSelection.thread($0.subject) == opened })
             }
         }
     }

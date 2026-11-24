@@ -21,6 +21,13 @@ public enum InboxSelection: Hashable, Sendable {
     case machine(String)
 }
 
+/// Where the owner is, as far as the inbox's selection cares: looking at the list,
+/// or somewhere else in the app.
+public enum InboxPlace: Sendable {
+    case inbox
+    case elsewhere
+}
+
 /// The open thread, with the last row that listed it.
 ///
 /// A resolved thread leaves the list, and the pane still has to say which thread
@@ -56,12 +63,34 @@ extension InboxRule {
     /// - a thread that is no longer listed stays open, marked resolved, when it was
     ///   open before; a machine that is no longer listed is the same;
     /// - only when nothing is open, or the choice was never listed (so there is no
-    ///   row to keep showing), the first thread opens, or the first machine when no
-    ///   thread is listed.
+    ///   row to keep showing), and only while the owner is on the Inbox, the first
+    ///   thread opens, or the first machine when no thread is listed.
+    ///
+    /// Off the Inbox nothing is opened for the owner, because they have not looked
+    /// at the list: a first fallback taken at launch would freeze whatever row was
+    /// listed first, and a later approval could never take the pane. A resolved
+    /// opening is also dropped there, since "resolved" is a note to someone looking
+    /// at the pane, and a first visit would otherwise read about a thread the owner
+    /// never opened.
     ///
     /// `rows` come from every section, not only the folder the list draws, because
     /// a thread outside the folder is still the one the pane reads.
-    public static func settle(_ opening: InboxOpening, rows: [InboxRow], machines: [String]) -> InboxOpening {
+    public static func settle(
+        _ opening: InboxOpening, rows: [InboxRow], machines: [String], place: InboxPlace = .inbox
+    ) -> InboxOpening {
+        let kept = keep(opening, rows: rows, machines: machines)
+        switch place {
+        case .inbox:
+            return kept ?? first(rows: rows, machines: machines)
+        case .elsewhere:
+            guard let kept, !kept.isResolved else { return .none }
+            return kept
+        }
+    }
+
+    /// The opening with the refresh applied, or nil when nothing is open or the
+    /// choice has no row to show.
+    private static func keep(_ opening: InboxOpening, rows: [InboxRow], machines: [String]) -> InboxOpening? {
         switch opening.selection {
         case .thread(let subject)?:
             if let row = rows.first(where: { $0.subject == subject }) {
@@ -70,19 +99,22 @@ extension InboxRule {
             if let held = opening.held, held.subject == subject {
                 return InboxOpening(selection: opening.selection, held: held, isResolved: true)
             }
+            return nil
         case .machine(let id)?:
-            if machines.contains(id) { return InboxOpening(selection: opening.selection, held: nil, isResolved: false) }
-            return InboxOpening(selection: opening.selection, held: nil, isResolved: true)
+            return InboxOpening(selection: opening.selection, held: nil, isResolved: !machines.contains(id))
         case nil:
-            break
+            return nil
         }
-        return first(rows: rows, machines: machines)
     }
 
-    /// The owner chose `selection`. A thread that is not listed has no row to show,
-    /// so the first one opens instead.
-    public static func open(_ selection: InboxSelection, rows: [InboxRow], machines: [String]) -> InboxOpening {
-        settle(InboxOpening(selection: selection, held: nil, isResolved: false), rows: rows, machines: machines)
+    /// The owner chose `selection`. A selection that is not listed has no row to
+    /// show, so the current opening stands: the choice can be stale when a row
+    /// resolves while a menu that offered it is open.
+    public static func open(
+        _ selection: InboxSelection, from opening: InboxOpening = .none, rows: [InboxRow], machines: [String]
+    ) -> InboxOpening {
+        let chosen = InboxOpening(selection: selection, held: nil, isResolved: false)
+        return keep(chosen, rows: rows, machines: machines).flatMap { $0.isResolved ? nil : $0 } ?? opening
     }
 
     /// The owner chose a folder, whose list draws `visible`. An open thread the
