@@ -581,6 +581,119 @@ final class InboxRuleTests: XCTestCase {
         }
     }
 
+    // MARK: What is open
+
+    private func rows(_ threads: [InboxThread]) -> [InboxRow] { InboxRule.selectable(sections(threads)) }
+
+    /// With nothing open the first thread opens, once, and the choice is then kept.
+    func testNothingOpenFallsBackToTheFirstThreadOnce() {
+        let list = rows([thread("w", "work", activity("working")), thread("n", "need", activity("needs_you", approvals: 1))])
+        let opened = InboxRule.settle(.none, rows: list, machines: [])
+        XCTAssertEqual(opened.selection, .thread(.session("n")))
+        XCTAssertFalse(opened.isResolved)
+
+        // The same rows, settled again, give the same opening.
+        XCTAssertEqual(InboxRule.settle(opened, rows: list, machines: []), opened)
+        XCTAssertEqual(InboxRule.settle(.none, rows: [], machines: []), .none)
+        XCTAssertEqual(InboxRule.settle(.none, rows: [], machines: ["m"]).selection, .machine("m"))
+    }
+
+    /// A refresh that reorders or adds rows never changes what is open, even when a
+    /// new row would sort ahead of it.
+    func testARefreshThatReordersOrAddsRowsKeepsTheOpenThread() {
+        let before = rows([thread("w", "work", activity("working")), thread("n", "need", activity("needs_you", approvals: 1))])
+        var opening = InboxRule.open(.thread(.session("w")), rows: before, machines: [])
+        XCTAssertEqual(opening.selection, .thread(.session("w")))
+
+        let after = rows([
+            thread("a", "ahead", activity("needs_you", approvals: 1)),
+            thread("w", "work", activity("working")),
+            thread("n", "need", activity("needs_you", approvals: 1)),
+        ])
+        opening = InboxRule.settle(opening, rows: after, machines: [])
+        XCTAssertEqual(opening.selection, .thread(.session("w")))
+        XCTAssertFalse(opening.isResolved)
+        XCTAssertEqual(opening.held?.subject, .session("w"))
+    }
+
+    /// A thread that resolves stays open, marked resolved, and keeps its row to name it
+    /// until the owner picks another. It comes back unresolved if it is listed again.
+    func testAResolvedThreadStaysOpenUntilTheOwnerPicksAnother() {
+        let both = rows([thread("w", "work", activity("needs_you", approvals: 1)), thread("n", "need", activity("needs_you", approvals: 1))])
+        let opening = InboxRule.open(.thread(.session("w")), rows: both, machines: [])
+
+        let gone = rows([thread("n", "need", activity("needs_you", approvals: 1))])
+        let resolved = InboxRule.settle(opening, rows: gone, machines: [])
+        XCTAssertEqual(resolved.selection, .thread(.session("w")))
+        XCTAssertTrue(resolved.isResolved)
+        XCTAssertEqual(resolved.held?.name, "work")
+
+        // Further refreshes keep it, even with nothing else listed.
+        XCTAssertEqual(InboxRule.settle(resolved, rows: gone, machines: []), resolved)
+        XCTAssertEqual(InboxRule.settle(resolved, rows: [], machines: []), resolved)
+        XCTAssertEqual(InboxRule.settle(resolved, rows: both, machines: []).isResolved, false)
+
+        // The owner's pick is what moves it.
+        XCTAssertEqual(InboxRule.open(.thread(.session("n")), rows: gone, machines: []).selection, .thread(.session("n")))
+    }
+
+    /// A choice that was never listed has no row to keep showing, so the first thread opens.
+    func testAChoiceThatWasNeverListedOpensTheFirstThread() {
+        let list = rows([thread("n", "need", activity("needs_you", approvals: 1))])
+        XCTAssertEqual(InboxRule.open(.thread(.session("ghost")), rows: list, machines: []).selection, .thread(.session("n")))
+    }
+
+    /// A machine behaves as a thread does: it stays open when it recovers, marked resolved.
+    func testAMachineStaysOpenWhenItRecovers() {
+        let opening = InboxRule.open(.machine("m"), rows: [], machines: ["m"])
+        XCTAssertEqual(opening.selection, .machine("m"))
+        let healed = InboxRule.settle(opening, rows: [], machines: [])
+        XCTAssertEqual(healed.selection, .machine("m"))
+        XCTAssertTrue(healed.isResolved)
+    }
+
+    /// A folder click moves the open thread only when the folder does not draw it.
+    func testAFolderMovesTheOpenThreadOnlyWhenItDoesNotDrawIt() {
+        let all = sections([thread("w", "work", activity("working")), thread("n", "need", activity("needs_you", approvals: 1))])
+        let every = InboxRule.selectable(all)
+        let needing = InboxRule.selectable(InboxRule.visible(all, in: .needing))
+
+        let onWork = InboxRule.open(.thread(.session("w")), rows: every, machines: [])
+        let moved = InboxRule.narrow(onWork, visible: needing, rows: every, machines: [])
+        XCTAssertEqual(moved.selection, .thread(.session("n")))
+
+        let onNeed = InboxRule.open(.thread(.session("n")), rows: every, machines: [])
+        XCTAssertEqual(InboxRule.narrow(onNeed, visible: needing, rows: every, machines: []), onNeed)
+
+        let machine = InboxRule.open(.machine("m"), rows: every, machines: ["m"])
+        XCTAssertEqual(InboxRule.narrow(machine, visible: needing, rows: every, machines: ["m"]), machine)
+
+        // A folder that draws nothing leaves the choice alone.
+        XCTAssertEqual(InboxRule.narrow(onWork, visible: [], rows: every, machines: []), onWork)
+    }
+
+    /// Property: over any sequence of refreshes that keep the open thread listed, the
+    /// open thread never changes, and a thread that leaves the list stays open.
+    func testRefreshesNeverMoveWhatIsOpen() {
+        var generator = SeededGenerator(seed: seed)
+        for _ in 0..<100 {
+            let ids = (0..<6).map { "s\($0)" }
+            func refresh() -> [InboxRow] {
+                rows(ids.shuffled(using: &generator).prefix(Int.random(in: 0..<7, using: &generator)).map {
+                    thread($0, "n\($0)", activity(["needs_you", "working"].randomElement(using: &generator)!, approvals: 1))
+                })
+            }
+            var opening = InboxRule.settle(.none, rows: refresh(), machines: [])
+
+            // Nothing open yet is the one case a refresh may open something.
+            guard let opened = opening.selection else { continue }
+            for _ in 0..<8 {
+                opening = InboxRule.settle(opening, rows: refresh(), machines: [])
+                XCTAssertEqual(opening.selection, opened)
+            }
+        }
+    }
+
     // MARK: Counts
 
     /// Ports `the_headline_says_what_it_read_test` and the tally cases of
