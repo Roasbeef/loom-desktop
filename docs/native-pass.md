@@ -108,6 +108,14 @@ scenarios, merged when its gates pass. The order puts correctness first.
 - The folder choice is a toolbar `Picker` at every width.
 - The selection lives on the model and is bound to the list, so the open thread
   is always the highlighted row, and a refresh never moves it.
+- Done on `native/split-inbox`. A refresh settles the selection with
+  `InboxRule.settle` and never moves it. A thread that resolves stays open,
+  marked resolved, until the owner picks another row. The web inbox has no
+  reading pane to follow (its `landing` only places a note), so rule 8 decided
+  it. A folder click moves the open thread only when the folder does not draw it.
+  Because a refresh never moves the selection, a session that first lists only a
+  review opens that review, and an approval that arrives later does not take
+  the pane.
 
 ### 3. Commands and the keyboard
 
