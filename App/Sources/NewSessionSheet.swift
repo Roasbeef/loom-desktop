@@ -396,12 +396,7 @@ struct DispatchSheet: View {
     }
 
     private func choose() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        if panel.runModal() == .OK, let url = panel.url {
-            workspace = url.path
-        }
+        if let path = FolderChoice.choose() { workspace = path }
     }
 
     private func send() {

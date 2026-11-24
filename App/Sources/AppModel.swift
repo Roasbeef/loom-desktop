@@ -833,6 +833,20 @@ final class AppModel {
     /// inbox, and the pane that stays says what was done.
     var ticketResults: [ProjectSelection: TicketResult] = [:]
 
+    /// Text a project form holds, by field name (`post/<project>`, `check/<project>`,
+    /// `new/folder`, and so on), so a half-written request survives a move through the
+    /// list and a test can write a field without a key window.
+    var projectFields: [String: String] = [:]
+
+    /// Whether the new-project sheet is open.
+    var isCreatingProject = false
+
+    /// The daemon a new project is made on: the first one that holds a project table,
+    /// else the first connected one.
+    var projectDaemon: DaemonConnection? {
+        daemons.first { $0.projectsAnswered && $0.control != nil } ?? daemons.first { $0.control != nil }
+    }
+
     var attentionRows: [String: AttentionRow] {
         daemons.reduce(into: [:]) { $0.merge($1.attentionRows) { _, new in new } }
     }

@@ -680,6 +680,11 @@ struct CommandPalette: View {
             .init(id: "inbox", title: "Inbox", subtitle: "\(model.board.needing) waiting", icon: "tray", liveness: nil, hint: "⌘1") { model.destination = .inbox },
             .init(id: "mission", title: "Mission Control", subtitle: "The whole fleet", icon: "square.grid.2x2", liveness: nil, hint: "⌘2") { model.destination = .mission },
             .init(id: "machines", title: "Machines", subtitle: "Where everything runs", icon: "server.rack", liveness: nil, hint: "⌘3") { model.destination = .machines },
+            .init(id: "projects", title: "Projects", subtitle: "Routers, tickets and workers", icon: "folder.badge.gearshape", liveness: nil, hint: nil) { model.destination = .projects },
+            .init(id: "newproject", title: "New Project", subtitle: "Make a project for a folder", icon: "folder.badge.plus", liveness: nil, hint: nil) {
+                model.destination = .projects
+                model.isCreatingProject = true
+            },
             .init(id: "connect", title: "Connect a Daemon", subtitle: "Reach a daemon on another machine", icon: "network", liveness: nil, hint: "⇧⌘N") {
                 model.daemonSuggestion = nil
                 model.isAddingDaemon = true

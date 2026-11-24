@@ -20,12 +20,15 @@ struct ProjectsView: View {
         let projects = model.projectStates
         Group {
             if projects.isEmpty {
-                ContentUnavailableView(
-                    "No projects", systemImage: "folder.badge.gearshape",
-                    description: Text(model.daemons.contains { $0.projectsAnswered }
+                ContentUnavailableView {
+                    Label("No projects", systemImage: "folder.badge.gearshape")
+                } description: {
+                    Text(model.daemons.contains { $0.projectsAnswered }
                         ? "This daemon holds no project yet."
                         : "No connected daemon has project mode on.")
-                )
+                } actions: {
+                    Button("New Project") { model.isCreatingProject = true }
+                }
             } else {
                 HSplitView {
                     List(selection: $model.projectSelection) {
@@ -36,6 +39,12 @@ struct ProjectsView: View {
                     detail
                         .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
                 }
+            }
+        }
+        .toolbar {
+            ToolbarItem {
+                Button { model.isCreatingProject = true } label: { Label("New Project", systemImage: "plus") }
+                    .help("Make a project for a folder")
             }
         }
         .navigationTitle("Projects")
@@ -132,9 +141,11 @@ struct ProjectPanel: View {
                         Text(verbatim: state.summary.workspace).font(Theme.meta).foregroundStyle(.secondary).textSelection(.enabled)
                         Text(verbatim: ProjectRule.health(state.summary)).font(Theme.meta).foregroundStyle(.secondary)
                     }
+                    ProjectComposer(project: project)
                     router(state)
                     declined(state)
                     workers(state)
+                    ProjectSettingsView(project: project)
                 }
                 .padding(24)
                 .frame(maxWidth: 680, alignment: .leading)

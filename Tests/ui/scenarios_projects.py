@@ -162,3 +162,75 @@ def a_project_is_made_work_is_posted_and_its_ticket_is_acted_on(c):
     c.app.press("Stop")
     c.app.press("Confirm Stop")
     wait_for(lambda: any(t["id"] == asked["id"] and t["stage"].startswith("ended/") for t in tickets(c, pid)), 30, "the first ticket to end")
+
+
+def settings_value(c, pid, key):
+    body = raw(c, "projects.settings", {"project": pid})
+    return next(s["value"] for s in body["settings"] if s["key"] == key)
+
+
+@scenario("PJ-07", "PJ-08", "PJ-09")
+def a_project_is_created_set_up_and_given_work(c):
+    """The new-project sheet makes a project, saves its check, and the composer's request becomes a ticket."""
+    import subprocess
+
+    repo = BASE / "create-ws"
+    if not repo.exists():
+        repo.mkdir(parents=True)
+        (repo / "Makefile").write_text("unit:\n\ttrue\n\ntest:\n\ttrue\n")
+        git = ["git", "-C", str(repo), "-c", "user.name=loom", "-c", "user.email=loom@example.com"]
+        subprocess.run(["git", "-C", str(repo), "init", "-q", "-b", "main"], check=True)
+        subprocess.run(git + ["add", "Makefile"], check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "seed"], check=True)
+
+    # The palette offers the destination and the new-project sheet.
+    c.app.cmd("palette open")
+    c.app.see("Routers, tickets and workers")
+    c.app.see("Make a project for a folder")
+    c.app.cmd("palette close")
+
+    # Step one chooses the folder. A folder that does not exist is refused in words.
+    c.app.go("projects")
+    c.app.press("New Project")
+    c.app.cmd("projectfield new/folder /no/such/folder")
+    c.app.see("That folder doesn't exist")
+    check(not c.app.enabled("Create Project"), "a missing folder cannot be made a project")
+    c.app.cmd(f"projectfield new/folder {repo}")
+    wait_for(lambda: c.app.enabled("Create Project"), 5, "Create Project to arm")
+    c.app.press("Create Project")
+
+    # Step two shows what the daemon suggests, which ran nothing, and saves what was edited.
+    c.app.see("Nothing has run")
+    c.app.see(r"Check: .*Makefile|suggests no check")
+    shoot(c, "new-project-settings")
+    c.app.cmd("projectfield new/check make unit")
+    c.app.press("Save Check and Setup")
+    pid = next(p["id"] for p in c.app.snap()["projects"]["projects"] if p["name"] == "create-ws")
+    wait_for(lambda: settings_value(c, pid, "check") == ["make unit"], 15, "the check to be saved")
+    wait_for(lambda: not c.app.snap()["projects"]["creating"], 15, "the sheet to close")
+    check(settings_value(c, pid, "check") == ["make unit"], "the daemon holds the saved check")
+
+    # The project's page reads the settings back with where each value comes from.
+    c.app.see("set for this project")
+    c.app.see("Request work")
+    shoot(c, "project-page-settings")
+
+    # The composer posts a request, which the router turns into a ticket.
+    c.app.cmd(f"projectfield post/{pid} fix the retry loop")
+    wait_for(lambda: c.app.enabled("Post Request"), 5, "Post Request to arm")
+    c.app.press("Post Request")
+    c.app.see("Posted. The router reads it next")
+    asked = wait_ticket(c, pid, "person/answer")
+
+    # Closing from the inbox moves the ticket out of it, and the pane that replaces the
+    # row still says what was done and where the ticket is now.
+    open_ticket_thread(c, pid, asked)
+    c.app.press("Close Ticket")
+    c.app.press("Confirm Close Ticket")
+    wait_for(lambda: any(t["id"] == asked["id"] and t["stage"].startswith("ended/") for t in tickets(c, pid)), 30, "the ticket to end")
+    c.app.see(r"Closed . the ticket is now ended/closed")
+    shoot(c, "inbox-resolved-ticket-result")
+    check(
+        c.app.snap()["projects"]["results"].get(f"{pid}/{asked['id']}", "").startswith("Closed"),
+        "the result is kept for the ticket",
+    )
