@@ -9,7 +9,7 @@ final class FolderPickerTests: XCTestCase {
         let sections = FolderPicker.sections(
             query: "  ", recent: many, projects: [ProjectRef(id: "p1", workspace: "/Users/o/f3")], found: ["/Users/o/deep/x"]
         )
-        XCTAssertEqual(sections.recent.map(\.path), Array(many.prefix(8)), "newest first, eight shown")
+        XCTAssertEqual(sections.recent.map(\.path), many.filter { $0 != "/Users/o/f3" }.prefix(8).map { $0 }, "newest first, eight shown, a project's folder under Projects only")
         XCTAssertEqual(sections.projects.map(\.path), ["/Users/o/f3"])
         XCTAssertTrue(sections.found.isEmpty, "the index is searched, not listed")
         XCTAssertTrue(sections.typed.isEmpty)
@@ -24,6 +24,20 @@ final class FolderPickerTests: XCTestCase {
         let rows = ["/Users/o/loom/docs", "/Users/o/a-loom", "/Users/o/loomy"]
         let sections = FolderPicker.sections(query: "loom", recent: rows, projects: [], found: [])
         XCTAssertEqual(sections.recent.map(\.path), ["/Users/o/loomy", "/Users/o/a-loom", "/Users/o/loom/docs"])
+    }
+
+    func testAnExactNameOutranksALongerNameWithTheSamePrefix() {
+        let rows = ["/Users/o/loom-site", "/Users/o/work/loom"]
+        let sections = FolderPicker.sections(query: "loom", recent: rows, projects: [], found: [])
+        XCTAssertEqual(sections.recent.map(\.path), ["/Users/o/work/loom", "/Users/o/loom-site"])
+    }
+
+    func testAProjectsWorkspaceIsNotRepeatedUnderRecentWithNothingTyped() {
+        let sections = FolderPicker.sections(
+            query: "", recent: recent, projects: [ProjectRef(id: "p", workspace: "/Users/o/notes")], found: []
+        )
+        XCTAssertFalse(sections.recent.contains { $0.path == "/Users/o/notes" })
+        XCTAssertEqual(sections.projects.map(\.path), ["/Users/o/notes"])
     }
 
     func testSeveralWordsMustAllMatchInAnyOrder() {
@@ -103,6 +117,29 @@ final class FolderPickerTests: XCTestCase {
         XCTAssertEqual(names, ["code", "notes", "repo", "code/loom", "code/weft"])
     }
 
+    func testBelowACheckoutOnlyRepositoriesAreListed() throws {
+        let root = try tree { root in
+            try make(root, [
+                "src/github.com/owner/.git", "src/github.com/owner/loom/.git", "src/github.com/owner/weft/.git",
+                "src/github.com/owner/loom/packages/core", "src/github.com/owner/loom/node_modules/dep/.git",
+                "src/github.com/owner/notes", "plain/sub",
+            ])
+        }
+        let names = FolderIndex.scan(roots: [root]).map { String($0.dropFirst(root.path.count + 1)) }
+        XCTAssertTrue(names.contains("src/github.com/owner"), "the container repository is listed")
+        XCTAssertTrue(names.contains("src/github.com/owner/loom"), "a repository under a container is listed")
+        XCTAssertTrue(names.contains("src/github.com/owner/weft"))
+        XCTAssertFalse(names.contains("src/github.com/owner/notes"), "a plain folder under a checkout is not")
+        XCTAssertFalse(names.contains("src/github.com/owner/loom/packages"), "a source tree under a checkout is not")
+        XCTAssertFalse(names.contains { $0.contains("node_modules") }, "dependency folders are not entered")
+        XCTAssertTrue(names.contains("plain/sub"), "outside a checkout every folder is listed")
+    }
+
+    func testTheIndexStopsWhenCancelled() throws {
+        let root = try tree { try make($0, ["a", "b"]) }
+        XCTAssertTrue(FolderIndex.scan(roots: [root], isCancelled: { true }).isEmpty)
+    }
+
     func testTheIndexStopsAtTheDepthLimit() throws {
         let root = try tree { try make($0, ["a/b/c/d/e/f/g/h"]) }
         let depths = FolderIndex.scan(roots: [root]).map { $0.dropFirst(root.path.count + 1).split(separator: "/").count }
@@ -111,11 +148,22 @@ final class FolderPickerTests: XCTestCase {
 
     func testTheIndexStopsAtItsDeadline() throws {
         let root = try tree { try make($0, ["a", "b", "c"]) }
-        let late = Date().addingTimeInterval(60)
-        var calls = 0
 
-        // The first reading sets the deadline and the second is already past it.
-        let found = FolderIndex.scan(roots: [root], now: { calls += 1; return calls > 1 ? late : Date() })
+        // The first reading sets the deadline and every later one is past it.
+        let clock = Clock()
+        let found = FolderIndex.scan(roots: [root], now: { clock.next() })
         XCTAssertTrue(found.isEmpty, "a walk past its deadline stops before reading another directory")
+    }
+}
+
+private final class Clock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls = 0
+
+    func next() -> Date {
+        lock.lock()
+        defer { lock.unlock() }
+        calls += 1
+        return calls > 1 ? Date().addingTimeInterval(60) : Date()
     }
 }

@@ -105,14 +105,17 @@ public enum FolderPicker {
         query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
     }
 
-    /// Lower is better, and nil means the row does not match.
+    /// Lower is better, and nil means the row does not match. A name that is
+    /// exactly the text ranks above a longer name that starts with it, so
+    /// "loom" finds `loom` before `loom-site`.
     static func rank(_ path: String, words: [String]) -> Int? {
         let lowered = path.lowercased()
         let name = ((path as NSString).lastPathComponent).lowercased()
         guard words.allSatisfy({ lowered.contains($0) }) else { return nil }
-        if words.allSatisfy({ name.hasPrefix($0) }) { return 0 }
-        if words.allSatisfy({ name.contains($0) }) { return 1 }
-        return 2
+        if words.count == 1, name == words[0] { return 0 }
+        if words.allSatisfy({ name.hasPrefix($0) }) { return 1 }
+        if words.allSatisfy({ name.contains($0) }) { return 2 }
+        return 3
     }
 
     /// The rows of each section for the text typed so far.
@@ -127,8 +130,7 @@ public enum FolderPicker {
         query: String,
         recent: [String],
         projects: [ProjectRef],
-        found: [String],
-        offersTyped: Bool = true
+        found: [String]
     ) -> PickerSections {
         var sections = PickerSections()
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -136,8 +138,11 @@ public enum FolderPicker {
         var shown = Set<String>()
 
         if words.isEmpty {
-            sections.recent = recent.prefix(recentShown).map { PickerChoice(path: $0, kind: .recent) }
             sections.projects = projects.prefix(recentShown).map { PickerChoice(path: $0.workspace, kind: .project(id: $0.id)) }
+
+            // A project's workspace is drawn once, under Projects.
+            let owned = Set(projects.map(\.workspace))
+            sections.recent = recent.filter { !owned.contains($0) }.prefix(recentShown).map { PickerChoice(path: $0, kind: .recent) }
             return sections
         }
 
@@ -161,7 +166,7 @@ public enum FolderPicker {
         sections.found = ranked(pool, path: { $0 }).prefix(foundShown).map { PickerChoice(path: $0, kind: .found) }
 
         let isPath = trimmed.hasPrefix("/") || trimmed.hasPrefix("~")
-        if offersTyped, isPath || sections.all.isEmpty {
+        if isPath || sections.all.isEmpty {
             sections.typed = [PickerChoice(path: trimmed, kind: .typed)]
             sections.typedLeads = isPath
         }
@@ -191,48 +196,126 @@ public enum FolderPicker {
 /// the person cannot write, and no link followed, since a link can leave the
 /// root. It adds bounds of its own: breadth first so shallow folders come before
 /// deep ones if a limit stops the walk, a depth limit, a visit limit, a result
-/// limit and a deadline. A folder that holds a `.git` is listed and not entered,
-/// because its subfolders are build output and source layout more often than
-/// places a person starts a session; a path typed in the picker still reaches
-/// them.
+/// limit and a deadline. A folder that holds a `.git` is a checkout, and below
+/// one only folders that hold a `.git` themselves are listed (sub-repositories
+/// and worktrees), so a source tree is not listed and a repository under a
+/// container repository is. The walk still enters a checkout's folders to find
+/// those, except build and dependency folders, which hold copies of other
+/// people's code.
+///
+/// The limits are sized so that the deadline, not a count, is what normally
+/// ends a walk of a large home directory. Breadth first means a deadline cut
+/// loses the deepest level and not a whole branch.
 public enum FolderIndex {
     public static let depthLimit = 6
-    public static let visitLimit = 5000
-    public static let resultLimit = 3000
+    public static let visitLimit = 20_000
+    public static let resultLimit = 20_000
     public static let deadline: TimeInterval = 2
 
+    /// Folders never entered, because they hold dependencies or build output.
+    static let skipped: Set<String> = ["node_modules", "vendor", "target", "build", "dist"]
+
+    /// One directory read: the folders it lists, and the directories to read next.
+    private struct Read: Sendable {
+        var listed: [String] = []
+        var next: [Directory] = []
+    }
+
+    private struct Directory: Sendable {
+        let url: URL
+        let isRoot: Bool
+        let inCheckout: Bool
+    }
+
     /// The folders below `roots`, shallowest first and alphabetical within a
-    /// depth. The roots themselves are not listed.
-    public static func scan(roots: [URL], fileManager: FileManager = .default, now: () -> Date = Date.init) -> [String] {
+    /// depth. The roots themselves are not listed. `isCancelled` is asked before
+    /// each directory is read, so a walk nobody waits for stops.
+    ///
+    /// The directories of one depth are read in parallel, since a cold read of
+    /// a large home directory is bound by file system latency and not by the
+    /// processor. Each read returns its own result and the results are merged in
+    /// directory order, so the list does not depend on which read finished first.
+    public static func scan(
+        roots: [URL],
+        fileManager: FileManager = .default,
+        now: @escaping @Sendable () -> Date = { Date() },
+        isCancelled: @escaping @Sendable () -> Bool = { false }
+    ) -> [String] {
         let stop = now().addingTimeInterval(deadline)
         var found: [String] = []
         var visited = 0
-        var level = roots.map { ($0.resolvingSymlinksInPath(), true) }
-        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .isWritableKey]
+        var level = roots.map { Directory(url: $0.resolvingSymlinksInPath(), isRoot: true, inCheckout: false) }
 
         for depth in 1...depthLimit {
-            var next: [(URL, Bool)] = []
-            for (directory, isRoot) in level {
-                guard visited < visitLimit, found.count < resultLimit, now() < stop else { return found }
-                visited += 1
-                guard let entries = try? fileManager.contentsOfDirectory(
-                    at: directory, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                ) else { continue }
-
-                for entry in entries.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
-                    guard found.count < resultLimit else { return found }
-                    let values = try? entry.resourceValues(forKeys: Set(keys))
-                    guard values?.isDirectory == true, values?.isSymbolicLink != true, values?.isWritable == true else { continue }
-
-                    // A first-level `Library` is the macOS folder 132 refuses to list.
-                    if isRoot && entry.lastPathComponent == "Library" { continue }
-                    found.append(entry.path)
-                    let isRepository = fileManager.fileExists(atPath: entry.appendingPathComponent(".git").path)
-                    if depth < depthLimit && !isRepository { next.append((entry, false)) }
-                }
+            guard visited < visitLimit, !level.isEmpty else { break }
+            let batch = Array(level.prefix(visitLimit - visited))
+            visited += batch.count
+            let reads = Reads(count: batch.count)
+            DispatchQueue.concurrentPerform(iterations: batch.count) { index in
+                guard now() < stop, !isCancelled() else { return }
+                reads.set(index, read(batch[index], fileManager: fileManager, expandsFurther: depth < depthLimit))
             }
+
+            var next: [Directory] = []
+            for result in reads.all {
+                found.append(contentsOf: result.listed)
+                next.append(contentsOf: result.next)
+            }
+            if found.count >= resultLimit { return Array(found.prefix(resultLimit)) }
+            if now() >= stop || isCancelled() { return found }
             level = next
         }
         return found
+    }
+
+    /// Lists one directory under the rules above.
+    private static func read(_ directory: Directory, fileManager: FileManager, expandsFurther: Bool) -> Read {
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey, .isWritableKey, .isPackageKey]
+        let wanted = Set(keys)
+        var result = Read()
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: directory.url, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]
+        ) else { return result }
+
+        for entry in entries.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }) {
+            let values = try? entry.resourceValues(forKeys: wanted)
+            guard values?.isDirectory == true, values?.isSymbolicLink != true,
+                  values?.isPackage != true, values?.isWritable == true else { continue }
+
+            // A first-level `Library` is the macOS folder 132 refuses to list.
+            let name = entry.lastPathComponent
+            if directory.isRoot && name == "Library" { continue }
+            if skipped.contains(name) { continue }
+            let isRepository = fileManager.fileExists(atPath: entry.appendingPathComponent(".git").path)
+            if isRepository || !directory.inCheckout { result.listed.append(entry.path) }
+            if expandsFurther {
+                result.next.append(Directory(url: entry, isRoot: false, inCheckout: directory.inCheckout || isRepository))
+            }
+        }
+        return result
+    }
+
+    /// The results of one depth's parallel reads, each written by exactly one
+    /// iteration into its own slot.
+    private final class Reads: @unchecked Sendable {
+        private let lock = NSLock()
+        private var slots: [Read]
+
+        init(count: Int) { slots = Array(repeating: Read(), count: count) }
+
+        func set(_ index: Int, _ value: Read) {
+            lock.lock()
+            slots[index] = value
+            lock.unlock()
+        }
+
+        var all: [Read] { lock.lock(); defer { lock.unlock() }; return slots }
+    }
+
+    /// The same walk run off the main actor, stopping when the awaiting task is
+    /// cancelled.
+    @concurrent
+    public static func scanOffMain(roots: [URL]) async -> [String] {
+        scan(roots: roots, isCancelled: { Task.isCancelled })
     }
 }
