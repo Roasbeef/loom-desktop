@@ -104,6 +104,8 @@ final class AskCardTests: XCTestCase {
         .row(TranscriptRow(id: id, kind: .user(text: "go", author: nil)))
     }
 
+    private func user0() -> TranscriptRow { TranscriptRow(id: "u0", kind: .user(text: "go", author: nil)) }
+
     private func said(_ id: String) -> TranscriptRow {
         TranscriptRow(id: id, kind: .assistant(text: "Which layout?"))
     }
@@ -121,12 +123,52 @@ final class AskCardTests: XCTestCase {
         XCTAssertEqual(marked, ["fold/a/0"])
     }
 
-    func testAMessageAfterTheAskIsTheOneMarked() {
+    func testAMessageAfterTheAskIsTheSummaryAndIsNotMarked() {
         let blocks = TranscriptBlock.group([
             TranscriptRow(id: "u1", kind: .user(text: "go", author: nil)),
             call("a/0", "ask"), said("a/1"),
         ])
-        XCTAssertEqual(AskCardRule.askingBlocks(in: blocks), ["a/1"])
+        XCTAssertEqual(AskCardRule.askingBlocks(in: blocks), ["fold/a/0"])
+    }
+
+    func testTheMessageBeforeTheCallIsMarkedWhenItIsNotFolded() {
+        // Prose followed by no work stays outside the fold, so a turn whose only work is
+        // the call after it has the message before the fold.
+        let blocks: [TranscriptBlock] = [
+            user("u1"), .row(said("a/0")),
+            .fold(Fold(id: "fold/a/1", rows: [call("a/1", "ask")], startedAt: nil, endedAt: nil, isLive: false)),
+        ]
+        XCTAssertEqual(AskCardRule.askingBlocks(in: blocks), ["a/0"])
+    }
+
+    func testAnAskToAStrandIsNotMarked() {
+        let toStrand = TranscriptRow(id: "a/0", kind: .tool(name: "ask", arguments: ["to": "build"], result: "ok", isError: false))
+        let blocks = TranscriptBlock.group([TranscriptRow(id: "u1", kind: .user(text: "go", author: nil)), toStrand])
+        XCTAssertTrue(AskCardRule.askingBlocks(in: blocks).isEmpty)
+    }
+
+    func testAnAskFromACodeModeProgramIsMarked() {
+        let program = TranscriptRow(
+            id: "a/0", kind: .tool(name: "code_mode", arguments: ["program": "attention.ask([attention.confirm(\"Go?\")], to: None, why: None)"], result: "ok", isError: false)
+        )
+        let other = TranscriptRow(id: "b/0", kind: .tool(name: "code_mode", arguments: ["program": "fs.read(\"x\")"], result: "ok", isError: false))
+        XCTAssertEqual(AskCardRule.askingBlocks(in: TranscriptBlock.group([user0(), program])), ["fold/a/0"])
+        XCTAssertTrue(AskCardRule.askingBlocks(in: TranscriptBlock.group([user0(), other])).isEmpty)
+    }
+
+    func testEveryKindOfTurnOpenerEndsTheTurnBefore() {
+        let kinds: [TranscriptRow.Kind] = [
+            .peer(session: "s", strand: "main", text: "hi"),
+            .sibling(strand: "build", text: "hi", trailer: nil),
+            .advisor(frame: .advice, body: "hi"),
+        ]
+        for kind in kinds {
+            let blocks = TranscriptBlock.group([
+                TranscriptRow(id: "u1", kind: .user(text: "go", author: nil)), said("a/0"),
+                TranscriptRow(id: "o", kind: kind), call("b/0", "ask"),
+            ])
+            XCTAssertEqual(AskCardRule.askingBlocks(in: blocks), ["fold/b/0"], "the message before \(kind) belongs to the turn before it")
+        }
     }
 
     func testATurnWithoutAnAskIsNotMarked() {

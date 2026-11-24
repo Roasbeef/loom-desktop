@@ -74,27 +74,24 @@ public enum AskCardRule {
         "Ask \u{00B7} waiting since \(clock(card.since)) \u{00B7} \(strand)"
     }
 
-    /// The ids of the blocks the transcript marks with "Ask": for each turn that
-    /// called `ask`, the last message the strand wrote outside the turn's fold, or the
-    /// fold itself when the turn wrote none. A model usually writes its question
-    /// before it calls the tool, and that prose is folded as narration, so the fold is
-    /// the common case.
+    /// The ids of the blocks the transcript marks with "Ask": for each turn that asked
+    /// the owner, the last message the strand wrote before the call outside the turn's
+    /// fold, or the fold that holds the call. A model usually writes its question
+    /// before it calls the tool, and `TranscriptBlock.group` folds that prose as
+    /// narration, so the fold is the common case. A message after the call is the
+    /// turn's summary and is never marked, nor is a turn that asked a strand.
     public static func askingBlocks(in blocks: [TranscriptBlock]) -> Set<String> {
         var marked: Set<String> = []
         var turn: [TranscriptBlock] = []
 
         func close() {
             defer { turn = [] }
-            guard turn.contains(where: Self.callsAsk) else { return }
-            let message = turn.last { block in
+            guard let asked = turn.firstIndex(where: Self.asksOwner) else { return }
+            let before = turn[..<asked].last { block in
                 if case .row(let row) = block, case .assistant = row.kind { return true }
                 return false
             }
-            if let message {
-                marked.insert(message.id)
-            } else if let fold = turn.first(where: { if case .fold = $0 { return true }; return false }) {
-                marked.insert(fold.id)
-            }
+            marked.insert((before ?? turn[asked]).id)
         }
         for block in blocks {
             if case .row(let row) = block, row.kind.opensTurn { close() } else { turn.append(block) }
@@ -103,14 +100,22 @@ public enum AskCardRule {
         return marked
     }
 
-    private static func callsAsk(_ block: TranscriptBlock) -> Bool {
-        func isAsk(_ row: TranscriptRow) -> Bool {
-            if case .tool(let name, _, _, _) = row.kind { return name == "ask" }
-            return false
+    /// Whether the block holds a call that puts a question to the owner: the `ask`
+    /// tool with no `to`, or a `code_mode` program whose source calls `attention.ask`.
+    /// A program's routing is an argument inside its source, which is not read, so a
+    /// program that asks a strand is marked too. Every tool row is inside a fold,
+    /// since a turn with a tool call always has work to fold, so a bare row is never
+    /// one.
+    private static func asksOwner(_ block: TranscriptBlock) -> Bool {
+        func isOwnerAsk(_ row: TranscriptRow) -> Bool {
+            guard case .tool(let name, let arguments, _, _) = row.kind else { return false }
+            switch name {
+            case "ask": return arguments["to"] == nil || arguments["to"] == .null
+            case "code_mode": return arguments["program"]?.string?.contains("attention.ask(") == true
+            default: return false
+            }
         }
-        switch block {
-        case .row(let row): return isAsk(row)
-        case .fold(let fold): return fold.rows.contains(where: isAsk)
-        }
+        guard case .fold(let fold) = block else { return false }
+        return fold.rows.contains(where: isOwnerAsk)
     }
 }
