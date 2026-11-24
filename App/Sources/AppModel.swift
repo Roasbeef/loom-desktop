@@ -695,12 +695,16 @@ final class AppModel {
     /// The resident sessions as the inbox reads them: the display name beside the
     /// daemon's activity report, which is nil when it gave none.
     var inboxThreads: [InboxThread] {
-        daemons.flatMap { daemon in
+        InboxRule.deduped(daemons.flatMap { daemon in
             daemon.sessions.filter { $0.state.isResident }.map {
                 InboxThread(id: $0.id, name: $0.title, activity: daemon.activity[$0.id])
             }
-        }
+        })
     }
+
+    /// The rows whose retry is out, by row id. The pane's Retry and the menu's both
+    /// read it, so a second press while one is out queues nothing.
+    var retrying: Set<String> = []
 
     /// The sessions listed under "To review", across daemons.
     var reviewing: Set<String> {

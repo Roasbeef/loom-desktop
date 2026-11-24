@@ -658,8 +658,8 @@ def next_and_previous_step_through_the_list_as_drawn_and_stop_at_the_ends(c):
     for row in (approval, ask, find):
         check("Open Session" in menus[row["id"]] and "Open in New Window" in menus[row["id"]], f"{row['id']}: {menus[row['id']]}")
         check(not any(t.startswith(("Allow", "Deny", "Next", "Previous")) for t in menus[row["id"]]), f"{row['id']}: {menus[row['id']]}")
-    check("Close Find" in menus[find["id"]], f"a find should offer Close Find: {menus[find['id']]}")
-    check("Close Find" not in menus[approval["id"]], "an approval has no find to close")
+    for row in (approval, ask, find):
+        check(not any(t.startswith(("Close Find", "Retry", "Dismiss")) for t in menus[row["id"]]), f"{row['id']}: a row's menu acts on no unopened thread")
 
 
 @scenario("AI-10", needs_display=True, foreground=True)

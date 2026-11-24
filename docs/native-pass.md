@@ -134,8 +134,10 @@ scenarios, merged when its gates pass. The order puts correctness first.
   (`MissionKit/InboxCommands.swift`) are the one action list: the Inbox menu, the
   context menu on an inbox row and the context menu on a Mission Control row all
   draw from it, and `InboxCommands.state` says which actions a thread offers. A
-  context menu draws only what can run for its row, minus navigation and
-  anything that decides. Allow, Allow for This Session and Deny moved from the
+  context menu draws only what can run for its row, minus navigation, anything
+  that decides, and Retry and Close Find, which act on a thread the owner has not
+  opened; those stay in the Inbox menu and the pane. A retry in flight is held
+  on the model (`AppModel.retrying`), so the menu and the pane cannot queue two. Allow, Allow for This Session and Deny moved from the
   Session menu into the Inbox menu with the same shortcuts and titles, so there
   is one list; they follow the armed approval card in the focused window as
   before and work from a session's page too. Next Thread (⌘]) and Previous

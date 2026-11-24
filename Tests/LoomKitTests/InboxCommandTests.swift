@@ -34,9 +34,51 @@ final class InboxCommandTests: XCTestCase {
     // MARK: The list
 
     func testTheContextMenuIsTheMenuWithoutNavigationOrDecisions() {
-        XCTAssertEqual(InboxCommands.contextMenu, [.openSession, .openInWindow, .retry, .closeFind, .message])
+        XCTAssertEqual(InboxCommands.contextMenu, [.openSession, .openInWindow, .message])
         XCTAssertTrue(InboxCommands.menu.contains(.allow) && InboxCommands.menu.contains(.deny) && InboxCommands.menu.contains(.next))
         for action in InboxCommands.contextMenu { XCTAssertFalse(action.decides || action.navigates) }
+    }
+
+    func testNoContextMenuCarriesARetryOrACloseEvenForAStuckStrandOrAFind() {
+        XCTAssertFalse(InboxCommands.contextMenu.contains(.retry) || InboxCommands.contextMenu.contains(.closeFind))
+        let stuck = context(.stuck, subject: .stuck(session: "s", strand: "main"), stuckListed: true)
+        XCTAssertEqual(InboxCommands.state(.retry, in: stuck), .enabled)
+        XCTAssertFalse(InboxCommands.contextActions(for: stuck).contains(.retry))
+        let found = context(.find(.bug), subject: .find(session: "s", id: "f"))
+        XCTAssertEqual(InboxCommands.state(.closeFind, in: found), .enabled)
+        XCTAssertFalse(InboxCommands.contextActions(for: found).contains(.closeFind))
+    }
+
+    func testARetryThatIsOutDisablesRetryUntilItIsDone() {
+        let subject = InboxSubject.stuck(session: "s", strand: "main")
+        var ctx = context(.stuck, subject: subject, stuckListed: true)
+        XCTAssertEqual(InboxCommands.state(.retry, in: ctx), .enabled)
+        ctx.isRetrying = true
+        XCTAssertEqual(InboxCommands.state(.retry, in: ctx), .disabled)
+    }
+
+    func testNextReachesTheLastRowWhenTwoDaemonsListTheSameSession() {
+        func thread(_ id: String) -> InboxThread {
+            InboxThread(id: id, name: id, activity: SessionActivity(["session_id": .string(id), "state": "working"]))
+        }
+        let merged = [thread("a"), thread("b")] + [thread("b"), thread("c")]
+        let threads = InboxRule.deduped(merged)
+        XCTAssertEqual(threads.map(\.id), ["a", "b", "c"])
+        let rows = InboxRule.selectable(InboxRule.sections(InboxRule.rows(
+            threads: threads, feed: [:], raised: [:], reviewing: [], now: 0, clock: { "\($0)" }
+        )))
+        let drawn = rows.map { InboxSelection.thread($0.subject) }
+        XCTAssertEqual(Set(drawn).count, drawn.count)
+        var at = drawn.first
+        for _ in 0..<drawn.count { at = InboxCommands.neighbor(of: at, in: drawn, step: .next) ?? at }
+        XCTAssertEqual(at, drawn.last)
+    }
+
+    func testARowHeadSplitsOnCarriageReturnsAndLineSeparators() {
+        for message in ["First\r\nsecond", "First\u{2028}second", "First\u{2029}second", "First\rsecond"] {
+            let activity = SessionActivity(["session_id": "s", "state": "idle", "last_message": .string(message)])!
+            XCTAssertEqual(InboxRule.threadHead(InboxThread(id: "s", name: "w", activity: activity)), "First", message.debugDescription)
+        }
     }
 
     func testEveryActionIsInTheMenuOnce() {
@@ -189,7 +231,7 @@ final class InboxCommandTests: XCTestCase {
             "session_id": "s", "state": "idle", "last_message": "\n\nFirst\u{2028}half\nsecond line",
         ])!
         let head = InboxRule.threadHead(InboxThread(id: "s", name: "work", activity: activity))
-        XCTAssertEqual(head, "First half")
+        XCTAssertEqual(head, "First")
     }
 
     func testTheFailedRunDetailKeepsTheMessagesLinesAndTheCardKeepsItRaw() {

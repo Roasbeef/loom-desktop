@@ -35,6 +35,11 @@ public enum InboxAction: Sendable, CaseIterable, Hashable {
         }
     }
 
+    /// Whether the action acts on the thread in place, which the owner has opened and
+    /// read. A row's context menu can name a thread the owner has not opened, so it
+    /// offers neither a retry nor a close; the Inbox menu and the pane do.
+    public var actsInPlace: Bool { self == .retry || self == .closeFind }
+
     /// Whether the action moves through the list. A row's context menu has no
     /// "next", since a row is not the list's position.
     public var navigates: Bool { self == .next || self == .previous }
@@ -121,6 +126,8 @@ public struct InboxCommandContext: Sendable, Equatable {
     public var isObserver: Bool
     /// Whether the attention feed still lists the row's strand as stuck.
     public var stuckListed: Bool
+    /// Whether a retry of the row's strand is already out.
+    public var isRetrying: Bool
     /// The armed approval card in the focused window, if any.
     public var approval: InboxApproval?
     public var neighbors: InboxNeighbors
@@ -128,12 +135,14 @@ public struct InboxCommandContext: Sendable, Equatable {
     public var isInOwnWindow: Bool
 
     public init(
-        row: InboxRow?, isObserver: Bool = false, stuckListed: Bool = false, approval: InboxApproval? = nil,
+        row: InboxRow?, isObserver: Bool = false, stuckListed: Bool = false, isRetrying: Bool = false,
+        approval: InboxApproval? = nil,
         neighbors: InboxNeighbors = .none, isInOwnWindow: Bool = false
     ) {
         self.row = row
         self.isObserver = isObserver
         self.stuckListed = stuckListed
+        self.isRetrying = isRetrying
         self.approval = approval
         self.neighbors = neighbors
         self.isInOwnWindow = isInOwnWindow
@@ -156,8 +165,9 @@ public enum InboxCommands {
         .next, .previous, .openSession, .openInWindow, .retry, .closeFind, .message, .allow, .allowForSession, .deny,
     ]
 
-    /// A row's context menu: the menu without navigation and without a decision.
-    public static let contextMenu: [InboxAction] = menu.filter { !$0.navigates && !$0.decides }
+    /// A row's context menu: the menu without navigation, without a decision and
+    /// without what acts on the open thread in place.
+    public static let contextMenu: [InboxAction] = menu.filter { !$0.navigates && !$0.decides && !$0.actsInPlace }
 
     /// The state of `action` for `context`. The menu draws every action and greys
     /// out what cannot run, so its shape does not change as the selection moves; a
@@ -171,7 +181,7 @@ public enum InboxCommands {
         case .openInWindow: return context.row == nil || context.isInOwnWindow ? .disabled : .enabled
         case .retry:
             guard let kind = context.row?.kind, kind == .stuck else { return .absent }
-            return ThreadRule.retryOffer(isObserver: context.isObserver, stuckListed: context.stuckListed, sending: false) == .enabled
+            return ThreadRule.retryOffer(isObserver: context.isObserver, stuckListed: context.stuckListed, sending: context.isRetrying) == .enabled
                 ? .enabled : .disabled
         case .closeFind:
             guard let kind = context.row?.kind, case .find = kind else { return .absent }

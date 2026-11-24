@@ -386,7 +386,7 @@ public enum InboxRule {
     /// `headCharacters` characters, ending in an ellipsis within that count.
     public static func threadHead(_ thread: InboxThread) -> String {
         if let activity = thread.activity {
-            if let message = said(activity), let line = message.split(separator: "\n", omittingEmptySubsequences: true)
+            if let message = said(activity), let line = message.split(whereSeparator: \.isNewline)
                 .map({ $0.trimmingCharacters(in: .whitespacesAndNewlines) }).first(where: { !$0.isEmpty }) {
                 return cut(oneLine(line))
             }
@@ -395,6 +395,14 @@ public enum InboxRule {
             }
         }
         return cut(shownName(thread))
+    }
+
+    /// The threads with each session once, the first listing winning. A session two
+    /// daemons both list would otherwise be two rows, and the list's order, which Next
+    /// and Previous step through, would hold one selection twice.
+    public static func deduped(_ threads: [InboxThread]) -> [InboxThread] {
+        var seen: Set<String> = []
+        return threads.filter { seen.insert($0.id).inserted }
     }
 
     /// Text on one line: every run of whitespace, newlines of any kind included,

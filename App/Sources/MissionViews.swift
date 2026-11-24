@@ -429,12 +429,13 @@ enum InboxPaneWidth {
 struct ResolvedPane: View {
     @Environment(AppModel.self) private var model
     let row: InboxRow
+    var note = "Resolved. This thread no longer needs you. It stays open here until you pick another row."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(row.kind.chip).font(Theme.caption).foregroundStyle(.secondary)
             Text(verbatim: row.name).font(.title3.weight(.semibold)).textSelection(.enabled)
-            Text("Resolved. This thread no longer needs you. It stays open here until you pick another row.")
+            Text(note)
                 .font(Theme.body)
                 .foregroundStyle(.secondary)
             Button("Open Session") { model.destination = .session(row.sessionID) }

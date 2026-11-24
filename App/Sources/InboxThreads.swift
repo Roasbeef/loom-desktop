@@ -204,7 +204,7 @@ struct InboxPane: View {
         ThreadRule.retryOffer(
             isObserver: isObserver,
             stuckListed: feedRow?.stuck.items.contains { $0.strand == strand } == true,
-            sending: outcome.isSending
+            sending: model.retrying.contains(row.id)
         )
     }
 
@@ -228,8 +228,8 @@ struct InboxPane: View {
                         Button("Open Session") { model.destination = .session(sessionID) }
                             .buttonStyle(.bordered)
                             .keyboardShortcut(.return, modifiers: .command)
-                        if case .stuck(_, let strand) = row.subject, retry != .hidden {
-                            Button("Retry") { send(text: ThreadRule.retryPrompt, choice: .send, strand: strand) }
+                        if case .stuck = row.subject, retry != .hidden {
+                            Button("Retry") { retryStrand() }
                                 .buttonStyle(.bordered)
                                 .disabled(retry == .disabled)
                         }
@@ -260,10 +260,14 @@ struct InboxPane: View {
 
         // The Inbox menu's "Message Session" names this thread by row id, and the pane
         // that draws it takes the request, so it is met whichever window shows it.
+        // Every pane that shows the row focuses its own field, and the request is cleared
+        // on the next main-actor turn, after each of them has seen it. Clearing it at
+        // once would leave the field to whichever pane observed it first.
         .onChange(of: model.messageRequest, initial: true) {
             guard model.messageRequest == row.id else { return }
-            model.messageRequest = nil
             messageRequests += 1
+            let id = row.id
+            Task { @MainActor in if model.messageRequest == id { model.messageRequest = nil } }
         }
         // The reads follow the kind as well as the row: a session opened as "Waiting" becomes
         // "To review" once the scan has read its tree, and the review is read only for the
@@ -587,6 +591,14 @@ struct InboxPane: View {
         } catch {
             return .refused(ThreadSend.refusedWords(ComposerModel.words(error)))
         }
+    }
+
+    /// Retries through the model, which holds the row while one is out, so the menu's
+    /// Retry and this button cannot queue two.
+    private func retryStrand() {
+        guard !model.retrying.contains(row.id) else { return }
+        outcome = .sending
+        Task { outcome = .said(await model.retry(row).words) }
     }
 
     private func send(text: String, choice: ThreadSend.Choice, strand: String) {

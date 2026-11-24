@@ -40,6 +40,7 @@ extension AppModel {
             row: row,
             isObserver: row.flatMap { controller(for: $0.sessionID)?.isObserver } ?? false,
             stuckListed: stuckListed,
+            isRetrying: row.map { retrying.contains($0.id) } ?? false,
             neighbors: neighbors,
             isInOwnWindow: isInOwnWindow
         )
@@ -48,7 +49,7 @@ extension AppModel {
     /// The row a session's agent strip stands for: its own thread when it has one,
     /// else the first of its rows.
     func threadRow(forSession id: String) -> InboxRow? {
-        let rows = board.rows.filter { $0.sessionID == id }
+        let rows = InboxRule.selectable(board.sections).filter { $0.sessionID == id }
         return rows.first { $0.subject == .session(id) } ?? rows.first
     }
 
@@ -81,11 +82,23 @@ struct InboxCommandRunner {
         case .next: model.stepInbox(.next)
         case .previous: model.stepInbox(.previous)
         case .openSession:
-            if let row { model.destination = .session(row.sessionID) }
+            guard let row else { return }
+            model.destination = .session(row.sessionID)
+
+            // From a thread's own window the session is in the main window, which
+            // comes to the front so the result and any refusal are seen.
+            if context.isInOwnWindow {
+                openWindow(id: "main")
+                NSApplication.shared.activate()
+            }
         case .openInWindow:
             if let row { openWindow(id: "thread", value: row.subject) }
         case .retry:
-            if let row { Task { await model.retry(row) } }
+            if let row {
+                Task {
+                    if case .refused(let words) = await model.retry(row) { model.actions.error = words }
+                }
+            }
         case .closeFind:
             if let row { Task { await model.closeFind(row, as: outcome) } }
         case .message:
@@ -106,15 +119,35 @@ struct InboxCommandRunner {
 }
 
 extension AppModel {
-    /// Asks the strand to retry, as the pane's Retry does, and reads the feed again
-    /// so the row does not stay listed as stuck beside a retry already sent.
-    func retry(_ row: InboxRow) async {
-        guard case .stuck(let session, let strand) = row.subject else { return }
+    /// What a retry came to, in the words the pane shows.
+    enum RetryReport: Equatable {
+        case said(String)
+        case refused(String)
+
+        var words: String {
+            switch self {
+            case .said(let words), .refused(let words): return words
+            }
+        }
+    }
+
+    /// Asks the strand to retry, as the pane's Retry and the menu's both do, and reads
+    /// the feed again so the row does not stay listed as stuck beside a retry already
+    /// sent. The row is held in `retrying` until then, so a second press queues
+    /// nothing.
+    func retry(_ row: InboxRow) async -> RetryReport {
+        guard case .stuck(let session, let strand) = row.subject, retrying.insert(row.id).inserted else {
+            return .refused("A retry is already out.")
+        }
+        defer { retrying.remove(row.id) }
         do {
-            _ = try await sendMessage(sessionID: session, strand: strand, text: ThreadRule.retryPrompt, choice: .send)
+            let status = try await sendMessage(sessionID: session, strand: strand, text: ThreadRule.retryPrompt, choice: .send)
             await daemon(holding: session)?.readAttentionNow()
+            return .said(ThreadSend.deliveredWords(status: status, choice: .send, name: row.name))
+        } catch LoomError.outcomeUnknown {
+            return .said(ThreadSend.unansweredWords)
         } catch {
-            actions.error = ComposerModel.words(error)
+            return .refused(ThreadSend.refusedWords(ComposerModel.words(error)))
         }
     }
 
@@ -162,16 +195,7 @@ struct InboxMenu: View {
         let context = resolved
         let runner = InboxCommandRunner(model: model, openWindow: openWindow)
         ForEach(InboxCommands.menu, id: \.self) { action in
-            if action == .closeFind {
-                Menu("Close Find") {
-                    ForEach(InboxActionButtons.outcomes, id: \.outcome) { entry in
-                        Button(entry.title) { runner.perform(.closeFind, in: context, outcome: entry.outcome) }
-                    }
-                }
-                .disabled(InboxCommands.state(.closeFind, in: context) != .enabled)
-            } else {
-                InboxActionButtons.button(action, context: context, approval: approval, runner: runner)
-            }
+            InboxActionButtons.button(action, context: context, approval: approval, runner: runner)
             if action == .previous || action == .message { Divider() }
         }
     }
@@ -191,6 +215,23 @@ enum InboxActionButtons {
         showsShortcut: Bool = true
     ) -> some View {
         let enabled = InboxCommands.state(action, in: context) == .enabled
+        if action == .closeFind {
+            Menu("Close Find") {
+                ForEach(outcomes, id: \.outcome) { entry in
+                    Button(entry.title) { runner.perform(.closeFind, in: context, outcome: entry.outcome) }
+                }
+            }
+            .disabled(!enabled)
+        } else {
+            plain(action, context: context, approval: approval, runner: runner, showsShortcut: showsShortcut, enabled: enabled)
+        }
+    }
+
+    @ViewBuilder
+    private static func plain(
+        _ action: InboxAction, context: InboxCommandContext, approval: ArmedApproval?, runner: InboxCommandRunner,
+        showsShortcut: Bool, enabled: Bool
+    ) -> some View {
         let title = Text(verbatim: action.title(tool: context.approval?.tool))
         if showsShortcut, let shortcut = action.shortcut {
             Button { runner.perform(action, in: context, approval: approval) } label: { title }
@@ -230,15 +271,7 @@ private struct InboxContextMenu: ViewModifier {
         let runner = InboxCommandRunner(model: model, openWindow: openWindow)
         content.contextMenu {
             ForEach(InboxCommands.contextActions(for: context), id: \.self) { action in
-                if action == .closeFind {
-                    Menu("Close Find") {
-                        ForEach(InboxActionButtons.outcomes, id: \.outcome) { entry in
-                            Button(entry.title) { runner.perform(.closeFind, in: context, outcome: entry.outcome) }
-                        }
-                    }
-                } else {
-                    InboxActionButtons.button(action, context: context, approval: nil, runner: runner, showsShortcut: false)
-                }
+                InboxActionButtons.button(action, context: context, approval: nil, runner: runner, showsShortcut: false)
             }
         }
     }
@@ -264,7 +297,7 @@ struct ThreadWindow: View {
             if let listed {
                 InboxPane(row: listed, items: model.paneItems(for: subject), draft: $draft).id(listed.id)
             } else if let held {
-                ResolvedPane(row: held)
+                ResolvedPane(row: held, note: "Resolved. This thread no longer needs you. Close this window when you are done with it.")
             } else {
                 ContentUnavailableView(
                     "This thread is not listed", systemImage: "checkmark.circle",
@@ -273,7 +306,7 @@ struct ThreadWindow: View {
             }
         }
         .onChange(of: listed, initial: true) { _, now in if let now { held = now } }
-        .focusedSceneValue(\.inboxContext, model.commandContext(for: listed ?? held, isInOwnWindow: true))
+        .focusedSceneValue(\.inboxContext, model.commandContext(for: listed, isInOwnWindow: true))
         .navigationTitle(listed?.name ?? held?.name ?? "Thread")
     }
 }
