@@ -24,6 +24,6 @@ public enum ProjectSelection: Sendable, Equatable, Hashable {
         guard let selection else { return nil }
         guard let project = projects.first(where: { $0.id == selection.project }) else { return nil }
         guard case .ticket(_, let ticket) = selection, let page = project.page else { return selection }
-        return page.tickets.contains { $0.id == ticket } || page.total > page.tickets.count ? selection : .project(project.id)
+        return page.tickets.contains { $0.id == ticket } || (page.leftOut ?? 1) > 0 ? selection : .project(project.id)
     }
 }

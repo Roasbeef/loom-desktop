@@ -135,13 +135,19 @@ public enum ProjectRule {
         }
     }
 
-    /// Needs-a-person tickets first, by stage urgency, and in arrival order within a
-    /// stage, since the daemon sends a page newest first.
+    /// Needs-a-person tickets first, by the web view's stage order, then the newest
+    /// opened first, a ticket with no time after those with one, then by id.
     public static func ordered(_ tickets: [ProjectTicket]) -> [ProjectTicket] {
-        tickets.enumerated().sorted { left, right in
-            let (a, b) = (left.element.stage.urgency, right.element.stage.urgency)
-            return a != b ? a < b : left.offset < right.offset
-        }.map(\.element)
+        tickets.sorted { left, right in
+            let (a, b) = (left.stage.urgency, right.stage.urgency)
+            if a != b { return a < b }
+            switch (left.openedMs, right.openedMs) {
+            case (let x?, let y?) where x != y: return x > y
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return left.id.utf8.lexicographicallyPrecedes(right.id.utf8)
+            }
+        }
     }
 
     /// The lane of a waiting ticket. A review or a check is read, and every other
@@ -237,8 +243,14 @@ public enum ProjectRule {
         case "rule": how = "a rule matched"
         default: how = mandate.via.isEmpty ? "started it" : mandate.via
         }
-        let strength = mandate.strength == "inferred" ? "Inferred" : "Explicit"
-        return who.isEmpty ? "\(strength): \(how)" : "\(strength): \(who) \(how)"
+        let strength: String?
+        switch mandate.strength {
+        case "explicit": strength = "Explicit"
+        case "inferred": strength = "Inferred"
+        default: strength = mandate.strength.isEmpty ? nil : mandate.strength
+        }
+        let sentence = who.isEmpty ? how : "\(who) \(how)"
+        return strength.map { "\($0): \(sentence)" } ?? sentence
     }
 
     /// The count of tickets by stage as the project row says it: the daemon's words
@@ -261,6 +273,40 @@ public enum ProjectRule {
         case 0: return "Nothing needs you"
         case 1: return "1 ticket needs you"
         default: return "\(need) tickets need you"
+        }
+    }
+
+    /// How many tickets that need a person the list's counts hold and page zero of the
+    /// board does not carry. The inbox says so, so its badge and its rows do not
+    /// silently disagree. A board that has not read leaves out nothing it knows of.
+    public static func leftOutWaiting(_ project: ProjectState) -> Int {
+        guard let page = project.page else { return 0 }
+        return max(0, needing(project.summary) - page.tickets.filter(\.stage.needsPerson).count)
+    }
+
+    // MARK: Project sessions in the inbox
+
+    /// Whether the inbox lists a session. A session that is not a project's is always
+    /// listed. A project's router or worker is left out of the conversation list, but
+    /// when its activity reports an approval, or the attention feed holds an ask or a
+    /// stuck strand for it, it waits on the owner under the owner's policy and nothing
+    /// else would show it, so it is listed.
+    public static func listsThread(standing: ProjectStanding?, activity: SessionActivity?, feed: AttentionRow?) -> Bool {
+        guard standing != nil else { return true }
+        let approving = (activity?.approvals ?? 0) > 0
+        let asking = feed.map { $0.asks.count > 0 || $0.stuck.count > 0 } ?? false
+        return approving || asking
+    }
+
+    /// The name such a thread is drawn under: the project's worker for a ticket, or its
+    /// router, so the row says whose session is asking.
+    public static func threadName(standing: ProjectStanding, projects: [ProjectState]) -> String {
+        switch standing {
+        case .router(let project):
+            return "Router of \(projects.first { $0.id == project }?.summary.name ?? "a project")"
+        case .worker(let project, let ticket):
+            let found = projects.first { $0.id == project }?.page?.tickets.first { $0.id == ticket }
+            return "Worker for ticket \(found?.title.map(InboxRule.oneLine) ?? ticket)"
         }
     }
 
@@ -292,24 +338,23 @@ public enum ProjectRule {
         return controls
     }
 
-    /// Whether a press is honoured: only for a control the ticket draws now, so a
-    /// press drawn for a ticket the next read has changed asks nothing.
-    public static func allows(_ ticket: ProjectTicket, _ control: TicketControl) -> Bool {
-        controls(ticket).contains(control)
-    }
-
     // MARK: Words for an act
 
-    /// The words for an act the daemon took.
-    public static func told(_ control: TicketControl) -> String {
+    /// What an act came to once the ticket was read again: what was done, and the
+    /// stage the ticket is in now, so a pane that outlives the act's row still says
+    /// what happened. The stage is the daemon's word.
+    public static func done(_ control: TicketControl, stage: ProjectStage?) -> String {
+        let did: String
         switch control {
-        case .answer: return "Answer sent. The worker has it queued."
-        case .recheck: return "The check is running again."
-        case .retry: return "A new worker was asked for."
-        case .close: return "Ticket closed. The mandate stands."
-        case .publish: return "Publishing was asked for. The host pushes the branch."
-        case .stop: return "Ticket stopped."
+        case .answer: did = "Answered"
+        case .recheck: did = "Check started"
+        case .retry: did = "New worker asked for"
+        case .close: did = "Closed"
+        case .publish: did = "Publishing asked for"
+        case .stop: did = "Stopped"
         }
+        guard let stage else { return did }
+        return "\(did) \u{00B7} the ticket is now \(stage.word)"
     }
 
     /// The words for an act the daemon refused. A `bad_request` carries the

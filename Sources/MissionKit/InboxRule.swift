@@ -289,6 +289,8 @@ public struct InboxTally: Sendable, Equatable {
     public var unread = 0
     /// Saved sessions counted from the catalogue's summary.
     public var fromCatalogue = 0
+    /// Tickets that need a person which the boards' first pages do not carry.
+    public var ticketsLeftOut = 0
 }
 
 /// What the inbox knows of the sessions that are not running.
@@ -590,7 +592,7 @@ public enum InboxRule {
     /// ticket's title, says the daemon's stage word under it, and is aged from the
     /// ticket's opening message, which the daemon may no longer hold.
     public static func ticketRows(_ tickets: [ProjectTicketRef], now: Int) -> [InboxRow] {
-        tickets.filter(\.ticket.stage.needsPerson).map { ref in
+        tickets.map { ref in
             let lane = ProjectRule.lane(of: ref.ticket)
             return InboxRow(
                 subject: .ticket(project: ref.project, ticket: ref.ticket.id), kind: .ticket(lane),
@@ -627,12 +629,13 @@ public enum InboxRule {
         reviewing: Set<String> = [],
         saved: InboxSaved = .unchecked,
         tickets: [ProjectTicketRef] = [],
+        ticketsLeftOut: Int = 0,
         now: Int,
         clock: (Int) -> String = ClockTime.local
     ) -> InboxBoard {
         InboxBoard(
             sections: sections(rows(threads: threads, feed: feed, raised: raised, reviewing: reviewing, tickets: tickets, now: now, clock: clock)),
-            tally: tally(threads: threads, feed: feed, saved: saved, tickets: tickets),
+            tally: tally(threads: threads, feed: feed, saved: saved, tickets: tickets, ticketsLeftOut: ticketsLeftOut),
             reported: threads.filter { $0.activity != nil }.count,
             checked: Set(feed.keys)
         )
@@ -650,7 +653,10 @@ public enum InboxRule {
     /// same rows list the same order.
     public static func sections(_ rows: [InboxRow]) -> [InboxSection] {
         InboxGroup.allCases.compactMap { group in
-            let members = rows.filter { $0.group == group }.sorted(by: order)
+            // Tickets follow every other row, in the board's own order, as the web
+            // appends them to what needs the owner.
+            let members = rows.filter { $0.group == group && !$0.isTicket }.sorted(by: order)
+                + rows.filter { $0.group == group && $0.isTicket }
             return members.isEmpty ? nil : InboxSection(group: group, rows: members)
         }
     }
@@ -733,13 +739,15 @@ public enum InboxRule {
     /// was read at all, none of them is counted either way, and the headline keeps
     /// saying saved sessions are not checked.
     public static func tally(
-        threads: [InboxThread], feed: [String: AttentionRow], saved: InboxSaved = .unchecked, tickets: [ProjectTicketRef] = []
+        threads: [InboxThread], feed: [String: AttentionRow], saved: InboxSaved = .unchecked, tickets: [ProjectTicketRef] = [],
+        ticketsLeftOut: Int = 0
     ) -> InboxTally {
         var tally = InboxTally()
+        tally.ticketsLeftOut = ticketsLeftOut
 
         // A ticket that waits on an answer needs the owner, as the "Needs you" band
         // that lists it says. One that waits to be read is counted by "To review".
-        tally.needing += tickets.filter { $0.ticket.stage.needsPerson && ProjectRule.lane(of: $0.ticket) == .answering }.count
+        tally.needing += tickets.filter { ProjectRule.lane(of: $0.ticket) == .answering }.count
         for thread in threads {
             // An approval and a failed run each count one: both are a session
             // reported as needing the owner, and the feed adds its own rows.
@@ -789,11 +797,12 @@ public enum InboxRule {
         case let many: finds = " \u{00B7} \(many) finds"
         }
         let sessions = tally.running == 1 ? "1 running session" : "\(tally.running) running sessions"
+        let left = tally.ticketsLeftOut == 0 ? "" : " \u{00B7} \(tally.ticketsLeftOut) more tickets need you, not shown"
         let unread = tally.unread == 0 ? "" : ", \(tally.unread) not checked"
         if tally.fromCatalogue > 0 {
-            return "\(lead(tally))\(finds) \u{00B7} \(sessions) read live, \(tally.fromCatalogue) saved from the catalogue\(unread)"
+            return "\(lead(tally))\(finds)\(left) \u{00B7} \(sessions) read live, \(tally.fromCatalogue) saved from the catalogue\(unread)"
         }
-        return "\(lead(tally))\(finds) \u{00B7} \(sessions) read live\(unread); saved sessions not checked"
+        return "\(lead(tally))\(finds)\(left) \u{00B7} \(sessions) read live\(unread); saved sessions not checked"
     }
 
     /// The note under the rail's folders: how many running sessions the counts

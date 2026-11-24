@@ -500,11 +500,11 @@ def usage_for(prompt):
 
 
 # Project mode. The router is the session that holds a `route` tool and a worker the
-# one that holds `project_report`, so the scripts are chosen by the tools a request
-# offers and never by a keyword a person wrote.
+# one that holds `project_report`, so the role is chosen by the tools a request offers.
+# Within a worker, what the post said chooses the script: "commit then wait" commits.
 
 def tool_names(request):
-    return {(tool.get("function") or {}).get("name") for tool in request.get("tools", [])}
+    return {(tool.get("function") or {}).get("name") for tool in request.get("tools") or []}
 
 
 def called(messages):
@@ -514,10 +514,6 @@ def called(messages):
         for message in messages if message.get("role") == "assistant"
         for item in message.get("tool_calls") or []
     ]
-
-
-def whole(messages):
-    return json.dumps(messages)
 
 
 def router_script(messages):
@@ -542,7 +538,7 @@ def worker_script(messages):
     project's check then rejects the head and the ticket is at person/check."""
     names = called(messages)
     last = messages[-1] if messages else {}
-    if "commit then wait" in whole(messages):
+    if "commit then wait" in json.dumps(messages):
         if last.get("role") == "tool":
             if names and names[-1] == "bash":
                 yield call(0, "project_report", {"status": "waiting"})

@@ -85,16 +85,17 @@ public enum ProjectStage: Sendable, Equatable, Hashable {
     /// Whether the stage waits on a person: every `person/` word, known or not.
     public var needsPerson: Bool { word.hasPrefix("person/") }
 
-    /// How urgent a stage is on the board, lowest first. A question and a failed
-    /// delivery come before a review, and a stage that needs nobody comes last.
+    /// How urgent a stage is on the board, lowest first, in the web view's order:
+    /// delivery, answer, review, check, blocked, failed, then the stages that need
+    /// nobody.
     public var urgency: Int {
         switch self {
         case .personDelivery: return 0
         case .personAnswer: return 1
-        case .personBlocked: return 2
-        case .personFailed: return 3
-        case .personCheck: return 4
-        case .personReview: return 5
+        case .personReview: return 2
+        case .personCheck: return 3
+        case .personBlocked: return 4
+        case .personFailed: return 5
         case .unknown(let word) where word.hasPrefix("person/"): return 6
         case .working: return 7
         case .queued: return 8
@@ -263,13 +264,22 @@ public struct ProjectPage: Sendable, Equatable {
     /// The ledger's newest sequence number. A board with the same revision as the
     /// last one changes nothing a person can see.
     public let revision: Int
-    public let total: Int
+    /// All tickets in the project, which may exceed the page. Nil when the daemon sent
+    /// none, which is not the same as nothing left out.
+    public let total: Int?
     public let tickets: [ProjectTicket]
     /// Rows the decoder could not address and left out.
     public let unreadable: Int
     /// How many replies the router has queued, on page zero.
     public let replies: Int
     public let unrouted: [ProjectUnrouted]
+
+    /// How many tickets the page leaves out: the total less the rows it carries and the
+    /// rows it could not read, which are among those it carries. Nil when the daemon
+    /// sent no total.
+    public var leftOut: Int? {
+        total.map { max(0, $0 - tickets.count - unreadable) }
+    }
 
     public init?(_ value: JSONValue) {
         guard let project = value["project"]?.string, let revision = value["revision"]?.natural else { return nil }
@@ -279,7 +289,7 @@ public struct ProjectPage: Sendable, Equatable {
         self.revision = revision
         self.tickets = tickets
         unreadable = rows.count - tickets.count
-        total = max(value["total"]?.natural ?? 0, tickets.count)
+        total = value["total"]?.natural
         replies = value["replies"]?.array?.count ?? 0
         unrouted = (value["unrouted"]?.array ?? []).compactMap(ProjectUnrouted.init)
     }

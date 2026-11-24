@@ -16,6 +16,12 @@ enum Destination: Hashable {
     case session(String)
 }
 
+/// What the last act on a ticket came to, in words.
+struct TicketResult: Equatable {
+    let words: String
+    let isRefusal: Bool
+}
+
 /// A session that was created, whose first message never went out. The session is
 /// kept, so the person can open it and write the message there.
 struct CreatedButUnsent: LocalizedError {
@@ -337,7 +343,11 @@ final class DaemonConnection: Identifiable {
 
     /// This daemon's resident sessions as the inbox reads them.
     func inboxThreads(activity: [String: SessionActivity]) -> [InboxThread] {
-        sessions.filter { $0.state.isResident && $0.standing == nil }.map { InboxThread(id: $0.id, name: $0.title, activity: activity[$0.id]) }
+        sessions.filter { $0.state.isResident }.compactMap { record in
+            guard ProjectRule.listsThread(standing: record.standing, activity: activity[record.id], feed: attentionRows[record.id]) else { return nil }
+            let name = record.standing.map { ProjectRule.threadName(standing: $0, projects: projects) } ?? record.title
+            return InboxThread(id: record.id, name: name, activity: activity[record.id])
+        }
     }
 
     /// Reads the projects now, for a pane that has just acted on a ticket.
@@ -401,7 +411,8 @@ final class DaemonConnection: Identifiable {
 
     /// The saved sessions this daemon lists, which the catalogue's counts are read for.
     var savedSessionIDs: [String] {
-        sessions.filter { $0.state == .saved }.map(\.id)
+        // A saved router or worker is counted nowhere, as a resident one is not.
+        sessions.filter { $0.state == .saved && $0.standing == nil }.map(\.id)
     }
 
     /// Reads the attention feed for the resident sessions and the raise time of each
@@ -641,6 +652,7 @@ final class AppModel {
                 InboxRule.board(
                     threads: inboxThreads, feed: attentionRows, raised: approvalRaised, reviewing: reviewing, saved: inboxSaved,
                     tickets: ProjectRule.waiting(projectStates),
+                    ticketsLeftOut: projectStates.reduce(0) { $0 + ProjectRule.leftOutWaiting($1) },
                     now: Int(Date().timeIntervalSince1970 * 1000)
                 ),
                 inboxMachines,
@@ -759,11 +771,7 @@ final class AppModel {
     /// The resident sessions as the inbox reads them: the display name beside the
     /// daemon's activity report, which is nil when it gave none.
     var inboxThreads: [InboxThread] {
-        InboxRule.deduped(daemons.flatMap { daemon in
-            daemon.sessions.filter { $0.state.isResident && $0.standing == nil }.map {
-                InboxThread(id: $0.id, name: $0.title, activity: daemon.activity[$0.id])
-            }
-        })
+        InboxRule.deduped(daemons.flatMap { $0.inboxThreads(activity: $0.activity) })
     }
 
     /// The rows whose retry is out, by row id. The pane's Retry and the menu's both
@@ -819,6 +827,11 @@ final class AppModel {
 
     /// An answer half written to a ticket's question, by ticket.
     var ticketDrafts: [ProjectSelection: String] = [:]
+
+    /// What the last act on a ticket came to, by ticket. It outlives the inbox row the
+    /// act was made from: a ticket that moves to a stage nobody waits on leaves the
+    /// inbox, and the pane that stays says what was done.
+    var ticketResults: [ProjectSelection: TicketResult] = [:]
 
     var attentionRows: [String: AttentionRow] {
         daemons.reduce(into: [:]) { $0.merge($1.attentionRows) { _, new in new } }

@@ -176,8 +176,8 @@ final class ProjectRuleTests: XCTestCase {
             ticket("w", "working"), ticket("r", "person/review"), ticket("a1", "person/answer"),
             ticket("c", "person/check"), ticket("a2", "person/answer"), ticket("e", "ended/closed"),
         ]
-        XCTAssertEqual(ProjectRule.ordered(tickets).map(\.id), ["a1", "a2", "c", "r", "w", "e"])
-        XCTAssertEqual(ProjectRule.groups(tickets).map(\.stage.word), ["person/answer", "person/check", "person/review", "working", "ended/closed"])
+        XCTAssertEqual(ProjectRule.ordered(tickets).map(\.id), ["a1", "a2", "r", "c", "w", "e"])
+        XCTAssertEqual(ProjectRule.groups(tickets).map(\.stage.word), ["person/answer", "person/review", "person/check", "working", "ended/closed"])
     }
 
     func testAReviewOrACheckIsReadAndEveryOtherWaitingStageIsAnswered() {
@@ -211,13 +211,6 @@ final class ProjectRuleTests: XCTestCase {
     func testAnAnswerNeedsTheOpenQuestionItCarries() {
         let noQuestion = ProjectTicket(ticketJSON("t", stage: "person/answer", actions: ["answer"]))!
         XCTAssertEqual(ProjectRule.controls(noQuestion), [])
-    }
-
-    func testAPressIsHonouredOnlyForAControlDrawnNow() {
-        let checked = ticket("t", "person/check", actions: ["recheck"])
-        XCTAssertTrue(ProjectRule.allows(checked, .recheck))
-        XCTAssertFalse(ProjectRule.allows(checked, .publish))
-        XCTAssertFalse(ProjectRule.allows(checked, .answer(seq: 1)))
     }
 
     func testCloseStopAndPublishAskOnceAndTheRestAreSent() {
@@ -276,7 +269,8 @@ final class ProjectRuleTests: XCTestCase {
 
     func testTicketsThatWaitAreRowsInTheGroupTheirLanePutsThemIn() {
         let tickets = [ticket("a", "person/answer", opened: 1_000), ticket("c", "person/check", opened: 2_000), ticket("w", "working")]
-        let board = InboxRule.board(threads: [], feed: [:], tickets: tickets.map(ref), now: 61_000)
+        // The board hands the inbox only the tickets that wait on a person.
+        let board = InboxRule.board(threads: [], feed: [:], tickets: ProjectRule.waiting([state(tickets)]), now: 61_000)
         XCTAssertEqual(board.sections.map(\.group), [.needsYou, .toReview])
         XCTAssertEqual(board.needsYou.map(\.id), ["ticket/p1/a"])
         XCTAssertEqual(board.sections[1].rows.map(\.id), ["ticket/p1/c"])
@@ -302,10 +296,6 @@ final class ProjectRuleTests: XCTestCase {
         XCTAssertEqual(InboxCommands.state(.retry, in: context), .absent)
     }
 
-    func testATicketThatNeedsNobodyIsNoRow() {
-        XCTAssertEqual(InboxRule.ticketRows([ref(ticket("w", "working")), ref(ticket("e", "ended/closed"))], now: 1), [])
-    }
-
     func testTheSelectionKeepsATicketOpenWhileItIsListedAndSettlesWhenItIsNot() {
         let projects = [state([ticket("a", "person/answer")])]
         let open = ProjectSelection.ticket(project: "p1", ticket: "a")
@@ -316,5 +306,88 @@ final class ProjectRuleTests: XCTestCase {
         XCTAssertEqual(ProjectSelection.settled(open, projects: unread), open, "no read says the ticket is gone")
         let longer = [state([ticket("b", "working")], total: 30)]
         XCTAssertEqual(ProjectSelection.settled(open, projects: longer), open, "a ticket past the page may still exist")
+    }
+
+    // MARK: Review fixes
+
+    func testTheStageOrderIsTheWebViewsAndTheNewestOpenedComesFirst() {
+        let tickets = [
+            ticket("f", "person/failed"), ticket("b", "person/blocked"), ticket("c", "person/check"), ticket("r", "person/review"),
+            ticket("a", "person/answer"), ticket("d", "person/delivery"),
+            ticket("old", "working", opened: 100), ticket("new", "working", opened: 900), ticket("none", "working", opened: nil),
+            ticket("z", "idle", opened: 5), ticket("y", "idle", opened: 5),
+        ]
+        XCTAssertEqual(
+            ProjectRule.ordered(tickets).map(\.id),
+            ["d", "a", "r", "c", "b", "f", "new", "old", "none", "y", "z"]
+        )
+    }
+
+    func testTicketRowsFollowEveryOtherRowOfTheirGroupInBoardOrder() {
+        let activity = SessionActivity(.object(["session_id": "s", "state": "needs_you", "approvals": 1]))!
+        let threads = [InboxThread(id: "s", name: "zeta", activity: activity)]
+        let tickets = [ref(ticket("t2", "person/answer", opened: 2)), ref(ticket("t1", "person/answer", opened: 1))]
+        let board = InboxRule.board(threads: threads, feed: [:], tickets: tickets, now: 10_000)
+        XCTAssertEqual(board.needsYou.map(\.id), ["session/s", "ticket/p1/t2", "ticket/p1/t1"], "a ticket is listed after a session, in the order given")
+    }
+
+    func testAMandateStrengthIsWordedOnlyWhenItIsOneTheClientKnows() {
+        func words(_ strength: String) -> String? {
+            ProjectRule.mandateWords(ProjectMandate(["strength": .string(strength), "via": "composer", "source": "composer", "actor": "owner"]))
+        }
+        XCTAssertEqual(words("inferred"), "Inferred: owner via composer asked for it")
+        XCTAssertEqual(words("tentative"), "tentative: owner via composer asked for it")
+        XCTAssertEqual(words(""), "owner via composer asked for it")
+    }
+
+    func testAnAbsentTotalIsNotNothingLeftOutAndUnreadableRowsAreNotCountedTwice() {
+        let none = ProjectPage(.object(["project": "p1", "revision": 1, "tickets": []]))!
+        XCTAssertNil(none.total)
+        XCTAssertNil(none.leftOut)
+        let page = ProjectPage(.object([
+            "project": "p1", "revision": 1, "total": 25,
+            "tickets": .array([ticketJSON("a", stage: "idle"), .object(["stage": "idle"])]),
+        ]))!
+        XCTAssertEqual(page.leftOut, 23, "25 less the one row read and the one that could not be")
+        let open = ProjectState(summary: summary(), page: none)
+        XCTAssertEqual(ProjectSelection.settled(.ticket(project: "p1", ticket: "x"), projects: [open]), .ticket(project: "p1", ticket: "x"))
+    }
+
+    func testTheInboxSaysHowManyWaitingTicketsThePageLeftOut() {
+        let listed = summary(counts: ["person/answer": 27])
+        let page = ProjectPage(.object([
+            "project": "p1", "revision": 1, "total": 27,
+            "tickets": .array((0..<20).map { ticketJSON("t\($0)", stage: "person/answer") }),
+        ]))!
+        XCTAssertEqual(ProjectRule.leftOutWaiting(ProjectState(summary: listed, page: page)), 7)
+        XCTAssertEqual(ProjectRule.leftOutWaiting(ProjectState(summary: listed, page: nil)), 0)
+        let tally = InboxRule.tally(threads: [], feed: [:], tickets: [], ticketsLeftOut: 7)
+        XCTAssertTrue(InboxRule.headline(tally).contains("7 more tickets need you, not shown"))
+        XCTAssertFalse(InboxRule.headline(InboxTally()).contains("not shown"))
+    }
+
+    func testAProjectSessionIsListedOnlyWhenItWaitsOnTheOwner() {
+        let quiet = SessionActivity(.object(["session_id": "w", "state": "working", "approvals": 0]))!
+        let approving = SessionActivity(.object(["session_id": "w", "state": "needs_you", "approvals": 1]))!
+        let asking = AttentionRow(sessionID: "w", asks: .init(count: 1, items: []))
+        let worker = ProjectStanding.worker(project: "p1", ticket: "t-a")
+        XCTAssertTrue(ProjectRule.listsThread(standing: nil, activity: quiet, feed: nil), "an ordinary session is always listed")
+        XCTAssertFalse(ProjectRule.listsThread(standing: worker, activity: quiet, feed: nil))
+        XCTAssertFalse(ProjectRule.listsThread(standing: .router(project: "p1"), activity: nil, feed: nil))
+        XCTAssertTrue(ProjectRule.listsThread(standing: worker, activity: approving, feed: nil), "an approval reaches the owner")
+        XCTAssertTrue(ProjectRule.listsThread(standing: worker, activity: quiet, feed: asking), "an ask reaches the owner")
+    }
+
+    func testAProjectThreadNamesItsTicketOrItsProject() {
+        let projects = [state([ticket("t-a", "working")])]
+        XCTAssertEqual(ProjectRule.threadName(standing: .worker(project: "p1", ticket: "t-a"), projects: projects), "Worker for ticket fix a")
+        XCTAssertEqual(ProjectRule.threadName(standing: .worker(project: "p1", ticket: "gone"), projects: projects), "Worker for ticket gone")
+        XCTAssertEqual(ProjectRule.threadName(standing: .router(project: "p1"), projects: projects), "Router of loom")
+    }
+
+    func testWhatAnActCameToNamesTheStageTheTicketMovedTo() {
+        XCTAssertEqual(ProjectRule.done(.answer(seq: 1), stage: .working), "Answered \u{00B7} the ticket is now working")
+        XCTAssertEqual(ProjectRule.done(.close, stage: .ended("closed")), "Closed \u{00B7} the ticket is now ended/closed")
+        XCTAssertEqual(ProjectRule.done(.stop, stage: nil), "Stopped")
     }
 }

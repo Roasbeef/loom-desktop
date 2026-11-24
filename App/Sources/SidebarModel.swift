@@ -42,6 +42,9 @@ extension AppModel {
         return true
     }
 
+    /// How many sessions the conversation list holds.
+    var listedSessionCount: Int { sessions.filter(isListed).count }
+
     /// Each machine that holds listed sessions, with how many.
     var machineCounts: [(name: String, count: Int)] {
         Dictionary(grouping: sessions.filter(isListed), by: { machine(of: $0) })

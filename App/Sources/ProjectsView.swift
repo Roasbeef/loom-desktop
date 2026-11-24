@@ -79,8 +79,8 @@ private struct ProjectSection: View {
                         TicketRow(ticket: ticket).tag(ProjectSelection.ticket(project: project.id, ticket: ticket.id))
                     }
                 }
-                if page.total > page.tickets.count {
-                    Text("\(page.total - page.tickets.count) more tickets are not shown.")
+                if let left = page.leftOut, left > 0 {
+                    Text("\(left) more tickets are not shown.")
                         .font(Theme.caption).foregroundStyle(.secondary)
                 }
                 if page.unreadable > 0 {

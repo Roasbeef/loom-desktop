@@ -222,7 +222,7 @@ private struct SidebarView: View {
                         groupings: groupings,
                         grouping: $grouping,
                         machines: model.isMultiMachine && model.machineCounts.count > 1 ? model.machineCounts : [],
-                        total: model.sessions.count,
+                        total: model.listedSessionCount,
                         machineFilter: $machineFilter
                     )
                     Button {

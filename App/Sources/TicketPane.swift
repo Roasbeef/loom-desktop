@@ -14,7 +14,8 @@ import SwiftUI
 // whose words they are.
 
 /// What a ticket's pane holds between draws: the last read of the ticket, an act
-/// that is out, the act the pane is asking about, and what the daemon said.
+/// that is out, and the act the pane is asking about. What an act came to is kept on
+/// the model (`AppModel.ticketResults`), so it outlives this pane.
 @MainActor
 @Observable
 final class TicketReader {
@@ -22,12 +23,6 @@ final class TicketReader {
     private(set) var unreadable = false
     private(set) var sending = false
     private(set) var confirming: TicketControl?
-    private(set) var notice: Notice?
-
-    struct Notice: Equatable {
-        let words: String
-        let refused: Bool
-    }
 
     func read(control: ControlClient?, project: String, ticket: String) async {
         guard let control else { return }
@@ -39,36 +34,43 @@ final class TicketReader {
         }
     }
 
-    /// A press on a control. A control that needs confirmation asks first, and a
-    /// press while an act is out asks nothing.
+    /// A press on a control. A control that needs confirmation only asks, and the
+    /// confirmation is its own button, so one gesture cannot do both. A press while an
+    /// act is out asks nothing.
     func press(
         _ control: TicketControl, ticket: ProjectTicket, daemon: DaemonConnection?, project: String, answer: String,
-        answered: @escaping @MainActor () -> Void
+        answered: @escaping @MainActor () -> Void, record: @escaping @MainActor (TicketResult?) -> Void
     ) {
-        guard !sending, ProjectRule.allows(ticket, control) else { return }
+        guard !sending else { return }
         if control.needsConfirmation, confirming != control {
             confirming = control
-            notice = nil
+            record(nil)
             return
         }
         confirming = nil
-        perform(control, ticket: ticket, daemon: daemon, project: project, answer: answer, answered: answered)
+        perform(control, ticket: ticket, daemon: daemon, project: project, answer: answer, answered: answered, record: record)
+    }
+
+    /// A control the daemon no longer lists cannot be waiting on a confirmation, so a
+    /// read that took the action away takes the question with it.
+    func reconcile(_ controls: [TicketControl]) {
+        if let asking = confirming, !controls.contains(asking) { confirming = nil }
     }
 
     func cancel() { confirming = nil }
 
     private func perform(
         _ control: TicketControl, ticket: ProjectTicket, daemon: DaemonConnection?, project: String, answer: String,
-        answered: @escaping @MainActor () -> Void
+        answered: @escaping @MainActor () -> Void, record: @escaping @MainActor (TicketResult?) -> Void
     ) {
         guard let client = daemon?.control else {
-            notice = Notice(words: "The daemon is not connected.", refused: true)
+            record(TicketResult(words: "The daemon is not connected.", isRefusal: true))
             return
         }
         let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         if case .answer = control, text.isEmpty { return }
         sending = true
-        notice = nil
+        record(nil)
         Task {
             defer { sending = false }
             do {
@@ -77,11 +79,20 @@ final class TicketReader {
                 default: if let act = control.act { try await client.actOnTicket(act, project: project, ticket: ticket.id) }
                 }
                 if case .answer = control { answered() }
-                notice = Notice(words: ProjectRule.told(control), refused: false)
+                await read(control: client, project: project, ticket: ticket.id)
+                await daemon?.readProjectsNow()
+
+                // The result is kept on the model, because the row this pane was opened
+                // from may leave the inbox the moment the daemon moves the ticket, and
+                // the pane that replaces it still says what was done.
+                record(TicketResult(words: ProjectRule.done(control, stage: detail?.ticket.stage), isRefusal: false))
+                return
             } catch LoomError.server(let code, let message, _) {
-                notice = Notice(words: ProjectRule.refusal(code: code, message: message, control: control), refused: true)
+                record(TicketResult(words: ProjectRule.refusal(code: code, message: message, control: control), isRefusal: true))
             } catch {
-                notice = Notice(words: "No reply arrived, so the outcome is unknown. Read the ticket again before trying again.", refused: true)
+                record(TicketResult(
+                    words: "No reply arrived, so the outcome is unknown. Read the ticket again before trying again.", isRefusal: true
+                ))
             }
             await read(control: client, project: project, ticket: ticket.id)
             await daemon?.readProjectsNow()
@@ -97,6 +108,7 @@ struct TicketPane: View {
 
     private var state: ProjectState? { model.projectStates.first { $0.id == project } }
     private var daemon: DaemonConnection? { model.daemon(holdingProject: project) }
+    private var key: ProjectSelection { .ticket(project: project, ticket: ticket) }
 
     /// The answer being written, kept on the model by ticket so it survives a move
     /// down the list and so a test can write it without a key window.
@@ -185,13 +197,15 @@ struct TicketPane: View {
         PaneSection("The worker asks") {
             // The question is the worker's text, so it is labelled as untrusted.
             Text("Untrusted text from the worker:").font(Theme.caption).foregroundStyle(.secondary)
-            Text(verbatim: question.text).font(Theme.body).textSelection(.enabled)
-                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.tint, in: .rect(cornerRadius: Theme.radiusInner))
-            if !question.options.isEmpty {
-                Text(verbatim: "Options it offered: " + question.options.joined(separator: " \u{00B7} "))
-                    .font(Theme.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(verbatim: question.text).font(Theme.body).textSelection(.enabled)
+                if !question.options.isEmpty {
+                    Text(verbatim: "Options it offered: " + question.options.joined(separator: " \u{00B7} "))
+                        .font(Theme.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                }
             }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.tint, in: .rect(cornerRadius: Theme.radiusInner))
             if ProjectRule.controls(ticket).contains(.answer(seq: question.seq)) {
                 TextField("Your answer", text: draft, axis: .vertical)
                     .textFieldStyle(.roundedBorder).lineLimit(1...6)
@@ -273,21 +287,32 @@ struct TicketPane: View {
             }
             HStack {
                 ForEach(all, id: \.self) { control in
-                    Button(reader.confirming == control ? "Confirm \(control.title)" : control.title) {
+                    Button(control.title) {
                         reader.press(control, ticket: ticket, daemon: daemon, project: project, answer: draft.wrappedValue) {
                             draft.wrappedValue = ""
-                        }
+                        } record: { model.ticketResults[key] = $0 }
                     }
                     .buttonStyle(.bordered)
-                    .disabled(reader.sending || isEmptyAnswer(control))
+
+                    // The control that is being asked about is off until the question is
+                    // answered, so a double click on it cannot ask and confirm in one gesture.
+                    .disabled(reader.sending || isEmptyAnswer(control) || reader.confirming == control)
                 }
-                if reader.confirming != nil {
+                if let asking = reader.confirming {
+                    Button("Confirm \(asking.title)") {
+                        reader.press(asking, ticket: ticket, daemon: daemon, project: project, answer: draft.wrappedValue) {
+                            draft.wrappedValue = ""
+                        } record: { model.ticketResults[key] = $0 }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(reader.sending)
                     Button("Keep") { reader.cancel() }.buttonStyle(.borderless)
                 }
             }
-            if let notice = reader.notice {
-                Text(verbatim: notice.words).font(Theme.caption)
-                    .foregroundStyle(notice.refused ? Theme.failure : .secondary)
+            .onChange(of: all) { _, now in reader.reconcile(now) }
+            if let result = model.ticketResults[key] {
+                Text(verbatim: result.words).font(Theme.caption)
+                    .foregroundStyle(result.isRefusal ? Theme.failure : .secondary)
                     .accessibilityIdentifier("ticket-notice")
             }
         }

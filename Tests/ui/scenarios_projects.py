@@ -74,7 +74,7 @@ def a_project_is_made_work_is_posted_and_its_ticket_is_acted_on(c):
     # The router accepts the first message, and the worker asks its question.
     raw(c, "projects.post", {"project": pid, "request_id": "post-question", "text": "fix the retry loop"})
     asked = wait_ticket(c, pid, "person/answer")
-    check(asked["actions"] == ["Answer", "Close Ticket", "Stop"] or "Answer" in asked["actions"], f"the daemon lists answer: {asked}")
+    check("Answer" in asked["actions"], f"the daemon lists answer: {asked}")
 
     # The Projects destination groups the ticket under the daemon's own stage word.
     c.app.go("projects")
@@ -87,6 +87,16 @@ def a_project_is_made_work_is_posted_and_its_ticket_is_acted_on(c):
     entry = next(p for p in shown["projects"] if p["id"] == pid)
     check("person/answer" in entry["countWords"], f"the counts read in the daemon's words: {entry['countWords']}")
     check(entry["router"], "the project names its router session")
+
+    # The router and the worker are reached from the project, so the conversation list and the
+    # inbox's session threads leave them out while neither waits on the owner.
+    snap = c.app.snap()
+    listed = {row["id"] for grouping in ("status", "project", "machine") for section in snap["sidebar"].get(grouping, [])
+              for row in section["rows"]}
+    inbox_ids = {row["id"] for group in snap["inbox"]["groups"] for row in group["rows"]}
+    for session in {entry["router"], asked["session"]} - {""}:
+        check(session not in listed, f"the sidebar lists the project session {session}")
+        check(f"session/{session}" not in inbox_ids, f"the inbox lists the project session {session}")
 
     # A ticket that waits on an answer is a thread under Needs you, with no session of its own.
     open_ticket_thread(c, pid, asked)
@@ -119,7 +129,7 @@ def a_project_is_made_work_is_posted_and_its_ticket_is_acted_on(c):
         lambda: next((t for t in tickets(c, pid) if t["stage"] == "person/check"), None), TICKET_WAIT, "a ticket at person/check",
     )
     check("Check Again" in failed["actions"] and "Close Ticket" in failed["actions"], f"the check's actions come from the daemon: {failed}")
-    check("Publish" not in failed["actions"], "publish is not listed while the project's publish setting is off")
+    check("Publish" not in failed["actions"], "the daemon does not list publish, since the project's publish setting is off by default")
 
     # The failed check is a ticket to read: under To review, with the output and its cause.
     row = f"ticket/{pid}/{failed['id']}"
@@ -130,7 +140,7 @@ def a_project_is_made_work_is_posted_and_its_ticket_is_acted_on(c):
     c.app.see(r"Failed, cause: test")
     c.app.see(r"2 tests failed")
     c.app.see("Output, as the check printed it")
-    check(not c.app.enabled("Publish"), "no Publish control is drawn")
+    check(not c.app.enabled("Publish"), "no Publish control is drawn for a ticket whose actions do not list it")
     shoot(c, "inbox-ticket-failed-check")
 
     # The same pane is on the Projects destination, where it stays while the ticket's stage
@@ -140,9 +150,15 @@ def a_project_is_made_work_is_posted_and_its_ticket_is_acted_on(c):
     c.app.see("The check")
     shoot(c, "projects-ticket-check")
     c.app.press("Check Again")
-    c.app.see("The check is running again")
+    c.app.see("Check started")
     c.app.press("Close Ticket")
     c.app.see("Accepts the work and ends the ticket")
     c.app.press("Confirm Close Ticket")
     wait_for(lambda: any(t["id"] == failed["id"] and t["stage"].startswith("ended/") for t in tickets(c, pid)), 30, "the ticket to end")
     check(not any(r["id"] == row for g in c.app.snap()["inbox"]["groups"] for r in g["rows"]), "an ended ticket leaves the inbox")
+
+    # Stop ends the first ticket too, so a later scenario starts with nothing waiting.
+    c.app.cmd(f"projectpick {pid} {asked['id']}")
+    c.app.press("Stop")
+    c.app.press("Confirm Stop")
+    wait_for(lambda: any(t["id"] == asked["id"] and t["stage"].startswith("ended/") for t in tickets(c, pid)), 30, "the first ticket to end")
