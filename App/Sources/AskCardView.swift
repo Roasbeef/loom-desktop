@@ -81,6 +81,7 @@ struct AskCardView: View {
                 sessionID: rail.sessionID,
                 name: model.sessions.first { $0.id == rail.sessionID }?.title ?? "the session",
                 record: record, ask: ask, isObserver: controller.isObserver,
+                unsupportedWords: AnswerRule.cardUnsupportedWords,
                 reread: { await rail.rereadAsk(id: card.id, control: control) }
             )
         } else {

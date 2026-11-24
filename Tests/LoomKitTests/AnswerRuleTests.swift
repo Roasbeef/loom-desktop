@@ -277,8 +277,20 @@ final class AnswerRuleTests: XCTestCase {
         XCTAssertNotNil(refusal(AnswerRule.check(questions: [try multiple()], entries: [:])))
         XCTAssertNotNil(refusal(AnswerRule.check(questions: [try multiple(min: 1)], entries: [:])))
     }
+    func testACardCanWordAnOlderDaemonForTheSessionPage() throws {
+        let record = try ask()
+        XCTAssertEqual(
+            AnswerRule.offer(ask: record, status: "open", isObserver: false, unsupported: true),
+            .words(AnswerRule.unsupportedWords)
+        )
+        XCTAssertEqual(
+            AnswerRule.offer(ask: record, status: "open", isObserver: false, unsupported: true, unsupportedWords: AnswerRule.cardUnsupportedWords),
+            .words("This daemon cannot take answers here. Answer it in the web view.")
+        )
+    }
 }
 
 extension AnswerOffer {
     fileprivate var isForm: Bool { self == .form }
+
 }
