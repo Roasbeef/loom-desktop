@@ -126,18 +126,25 @@ struct ReviewThread<Message: View>: View {
             .background(Theme.tintStrong, in: .capsule)
     }
 
+    /// The verdict as a segmented control. No segment is selected until the owner stages
+    /// one, so the control never reads as a decision nobody made. Choosing another
+    /// segment replaces the verdict; Clear in the outbox takes it back.
     private var verdict: some View {
         PaneSection("Your verdict") {
-            HStack(spacing: 8) {
+            Picker("Your verdict", selection: Binding<ReviewVerdict?>(
+                get: { outbox.verdict },
+                set: { chosen in
+                    if let chosen, chosen != outbox.verdict { outbox.toggle(chosen) }
+                }
+            )) {
                 ForEach([ReviewVerdict.approve, .requestChanges, .comment], id: \.label) { choice in
-                    Button(choice.label) { outbox.toggle(choice) }
-                        .buttonStyle(.bordered)
-                        .tint(outbox.verdict == choice ? Color.accentColor : nil)
-                        .fontWeight(outbox.verdict == choice ? .semibold : .regular)
-                        .accessibilityAddTraits(outbox.verdict == choice ? .isSelected : [])
-                        .disabled(outbox.isSending)
+                    Text(choice.label).tag(Optional(choice))
                 }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .disabled(outbox.isSending)
         }
     }
 
@@ -183,29 +190,8 @@ private struct ReviewFileView: View {
     private var staged: ReviewFileComment? { outbox.comments.first { $0.path == file.path } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(.smooth(duration: 0.15)) { isOpen.toggle() }
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(isOpen ? 90 : 0))
-                    Text(verbatim: file.path).font(.system(size: 12, weight: .medium).monospaced())
-                        .lineLimit(1).truncationMode(.head)
-                    Text(verbatim: marks).font(Theme.caption).foregroundStyle(Theme.attention)
-                    Spacer(minLength: 6)
-                    Text(verbatim: "\(ReviewRule.changeWords(file)) \u{00B7} \(ReviewRule.counts(file))")
-                        .font(Theme.meta).foregroundStyle(.secondary)
-                }
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text(verbatim: "\(file.path), \(ReviewRule.changeWords(file)), \(ReviewRule.counts(file))"))
-            .accessibilityIdentifier("review-file/\(file.path)")
-
-            if isOpen {
+        DisclosureGroup(isExpanded: $isOpen) {
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(pins.loose, id: \.self) { id in
                     if let found = finds.first(where: { $0.id == id }) {
                         ReviewFindCard(find: found, read: reads[id], acting: acting, outbox: $outbox)
@@ -214,6 +200,25 @@ private struct ReviewFileView: View {
                 content
                 if acting { commentForm }
             }
+            .padding(.top, 8)
+        } label: {
+            HStack(spacing: 6) {
+                Text(verbatim: file.path).font(.system(size: 12, weight: .medium).monospaced())
+                    .lineLimit(1).truncationMode(.head)
+                Text(verbatim: marks).font(Theme.caption).foregroundStyle(Theme.attention)
+                Spacer(minLength: 6)
+                Text(verbatim: "\(ReviewRule.changeWords(file)) \u{00B7} \(ReviewRule.counts(file))")
+                    .font(Theme.meta).foregroundStyle(.secondary)
+            }
+            // A disclosure group opens from its triangle alone, so the whole label row
+            // opens it too, as the row did before it was a disclosure group.
+            .contentShape(.rect)
+            .onTapGesture { isOpen.toggle() }
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { isOpen.toggle() }
+            .accessibilityLabel(Text(verbatim: "\(file.path), \(ReviewRule.changeWords(file)), \(ReviewRule.counts(file))"))
+            .accessibilityIdentifier("review-file/\(file.path)")
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)

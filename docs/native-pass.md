@@ -167,6 +167,27 @@ scenarios, merged when its gates pass. The order puts correctness first.
   reach them; otherwise kept as they are.
 - No dashed borders. The approval title names the tool and is capped at three
   lines; the full command stays in the facts.
+- Done on `native/reading-pane`. `PaneSection` draws one sentence-case heading
+  for every section. `FactsCard` is a column of `LabeledContent` rows with a
+  `LabeledContentStyle` that puts the label in a 140 pt column and the value
+  beside it, left aligned. Each review file is a `DisclosureGroup`, the first open
+  on arrival as before. The verdict is a segmented `Picker` over an optional
+  selection, so no segment is selected until the owner stages one. A segmented
+  control cannot be pressed again to deselect, so a staged verdict is replaced by
+  choosing another segment and taken back with Clear in the outbox. `QuoteBox` is
+  a tinted surface with a hairline border, no dash. `ThreadRule.approvalTitle`
+  names the tool ("May fs_write have write access to /path?"), and the title is
+  capped at three lines; the command is the "Command" fact. A review's title is
+  "Ready to review" until the review is read, and when its read fails, instead of
+  falling back to the agent's last message as the web does (it differs on purpose,
+  so text a model wrote is never an unlabelled headline); an update's title is
+  "Working" or "Idle, finished", and a failed run's is "Its last run failed."
+  Agent text is a headline only for an ask or a find, where the daemon cut it as
+  the row's head, as the web does. The answer options stay as they are: a
+  `Picker` radio group cannot carry each option's "recommended" mark and note, or
+  the "Other" entry that shares the group's selection, so they were not converted
+  and no press was tested against one. The pane's 680 pt measure is a reading
+  measure, left aligned with the header, and was left alone.
 
 ### 5. Notifications
 

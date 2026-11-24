@@ -294,7 +294,7 @@ struct InboxPane: View {
                     .background(Theme.tintStrong, in: .rect(cornerRadius: 4))
                 Text(verbatim: eyebrow).font(Theme.meta).foregroundStyle(.secondary)
             }
-            title.font(.system(size: 20, weight: .semibold)).textSelection(.enabled)
+            title.font(.system(size: 20, weight: .semibold)).textSelection(.enabled).lineLimit(3)
             if let age = row.age, !row.isFind {
                 Text("waiting \(age.words)").font(Theme.meta).foregroundStyle(.secondary)
             }
@@ -345,11 +345,21 @@ struct InboxPane: View {
                 Text(verbatim: row.head)
             }
         case .session where row.kind == .review:
+            // The row's head is the agent's last message, which is quoted under its own
+            // label below and is never a headline here. The web falls back to the head
+            // until the review's title arrives; the desktop differs on purpose, so text
+            // a model wrote is never drawn as a headline, unlabelled, in a larger size.
+            // A review not read, or whose read failed, is titled in the app's own words.
             if let review = reader.review {
                 Text(verbatim: ReviewRule.title(review.stat))
             } else {
-                Text(verbatim: row.head)
+                Text(verbatim: "Ready to review")
             }
+        case .session where row.kind == .waiting || row.kind == .working:
+            Text(verbatim: row.kind == .working ? "Working" : "Idle, finished")
+        case .session where row.kind == .failed:
+            // The failure's own words are in the body, under the item's title.
+            Text(verbatim: "Its last run failed.")
         case .session where row.kind == .approval:
             if let item = reader.evidence?.items.first, let parts = ThreadRule.approvalTitle(item) {
                 parts.reduce(Text(verbatim: "")) { text, part in
@@ -415,7 +425,7 @@ struct InboxPane: View {
 
     private var failedBody: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Its last run failed, and nothing is running.").font(Theme.caption).foregroundStyle(.secondary)
+            Text("Nothing is running.").font(Theme.caption).foregroundStyle(.secondary)
             ForEach(items) { AttentionItemBody(item: $0) }
         }
     }
@@ -740,7 +750,8 @@ private struct FindActions: View {
 
 // MARK: Parts
 
-/// A small-caps label over its parts.
+/// A sentence-case heading over its parts. Every section of the pane uses it, so the
+/// pane has one heading style.
 struct PaneSection<Content: View>: View {
     let label: String
     @ViewBuilder let content: Content
@@ -752,36 +763,54 @@ struct PaneSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(label.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(0.6).foregroundStyle(.secondary)
+            Text(label).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
             content
         }
     }
 }
 
-/// A card of labelled rows. The values are the daemon's words or a model's, drawn
-/// as text.
+/// A card of labelled facts, each a `LabeledContent`. The values are the daemon's
+/// words or a model's, drawn as text.
 private struct FactsCard: View {
     let rows: [EvidenceRow]
 
     var body: some View {
-        Grid(alignment: .topLeading, horizontalSpacing: 16, verticalSpacing: 6) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
-                GridRow {
-                    Text(row.label).font(Theme.caption).foregroundStyle(.secondary)
+                LabeledContent {
                     Text(verbatim: row.value)
                         .font(row.isCode ? Theme.code : Theme.body)
                         .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        // A command can be long; it is capped so one fact cannot grow a tall row.
+                        .lineLimit(40)
+                } label: {
+                    Text(row.label)
                 }
             }
         }
+        .labeledContentStyle(FactStyle())
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .surface()
     }
 }
 
-/// A session's own words in a dashed box, under a label that says whose they are.
+/// Puts a fact's label in a column of fixed width and its value beside it, left
+/// aligned, so a value that wraps stays under its own first line. The default style
+/// pushes the value to the trailing edge.
+private struct FactStyle: LabeledContentStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 16) {
+            configuration.label
+                .font(Theme.caption).foregroundStyle(.secondary)
+                .frame(width: 140, alignment: .leading)
+            configuration.content
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+/// A session's own words on a tinted surface, under a label that says whose they are.
 struct QuoteBox: View {
     let source: String
     let words: String
@@ -793,10 +822,7 @@ struct QuoteBox: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.radiusInner)
-                .strokeBorder(Theme.hairline, style: StrokeStyle(lineWidth: 0.5, dash: [4, 3]))
-        )
+        .surface(radius: Theme.radiusInner)
     }
 }
 

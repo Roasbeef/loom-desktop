@@ -247,7 +247,7 @@ def an_approval_thread_lays_out_its_evidence(c):
     c.app.go("inbox")
     row = wait_row(c, "Approval", "Evidence escalate", 60)
     open_thread(c, row)
-    c.app.see(r"^May this program run .* with write access to /Users/Shared/loom-desktop-escalation-test\?$", 20)
+    c.app.see(r"^May fs_write have write access to /Users/Shared/loom-desktop-escalation-test\?$", 20)
     texts = tree_texts(c)
     start = position(texts, "Tool")
     expected = [
@@ -265,7 +265,7 @@ def an_approval_thread_lays_out_its_evidence(c):
     check(any(t.startswith("Evidence escalate") and "waiting since" in t for t in texts), "the eyebrow should date the wait")
 
     # The card that decides is under the evidence, and the answers read Deny, then Allow.
-    check(position(texts, "DECIDE") > position(texts, "Policy today"), "the card should come after the evidence")
+    check(position(texts, "Decide") > position(texts, "Policy today"), "the card should come after the evidence")
     check(position(texts, "Deny") < position(texts, "Allow"), "Deny should come first")
 
     # The session's own page words the same card from the same read.
@@ -352,9 +352,22 @@ def a_review_thread_opens_on_the_first_file_and_sends_through_the_outbox(c):
     wait_for(lambda: not c.app.session()["isBusy"] and any("noted the risk" in t for t in c.app.session()["transcript"]), 40, "the second turn to end")
     c.app.go("inbox")
     review = wait_row(c, "Review", "Reviewing demo", 90)
-    wait_row(c, "Risk", "Reviewing demo")
+    risk = wait_row(c, "Risk", "Reviewing demo")
     check(review["group"] == "To review", review)
-    open_thread(c, review)
+    # Before the review is read the agent's message is drawn once, in its labelled quote,
+    # and never again as the headline. The pane waits 350 ms before its first read, so the
+    # tree is read as soon as the thread is picked.
+    # The review is the first thread, so it opens on its own and is read while the rows are
+    # awaited; the find's thread is opened first so that the review's pane is a new one.
+    open_thread(c, risk)
+    c.app.cmd("inboxpick " + review["id"])
+    unread = wait_for(
+        lambda: next((t for t in [tree_texts(c)] if any(x.startswith("Reviewing demo \u00b7 ") for x in t)), None),
+        10, "the review pane to draw", every=0.02,
+    )
+    check("Reading the worktree\u2026" in unread, "the pane should be read before its review lands")
+    check(unread.count(review["head"]) == 1, f"the head {review['head']!r} should appear once, in its quote: {unread.count(review['head'])}")
+    check("Ready to review" in unread, "an unread review should be titled in the app's own words")
 
     # The title and the pills carry the size, and the first file is open with numbered hunks.
     c.app.see(r"^Ready to review: \+12 \u22120 across 1 file$", 30)
@@ -362,6 +375,21 @@ def a_review_thread_opens_on_the_first_file_and_sends_through_the_outbox(c):
     check("+12" in texts and "\u22120" in texts and "1 file" in texts, "the count pills are missing")
     check(any(t.startswith("last command: python3") and t.endswith("exit 0") for t in texts), "the last command should be named")
     check(any(t.startswith("fetch.py, added, +12") for t in texts), "the file's line should name how it changed")
+    check(texts.count(review["head"]) == 1, "the agent's message should appear only in its quote")
+    verdicts = ("Approve", "Request changes", "Comment")
+
+    def selected():
+        return [n["name"] for n in c.app.tree() if n["name"] in verdicts and str(n["value"]).strip() == "1"]
+
+    check(not selected(), f"no verdict segment should be selected before one is staged: {selected()}")
+
+    # A file's whole label row folds and opens it, not only its triangle.
+    label = next(n["name"] for n in c.app.tree() if n["name"].startswith("fetch.py, added, +12"))
+    c.app.press(label)
+    wait_for(lambda: "@@ -0,0 +1,12 @@" not in tree_texts(c), 5, "the file to fold")
+    c.app.press(label)
+    wait_for(lambda: "@@ -0,0 +1,12 @@" in tree_texts(c), 5, "the file to open")
+    texts = tree_texts(c)
     check("@@ -0,0 +1,12 @@" in texts, "the first file should be open on its hunk")
 
     # The find sits under the line it names, so the pane has no separate list for it.
@@ -370,7 +398,7 @@ def a_review_thread_opens_on_the_first_file_and_sends_through_the_outbox(c):
     after = position(texts, "try:")
     check(at7 < pinned < after, f"the find should sit between lines 7 and 8: {at7} {pinned} {after}")
     check("The agent noticed (risk), untrusted text" in texts, "the find should be labelled as the agent's")
-    check(not any(t.startswith("NOTICED ALONG THE WAY") for t in texts), "a pinned find should not be listed apart")
+    check(not any(t.startswith("Noticed along the way") for t in texts), "a pinned find should not be listed apart")
 
     # Nothing is staged until a person stages it.
     c.app.see(r"^Not sent\.$", 5)
@@ -379,11 +407,11 @@ def a_review_thread_opens_on_the_first_file_and_sends_through_the_outbox(c):
     c.app.see(r"^To Reviewing demo \u00b7 1 staged\.$", 5)
     wait_for(lambda: c.app.enabled("Send"), 5, "Send to arm")
 
-    # Pressing the verdict again takes it back.
-    c.app.press("Approve")
-    c.app.see(r"^Not sent\.$", 5)
+    # The verdict is a segmented control: choosing another segment replaces the verdict,
+    # and Clear takes it back.
     c.app.press("Request changes")
     c.app.see(r"^Verdict: changes requested$", 5)
+    c.app.not_see(r"^Verdict: approved$")
     c.app.press("Dismiss")
     c.app.see(r"^Close find-\w+ as dismissed$", 5)
     c.app.see(r"^To Reviewing demo \u00b7 2 staged\.$", 5)
@@ -392,6 +420,7 @@ def a_review_thread_opens_on_the_first_file_and_sends_through_the_outbox(c):
     c.app.press("Clear")
     c.app.see(r"^Not sent\.$", 5)
     c.app.not_see(r"^Verdict: ")
+    wait_for(lambda: not selected(), 5, "no verdict segment to stay selected after Clear")
     c.app.press("Approve")
     c.app.press("Dismiss")
     c.app.see(r"^To Reviewing demo \u00b7 2 staged\.$", 5)

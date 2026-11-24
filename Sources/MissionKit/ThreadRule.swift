@@ -144,15 +144,18 @@ public enum ThreadRule {
         let write = item.wanted.first { $0.kind == "writable_root" }
         let network = item.wanted.first { $0.kind == "network" }
         if let write {
-            if let command = item.preview {
-                return [.words("May this program run "), .code(command), .words(" with write access to "), .code(write.detail), .words("?")]
-            }
-            return [.words("May this program have write access to "), .code(write.detail), .words("?")]
+            return [.words("May "), .code(toolName(item)), .words(" have write access to "), .code(write.detail), .words("?")]
         }
         if network != nil {
-            return [.words("May "), .code(item.tool.isEmpty ? "this program" : item.tool), .words(" reach the network?")]
+            return [.words("May "), .code(toolName(item)), .words(" reach the network?")]
         }
         return nil
+    }
+
+    /// The tool the title names. The call's command is a model's text and can be long, so
+    /// it is never the title; it stays in the facts under "Command".
+    private static func toolName(_ item: ApprovalEvidenceItem) -> String {
+        item.tool.isEmpty ? "this program" : item.tool
     }
 
     /// The title when the evidence composes none: the pane's own sentence.
