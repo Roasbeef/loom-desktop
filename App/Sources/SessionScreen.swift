@@ -759,7 +759,9 @@ private struct ComposerStack: View {
     let controller: SessionController
     let rail: RailModel
 
-    private var asks: [AskCard] { AskCardRule.cards(feed: rail.feed) }
+    @Environment(AppModel.self) private var model
+
+    private var shelf: AskShelf { AskCardRule.shelf(feed: rail.feed) }
 
     var body: some View {
         GlassEffectContainer(spacing: 10) {
@@ -783,7 +785,16 @@ private struct ComposerStack: View {
                 // An ask is drawn above the approvals, so one appearing or leaving
                 // moves nothing below it and an approval's buttons stay where they
                 // were. It never takes focus from what the person is typing.
-                ForEach(asks) { card in
+                // At most two, with a line for the rest, so asks cannot outgrow the window.
+                let shelf = self.shelf
+                if let more = shelf.moreWords {
+                    Button(more) { model.destination = .inbox }
+                        .buttonStyle(.link)
+                        .font(Theme.caption)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 12)
+                }
+                ForEach(shelf.cards) { card in
                     AskCardView(card: card, controller: controller, rail: rail)
                 }
                 // The card is flat, as it is everywhere, on one plain piece of glass
@@ -822,7 +833,7 @@ private struct ComposerStack: View {
         .padding(.top, 4)
         .frame(maxWidth: .infinity)
         .animation(.smooth(duration: 0.2), value: controller.escalations)
-        .animation(.smooth(duration: 0.2), value: asks)
+        .animation(.smooth(duration: 0.2), value: shelf)
     }
 }
 

@@ -34,7 +34,30 @@ public struct AskCard: Sendable, Equatable, Identifiable {
     public let questions: Int
 }
 
+/// The cards the page draws for a session and how many open asks it leaves to the Inbox.
+public struct AskShelf: Sendable, Equatable {
+    public let cards: [AskCard]
+    /// Open asks without a card: those past the limit and those the daemon shed from the row.
+    public let more: Int
+
+    /// "2 more in the Inbox", or nil when every open ask has a card.
+    public var moreWords: String? { more > 0 ? "\(more) more in the Inbox" : nil }
+}
+
 public enum AskCardRule {
+    /// The most cards a page draws. Each is as tall as its questions, so more than two
+    /// outgrow the window and clip the oldest, which is the one drawn first.
+    public static let shelfLimit = 2
+
+    /// The first `shelfLimit` cards, oldest first, and the count of the rest. The
+    /// section's count includes the asks the daemon shed from the row to keep it
+    /// bounded, so an ask the page cannot list is still counted.
+    public static func shelf(feed: AttentionRow?) -> AskShelf {
+        let all = cards(feed: feed)
+        let cards = Array(all.prefix(shelfLimit))
+        return AskShelf(cards: cards, more: max(feed?.asks.count ?? 0, all.count) - cards.count)
+    }
+
     /// The asks the feed row holds, longest waiting first and ending in the identity
     /// so the same row in any order gives the same cards. A session whose feed was
     /// not read has none, and an ask that was answered or closed has left the feed,

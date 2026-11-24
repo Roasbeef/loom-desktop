@@ -34,6 +34,34 @@ final class AskCardTests: XCTestCase {
         XCTAssertTrue(AskCardRule.cards(feed: feed([])).isEmpty)
     }
 
+    // MARK: The shelf
+
+    func testTheShelfDrawsAtMostTwoCardsAndCountsTheRest() {
+        func shelf(_ count: Int) -> AskShelf {
+            AskCardRule.shelf(feed: feed((1...max(count, 1)).prefix(count).map { ask("ask-\($0)", at: $0) }))
+        }
+        XCTAssertEqual(shelf(0).cards.count, 0)
+        XCTAssertNil(shelf(0).moreWords)
+        XCTAssertEqual(shelf(1).cards.map(\.id), ["ask-1"])
+        XCTAssertNil(shelf(1).moreWords)
+        XCTAssertEqual(shelf(2).cards.map(\.id), ["ask-1", "ask-2"])
+        XCTAssertNil(shelf(2).moreWords)
+        XCTAssertEqual(shelf(3).cards.map(\.id), ["ask-1", "ask-2"], "the oldest two are drawn")
+        XCTAssertEqual(shelf(3).moreWords, "1 more in the Inbox")
+    }
+
+    func testAnAskTheDaemonShedFromTheRowStillCounts() {
+        // The row holds two items of the five the session has open.
+        let row = AttentionRow(sessionID: "s", asks: .init(count: 5, items: [ask("ask-1", at: 1), ask("ask-2", at: 2)]))
+        let shelf = AskCardRule.shelf(feed: row)
+        XCTAssertEqual(shelf.cards.count, 2)
+        XCTAssertEqual(shelf.moreWords, "3 more in the Inbox")
+    }
+
+    func testAFeedThatWasNotReadHasAnEmptyShelf() {
+        XCTAssertEqual(AskCardRule.shelf(feed: nil), AskShelf(cards: [], more: 0))
+    }
+
     // MARK: Order
 
     func testTheLongestWaitingAskIsFirstWhateverOrderTheFeedHasThem() {
