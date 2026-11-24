@@ -864,6 +864,7 @@ struct ApprovalCard: View {
     /// the daemon is older. Every line it adds is left out when it is absent.
     var evidence: ApprovalEvidenceItem?
     @State private var isArmed = false
+    @Environment(\.approvalContentAbove) private var contentAbove
 
     /// The headline: the tool-named title the evidence composes when the call
     /// wants a write or network grant, and otherwise the card's own sentence.
@@ -952,7 +953,7 @@ struct ApprovalCard: View {
         // click they meant for something else, so its buttons wait. They wait again
         // when another card leaves or joins, since a card above slides into the place
         // of one that left, under a pointer aimed at that one.
-        .task(id: ApprovalArming.key(card: record.id, shown: controller.escalations.map(\.id))) {
+        .task(id: ApprovalArming.key(card: record.id, shown: controller.escalations.map(\.id), above: contentAbove)) {
             isArmed = false
             try? await Task.sleep(for: .milliseconds(ApprovalArming.delayMs))
             isArmed = true
@@ -1373,4 +1374,8 @@ extension EnvironmentValues {
     /// The model each strand runs on, by strand id, so a row that names a
     /// strand can say what it runs on.
     @Entry var strandModels: [String: String] = [:]
+
+    /// The sizes of the sections drawn above an approval card, which a pane that
+    /// loads them late supplies. A change moves the card, so it re-arms.
+    @Entry var approvalContentAbove: [Int] = []
 }

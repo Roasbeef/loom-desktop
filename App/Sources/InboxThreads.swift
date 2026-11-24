@@ -392,6 +392,7 @@ struct InboxPane: View {
             PaneSection("Decide") {
                 ForEach(items) { AttentionItemBody(item: $0) }
             }
+            .environment(\.approvalContentAbove, [reader.evidence?.items.count ?? 0, reader.evidenceWords == nil ? 0 : 1, reader.peers.count])
         }
     }
 
