@@ -322,11 +322,6 @@ struct InboxView: View {
         let headline = InboxRule.headline(tally)
         let drawn = [shown.title] + sections.map { "\($0.title) \u{00B7} \($0.count)" }
         let opening = model.inboxOpening
-        let highlighted: String = {
-            guard case .thread(let subject)? = opening.selection, !opening.isResolved,
-                  InboxRule.selectable(sections).contains(where: { $0.subject == subject }) else { return "" }
-            return subject.key
-        }()
 
         // The list's selection is the model's. A nil the list reports leaves it alone.
         let selection = Binding<InboxSelection?>(
@@ -364,7 +359,6 @@ struct InboxView: View {
         }
         #if DEBUG
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
-        .onChange(of: highlighted, initial: true) { _, now in model.debugInboxHighlighted = now }
         #endif
     }
 
@@ -448,9 +442,23 @@ private struct InboxList: View {
     let machines: [AttentionItem]
     let headline: String
     @Binding var selection: InboxSelection?
+    @Environment(AppModel.self) private var model
+
+    /// What the list itself has selected, which is what it highlights. It follows
+    /// the model's selection, and a click on empty space, which clears a list's
+    /// selection, is answered by pushing the model's selection back in.
+    @State private var highlighted: InboxSelection?
+
+    /// The key of the thread the list highlights, or empty when its highlighted
+    /// choice is not one of the rows it draws.
+    private var highlightedKey: String {
+        guard case .thread(let subject)? = highlighted,
+              sections.contains(where: { $0.group != .quiet && $0.rows.contains { $0.subject == subject } }) else { return "" }
+        return subject.key
+    }
 
     var body: some View {
-        List(selection: $selection) {
+        List(selection: $highlighted) {
             Text(headline).font(Theme.caption).foregroundStyle(.secondary).selectionDisabled()
             ForEach(sections, id: \.group) { section in
                 if section.group == .quiet {
@@ -480,6 +488,13 @@ private struct InboxList: View {
             }
         }
         .listStyle(.inset)
+        .onChange(of: highlighted) { _, now in
+            if let now { selection = now } else { highlighted = selection }
+        }
+        .onChange(of: selection, initial: true) { _, now in highlighted = now }
+        #if DEBUG
+        .onChange(of: highlightedKey, initial: true) { _, now in model.debugInboxHighlighted = now }
+        #endif
     }
 
     private func band(_ section: InboxSection) -> some View {
