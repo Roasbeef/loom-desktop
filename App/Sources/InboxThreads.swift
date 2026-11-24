@@ -181,6 +181,11 @@ struct InboxPane: View {
     @State private var outcome = SendOutcome.unsent
     @State private var outbox = ReviewOutbox()
 
+    /// How many times the owner has asked to write to this thread's session. The
+    /// message bar focuses its field on each, and one that arrived before the bar
+    /// existed is still met.
+    @State private var messageRequests = 0
+
     private var sessionID: String { row.sessionID }
 
     private var reads: ThreadReads { ThreadRule.reads(for: row) }
@@ -242,7 +247,7 @@ struct InboxPane: View {
                 )
             } else if ThreadRule.offersMessage(kind: row.kind, hasReview: reader.review != nil, isObserver: isObserver) {
                 MessageBar(
-                    name: row.name, kind: row.kind, draft: $draft, outcome: outcome,
+                    name: row.name, kind: row.kind, draft: $draft, outcome: outcome, focusRequests: messageRequests,
                     send: { choice in send(text: draft, choice: choice, strand: strand) }
                 )
             } else if isObserver {
@@ -252,6 +257,14 @@ struct InboxPane: View {
             }
         }
         .accessibilityIdentifier("inbox-pane/\(row.id)")
+
+        // The Inbox menu's "Message Session" names this thread by row id, and the pane
+        // that draws it takes the request, so it is met whichever window shows it.
+        .onChange(of: model.messageRequest, initial: true) {
+            guard model.messageRequest == row.id else { return }
+            model.messageRequest = nil
+            messageRequests += 1
+        }
         // The reads follow the kind as well as the row: a session opened as "Waiting" becomes
         // "To review" once the scan has read its tree, and the review is read only for the
         // second, so a task keyed on the row alone would never read it.
@@ -619,7 +632,9 @@ private struct MessageBar: View {
     let kind: InboxKind
     @Binding var draft: String
     let outcome: SendOutcome
+    let focusRequests: Int
     let send: (ThreadSend.Choice) -> Void
+    @FocusState private var isWriting: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -631,6 +646,8 @@ private struct MessageBar: View {
                 .font(Theme.body)
                 .lineLimit(1...5)
                 .padding(.horizontal, 24)
+                .focused($isWriting)
+                .onChange(of: focusRequests, initial: true) { _, count in if count > 0 { isWriting = true } }
                 .accessibilityLabel(Text(verbatim: "Message to \(name)"))
             HStack(spacing: 8) {
                 Text(verbatim: statusWords).font(Theme.caption).foregroundStyle(.secondary).lineLimit(3)
