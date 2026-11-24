@@ -14,6 +14,7 @@ struct FoldView: View {
     /// The turn called `ask`, so the fold says there is a question in it.
     var isAsking = false
     @State private var userOpened: Bool?
+    @State private var shownSteps = FoldWindow.page
 
     private var isOpen: Bool { userOpened ?? fold.isLive }
 
@@ -55,9 +56,25 @@ struct FoldView: View {
             .accessibilityValue(isOpen ? "Expanded" : "Collapsed")
 
             if isOpen {
+                // A fold is one row of the transcript's lazy stack, so its height is
+                // bounded by how many steps it lays out at once. A live turn of a few
+                // hundred steps grew one row until the whole transcript drew blank.
+                let window = FoldWindow.of(count: fold.rows.count, isLive: fold.isLive, shown: shownSteps)
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(fold.rows) { row in
+                    if window.before > 0 {
+                        Text("\(window.before.formatted()) earlier steps")
+                            .font(Theme.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    ForEach(fold.rows[window.range]) { row in
                         FoldRow(row: row, tail: row.callID.flatMap { tails[$0] }, summary: summaries[row.id])
+                    }
+                    if window.after > 0 {
+                        Button("Show more (\(window.after.formatted()) steps left)") {
+                            shownSteps += FoldWindow.page
+                        }
+                        .buttonStyle(.link)
+                        .font(Theme.caption)
                     }
                 }
                 .padding(.leading, 22)
@@ -79,6 +96,27 @@ struct FoldView: View {
         case .failed:
             Image(systemName: "exclamationmark.circle").foregroundStyle(Theme.failure).frame(width: 14)
         }
+    }
+}
+
+/// Which of a fold's steps are laid out. A live turn shows its newest steps, since
+/// the step that is running or failing is the one to watch; a finished turn opened
+/// by the reader shows its steps from the first, a page at a time.
+///
+/// Both bounds keep one fold row short enough to draw. `liveWindow` is small
+/// because a live fold is rebuilt on every step.
+enum FoldWindow {
+    static let liveWindow = 40
+    static let page = 60
+
+    /// The steps drawn, and how many are left out before and after them.
+    static func of(count: Int, isLive: Bool, shown: Int) -> (range: Range<Int>, before: Int, after: Int) {
+        if isLive {
+            let start = max(0, count - liveWindow)
+            return (start..<count, start, 0)
+        }
+        let end = min(count, max(shown, page))
+        return (0..<end, 0, count - end)
     }
 }
 
