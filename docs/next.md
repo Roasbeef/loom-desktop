@@ -1,4 +1,4 @@
-Baseline: 33f1c16 on main (2026-11-22, paused mid native pass)
+Baseline: 107bf9d on main (2026-11-23), plus branch `native/split-inbox` (native pass slice 2, three commits, no PR yet)
 
 # Next: Loom Desktop handoff
 
@@ -14,18 +14,16 @@ Its in-flight items either landed in the parity work below or moved to
 
 ## Where the tree is
 
-### Paused 2026-11-22
-
-The owner paused all work for a handoff while slice 2 of the Mac-native pass
-was mid-run. State at the pause:
+### Native pass state (2026-11-23)
 
 | Work | Where | State |
 | --- | --- | --- |
 | Inbox port (#1, #2) | `main` | Merged 2026-11-21. |
-| Native pass plan | `docs/native-pass.md` on `main` | Merged with slice 1. Three Sonnet critics' reports are summarised there. |
-| Native pass slice 1 (#3): one needs-you count, decide only beside evidence, no folding a waiting session, release build fixed | `main` | Merged 2026-11-21. Last full UI run 138 passed, 1 failed (the known evolution scenario). |
-| Native pass slice 2: the inbox as an `HSplitView` with a toolbar folder picker, one selection on the model, a refresh never moves it (`InboxRule.settle`) | branch `native/split-inbox` (pushed), worktree `/Users/roasbeef/gocode/src/github.com/roasbeef/ld-native` | One `wip:` commit, no PR. Unit tests were added; the full UI run, the release build and the before/after captures were not finished. |
-| Slices 3–5 (commands and keyboard, native controls in the pane, notifications) | `docs/native-pass.md` | Not started. |
+| Native pass plan | `docs/native-pass.md` on `main` | Merged with slice 1. |
+| Native pass slice 1 (#3) | `main` | Merged 2026-11-21. |
+| Ask card above the composer, approval arming (#6) | `main` | Merged 2026-11-23. |
+| Native pass slice 2: the inbox as an `HSplitView` with a toolbar folder picker, one selection on the model, a refresh never moves it (`InboxRule.settle`) | branch `native/split-inbox`, worktree `/Users/roasbeef/gocode/src/github.com/roasbeef/ld-native` | Rebased on `107bf9d`, three commits (model, view, tests). `make test` 405 tests pass, the release bundle builds, and the full UI run was 134 passed, 7 failed. Two failures are known on main, four passed when run alone, and `an_executor_loss_is_reported` fails alone and on main. See "Verification state". Not pushed, no PR. |
+| Slices 3-5 (commands and keyboard, native controls in the pane, notifications) | `docs/native-pass.md` | Not started. |
 
 ### The attention inbox port
 
@@ -60,16 +58,19 @@ The other `ld-*` worktrees (`ld-inbox`, `ld-pane`, `ld-rail`, `ld-shots`,
 
 Ordered.
 
-### 1. Finish slice 2 of the native pass
+### 1. Open the slice 2 PR
 
-On `native/split-inbox` in `ld-native`: build the debug bundle, run the inbox
-scenarios with `--only`, then the full suite with `--foreground` (slot 8,
-`LOOMD_BIN=/Users/roasbeef/loom-drives/desktop-loomd/bin/loomd`), check
-`CONFIG=release scripts/bundle.sh`, take the before/after captures with a copy
-of the slice 1 capture script (the slice 1 shots are in
-`/Users/roasbeef/loom-drives/native-pass/slice1/`), split the `wip:` commit into
-the model/rule change, the view change, and the test/baseline commits, and open
-the PR. The owner's standing go covers merging once its gates pass.
+Push `native/split-inbox`, open the PR against `main` with the before and after
+captures from `/Users/roasbeef/loom-drives/native-pass/slice2/`, and merge on
+the owner's standing go once the gates pass. Slice 2's own work is done. Two
+things are left for whoever picks it up:
+
+- The `appearance_and_size_matrix` frames at 880 pt do not match on this machine,
+  with or without slice 2 (about 6 percent against main's baselines too).
+  Retake them on the machine that owns the baselines, or find why a capture
+  here is at a different scale, before trusting that scenario again.
+- `an_executor_loss_is_reported` times out waiting for a Machines item in the
+  attention feed, on main as well. It was not in the list of known failures.
 
 ### 1a. What the owner found on 2026-11-23
 
@@ -106,7 +107,7 @@ before or alongside slice 2, each with a UI scenario.
   on navigation and the ask thread's layout apply here wherever the desktop
   draws the same thing.
 
-### 2. Slices 3, 4 and 5 of the native pass
+### 2. Slices 3, 4 and 5 of the native pass (slice 2 is done)
 
 In the order and with the guardrails in `docs/native-pass.md`. The guardrails
 that matter most: no notification, row or toolbar button decides an approval;
@@ -115,7 +116,16 @@ armed card is visible. Slice 5 must also settle the notifier change slice 1
 made: notifications are keyed per session row now, so a second approval on a
 session with one already waiting sends no new notification.
 
-### 3. The two order-dependent press failures
+### 3. Verification of slice 2
+
+Full UI run on slot 8 with `--foreground`: 134 passed, 7 failed.
+`appearance_and_size_matrix` and `changes_say_how_each_file_changed` are known
+failures on main. `evolution_tab_reads_the_board_and_core`,
+`archive_and_delete_ask_first`, `effort_and_profile_are_changed_on_a_running_session`
+and `two_sessions_are_linked_and_unlinked` passed when run alone. The inbox
+scenarios, including the one known to fail on main, passed on their own.
+
+### 3a. The two order-dependent press failures
 
 On #1's last full run, two older scenarios failed and each passes alone. On #2's two runs, `evolution_tab_reads_the_board_and_core` failed both times and `generation_speed_is_timed_from_the_stream` passed both:
 
@@ -151,7 +161,7 @@ itself is the fix.
 - Agent-written text (a last message, a find, an ask) is labelled untrusted where it is drawn.
 - A review's staged items are discarded when another thread opens; the outbox says so.
 - An answer form holds after every send until the re-read lands, so one ask is never answered twice.
-- **Provisional (2026-11-21, commit `55ff39c`):** below 920 pt of inbox width the folder rail is replaced by a toolbar "Folder" menu, and the reading pane keeps at least 340 pt. A wider pane at 880 would squeeze the list below its floor. Revisit in the Mac-native pass.
+- **Settled by native-pass slice 2:** the inbox is an `HSplitView` of list (260 to 480 pt) and pane (at least 340 pt), the folder is a toolbar `Picker` at every width, and the rail and its 920 pt breakpoint are gone.
 - **Provisional (Loom protocol-change 128):** an Operator member may answer an ask over the control socket, where the web view lets only the owner answer.
 - Commit authorship is the repository owner, no AI attribution lines or trailers. Branch and worktree names never include "claude".
 - Use absolute paths and `git -C` / `make -C`; a `cd` triggers a permission prompt.

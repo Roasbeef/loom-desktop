@@ -92,24 +92,76 @@ def position(texts, wanted, after=0):
 
 @scenario("AI-01", needs_display=True)
 def the_inbox_keeps_a_readable_pane_at_the_smallest_window(c):
-    """At the narrowest window the folder rail gives way to a toolbar menu and the reading pane keeps its floor, and a wide window has the rail and a wider pane."""
+    """At every width the folder is a toolbar picker, the list and the pane are a split view, and the pane keeps its floor."""
     repo = fresh_repo("inbox-width")
     c.app.dispatch("Width approval escalate", repo)
     c.app.go("inbox")
     wait_row(c, "Approval", "Width approval escalate")
     try:
-        c.app.resize(880, 560)
-        wait_for(lambda: c.app.snap()["inbox"]["folderControl"] == "menu", 5, "the rail to give way to the menu")
-        narrow = c.app.snap()["inbox"]["paneWidth"]
-        check(narrow >= 340, f"the reading pane is {narrow} pt wide at 880 pt, under the 340 pt floor")
-        check(not c.app.fully_on_screen("Folder Everything, by need"), "the rail should not be drawn at the narrowest window")
-        c.app.resize(1400, 900)
-        wait_for(lambda: c.app.snap()["inbox"]["folderControl"] == "rail", 5, "the rail to return")
-        wide = c.app.snap()["inbox"]["paneWidth"]
-        check(wide >= 420, f"the reading pane is {wide} pt wide at 1400 pt, under the 420 pt readable width")
-        wait_for(lambda: c.app.fully_on_screen("Folder Everything, by need"), 5, "the rail's folders on screen")
+        for width, floor in ((880, 340), (1400, 420)):
+            c.app.resize(width, 560 if width == 880 else 900)
+            wait_for(lambda: c.app.snap()["inbox"]["paneWidth"] >= floor, 5, f"the pane to keep {floor} pt at {width} pt")
+            check(c.app.fully_on_screen("Folder"), f"the folder picker should be on screen at {width} pt")
+            check(not c.app.fully_on_screen("Folder Everything, by need"), "there is no folder rail any more")
     finally:
         c.app.resize(1400, 900)
+
+
+@scenario("AI-01", "AI-03")
+def the_open_pane_and_the_highlighted_row_agree_and_a_refresh_keeps_them(c):
+    """The row highlighted is the thread in the pane, a new row never moves it, a resolved thread stays open, and a folder click moves it only when the folder does not draw it."""
+    repo = fresh_repo("inbox-select")
+    c.app.dispatch("Select approval escalate", repo)
+    c.app.dispatch("Select ask askowner", repo)
+    c.app.go("inbox")
+    approval = wait_row(c, "Approval", "Select approval escalate")
+    ask = wait_row(c, "Ask", "Select ask askowner")
+
+    # The fallback opens the first thread only while the Inbox is on screen, so it cannot
+    # have frozen a row listed before the owner looked, and what opens is a listed thread,
+    # lit in the list and not marked resolved.
+    wait_for(lambda: c.app.snap()["inbox"]["open"] != "", 5, "a thread to be open")
+    wait_for(
+        lambda: (lambda i: i["highlighted"] == i["open"] and not i["resolved"])(c.app.snap()["inbox"]),
+        5, "the open row to be highlighted and unresolved",
+    )
+
+    # A chosen row is both highlighted and open.
+    open_thread(c, approval)
+    wait_for(lambda: c.app.snap()["inbox"]["highlighted"] == approval["id"], 5, "the chosen row to be highlighted")
+
+    # A row that arrives, and sorts ahead of it, leaves the choice where it was.
+    c.app.dispatch("Select second approval escalate", repo)
+    c.app.go("inbox")
+    wait_row(c, "Approval", "Select second approval escalate")
+    time.sleep(2)
+    inbox = c.app.snap()["inbox"]
+    check(inbox["open"] == approval["id"] and inbox["highlighted"] == approval["id"], f"a new row moved the open thread: {inbox['open']}")
+
+    # A folder that draws the open thread keeps it, and one that does not draws the folder's first.
+    open_thread(c, ask)
+    c.app.cmd("inboxfolder Needs you")
+    wait_for(lambda: c.app.snap()["inbox"]["drawn"][0] == "Needs you", 5, "the Needs you folder")
+    inbox = c.app.snap()["inbox"]
+    check(inbox["open"] == ask["id"] and inbox["highlighted"] == ask["id"], "a folder that draws the thread keeps it open")
+    c.app.cmd("inboxfolder Everything, by need")
+    wait_for(lambda: c.app.snap()["inbox"]["drawn"][0] == "Everything, by need", 5, "Everything again")
+    check(c.app.snap()["inbox"]["open"] == ask["id"], "choosing Everything moved the open thread")
+
+    # A thread that resolves stays open, marked resolved, with no row highlighted, until another is picked.
+    c.app.dispatch("Select note noticefind", repo)
+    c.app.go("inbox")
+    find = wait_row(c, "Risk", "Select note noticefind")
+    open_thread(c, find)
+    c.app.press("Dismiss")
+    wait_for(lambda: not find_row(c, "Risk", "Select note noticefind"), 30, "the dismissed find to leave the list")
+    wait_for(lambda: c.app.snap()["inbox"]["resolved"], 5, "the open thread to be marked resolved")
+    time.sleep(2)
+    inbox = c.app.snap()["inbox"]
+    check(inbox["open"] == find["id"] and inbox["highlighted"] == "", f"the resolved thread moved or stayed highlighted: {inbox['open']}")
+    c.app.see(r"Resolved\. This thread no longer needs you")
+    open_thread(c, ask)
+    wait_for(lambda: not c.app.snap()["inbox"]["resolved"], 5, "a picked row to be open and unresolved")
 
 
 @scenario("AI-01", "AI-03", "AI-04", "AI-05")
@@ -167,15 +219,15 @@ def the_inbox_groups_threads_by_need_and_the_rail_narrows_them(c):
     check([f["title"] for f in snapshot["folders"][1:]] == ["Needs you", "To review", "Finds"], snapshot["folders"])
 
     # A folder narrows the list to its band, and Everything draws every band again.
-    c.app.press("Folder Needs you")
+    c.app.cmd("inboxfolder Needs you")
     wait_for(lambda: c.app.snap()["inbox"]["drawn"] == ["Needs you", f"Needs you \u00b7 {counts['Needs you']}"], 5, "the list narrowed to Needs you")
-    c.app.press("Folder Finds")
+    c.app.cmd("inboxfolder Finds")
     wait_for(lambda: c.app.snap()["inbox"]["drawn"] == ["Finds", "Finds \u00b7 1"], 5, "the list narrowed to Finds")
-    c.app.press("Folder Everything, by need")
+    c.app.cmd("inboxfolder Everything, by need")
     wait_for(lambda: c.app.snap()["inbox"]["drawn"][0] == "Everything, by need" and len(c.app.snap()["inbox"]["drawn"]) > 3, 5, "every band to draw again")
 
     # A folder whose band empties is no longer offered, and the list falls back to Everything.
-    c.app.press("Folder Finds")
+    c.app.cmd("inboxfolder Finds")
     wait_for(lambda: c.app.snap()["inbox"]["drawn"][0] == "Finds", 5, "the Finds folder")
     wait_for(lambda: c.app.snap()["inbox"]["open"] == find["id"], 5, "the find to open as the folder's first thread")
     c.app.press("Dismiss")

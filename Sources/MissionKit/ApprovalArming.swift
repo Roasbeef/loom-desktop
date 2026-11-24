@@ -8,6 +8,11 @@ import Foundation
 // aborts. The card above slides into the place of the one that left, and a pointer
 // aimed at that place would land on a live Allow. So the wait restarts for every card
 // still shown whenever the set of cards changes, and not only for a new card.
+//
+// The same holds when what sits above the cards changes size. The Inbox's pane loads
+// an approval's evidence and the session's recent messages above "Decide" after the
+// card has appeared, which can finish while the card is already armed and pushes the
+// card down. `above` carries the sizes of those sections, so the wait restarts then.
 
 public enum ApprovalArming {
     /// How long a card's buttons stay dead after it appears or moves.
@@ -16,7 +21,7 @@ public enum ApprovalArming {
     /// The identity of one card's armed period. It changes when the card changes and
     /// when the set of cards shown with it does, so a view that restarts its wait on
     /// this key re-arms exactly then.
-    public static func key(card: String, shown: [String]) -> String {
-        card + "|" + shown.joined(separator: ",")
+    public static func key(card: String, shown: [String], above: [Int] = []) -> String {
+        card + "|" + shown.joined(separator: ",") + "|" + above.map(String.init).joined(separator: ",")
     }
 }

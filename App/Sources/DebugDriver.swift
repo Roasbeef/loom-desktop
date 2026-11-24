@@ -281,8 +281,14 @@ enum DebugDriver {
             model.currentSession?.focusedStrand = parts[1]
         case "inboxpick" where parts.count > 1:
             // Opens the inbox thread whose row identity is given, as a click on the row would.
-            model.debugInboxPick = nil
-            model.debugInboxPick = parts[1]
+            if let row = model.board.rows.first(where: { $0.id == parts[1] }) { model.chooseInbox(.thread(row.subject)) }
+        case "inboxfolder" where parts.count > 1:
+            // Chooses an inbox folder by title, as the toolbar picker does. A menu-style
+            // picker opens a tracking menu that an accessibility press cannot reach.
+            let title = parts.dropFirst().joined(separator: " ")
+            if let entry = InboxRule.folderEntries(model.board.sections).first(where: { $0.folder.title == title }) {
+                model.chooseFolder(entry.folder)
+            }
         case "lanedelay" where parts.count > 1:
             // Holds each send before it reaches the lane, so a test can see the
             // pending line that a quick daemon answer would remove at once.
@@ -653,6 +659,11 @@ enum InboxSnapshot {
         let board = model.board.aged(now: Int(Date().timeIntervalSince1970 * 1000))
         let sections = board.sections
         let tally = board.tally
+        let openKey: String = switch model.inboxOpening.selection {
+        case .thread(let subject)?: subject.key
+        case .machine(let id)?: "machine/\(id)"
+        case nil: ""
+        }
         // The running sessions' part alone, so a scenario can tell its own threads
         // from saved sessions other scenarios left in the catalogue.
         let live = InboxRule.tally(threads: threads, feed: model.attentionRows)
@@ -680,9 +691,11 @@ enum InboxSnapshot {
             "fromCatalogue": tally.fromCatalogue,
             "note": InboxRule.countNote(running: threads.filter { $0.activity != nil }.count, fromCatalogue: tally.fromCatalogue),
             "drawn": model.debugInboxDrawn,
-            "open": model.debugInboxOpen,
+            "open": openKey,
+            "highlighted": model.debugInboxHighlighted,
+            "resolved": model.inboxOpening.isResolved,
+            "folder": model.inboxFolder.title,
             "paneWidth": model.debugInboxPaneWidth,
-            "folderControl": model.debugInboxRail,
         ]
     }
 }
