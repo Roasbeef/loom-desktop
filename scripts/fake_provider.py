@@ -21,6 +21,7 @@ keyword in the last user turn selects a script:
   think      streams three lines of reasoning, a second apart, then answers
   tour       a write, a command and a read that fails, then a short answer
   program    a code_mode call with a small program
+  manysteps N  N quick shell commands in one turn, then a short answer, for a very long fold
   advisenudge the advisor answers the review of this turn with a nudge
   peersend   sends a message to the session whose id is in the prompt, with `peer_send`
   spawnagent starts a subagent with `agent_spawn`, waits for its report, then answers
@@ -333,6 +334,15 @@ def script(messages):
             yield chunk({}, "tool_calls")
         else:
             yield from text_stream("The tour is done.")
+        return
+
+    manysteps = re.search(r"manysteps (\d+)", prompt)
+    if manysteps:
+        if steps < int(manysteps.group(1)):
+            yield call(0, "bash", {"command": f"echo step-{steps}"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The many steps are done.")
         return
 
     if "program" in prompt:

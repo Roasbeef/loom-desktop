@@ -635,3 +635,41 @@ def a_mermaid_block_draws_as_a_diagram(c):
     c.app.see(r"Parse error on line", 5)
     c.app.press("Show Source")
     c.app.see(r"^Hide Source$", 5)
+
+
+@scenario(needs_display=True)
+def a_turn_of_many_steps_keeps_the_page_drawn(c):
+    """A live turn of 300 steps never leaves the transcript empty, while it runs or after its fold closes."""
+    from PIL import Image
+
+    def ink():
+        # The capture's pixel size follows the display's scale, so the transcript
+        # is cut out by fractions of the window: right of the sidebar, below the
+        # strand line, above the composer, and short of the scroll thumb.
+        shot = Image.open(c.app.shot(c.out / "many-steps" / "frame.png")).convert("L")
+        w, h = shot.size
+        shot = shot.crop((int(w * 0.28), int(h * 0.15), int(w * 0.97), int(h * 0.82)))
+        pixels = list(shot.getdata())
+        background = max(set(pixels), key=pixels.count)
+        return sum(1 for v in pixels if abs(v - background) > 25) / len(pixels)
+
+    c.app.dispatch("Many steps manysteps 300", WORKSPACE)
+    c.app.open_session("Many steps")
+
+    # The page is sampled every second for the whole run and after it. A drawn page
+    # always has text on it, so a frame with no ink is the page gone blank.
+    blank = []
+    started = time.monotonic()
+    while time.monotonic() - started < 240:
+        busy = c.app.session()["isBusy"]
+        if ink() < 0.001:
+            blank.append(round(time.monotonic() - started))
+        if not busy and time.monotonic() - started > 5:
+            break
+        time.sleep(1)
+    session = c.app.session()
+    check(not session["isBusy"], "the turn of 300 steps should have finished")
+    time.sleep(2)
+    if ink() < 0.001:
+        blank.append("after")
+    check(not blank, f"the transcript was blank at {blank} seconds")
