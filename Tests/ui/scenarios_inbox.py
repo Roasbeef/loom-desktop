@@ -117,13 +117,14 @@ def the_open_pane_and_the_highlighted_row_agree_and_a_refresh_keeps_them(c):
     approval = wait_row(c, "Approval", "Select approval escalate")
     ask = wait_row(c, "Ask", "Select ask askowner")
 
-    # With nothing chosen, the model's selection falls back to a row, and the list highlights it.
-    # The fallback is decided once, when nothing is open, so which row it took depends on which
-    # had arrived. A row that has since stopped being listed, as a working session's does when it
-    # goes quiet, leaves the thread open and resolved, so the check is that a thread is open and
-    # that the list lights it whenever it is listed.
+    # The fallback opens the first thread only while the Inbox is on screen, so it cannot
+    # have frozen a row listed before the owner looked, and what opens is a listed thread,
+    # lit in the list and not marked resolved.
     wait_for(lambda: c.app.snap()["inbox"]["open"] != "", 5, "a thread to be open")
-    wait_for(lambda: (lambda i: i["highlighted"] == i["open"] or i["resolved"])(c.app.snap()["inbox"]), 5, "the open row to be highlighted")
+    wait_for(
+        lambda: (lambda i: i["highlighted"] == i["open"] and not i["resolved"])(c.app.snap()["inbox"]),
+        5, "the open row to be highlighted and unresolved",
+    )
 
     # A chosen row is both highlighted and open.
     open_thread(c, approval)
