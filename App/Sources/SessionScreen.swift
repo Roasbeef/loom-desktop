@@ -961,10 +961,12 @@ struct ApprovalCard: View {
         }
         .onGeometryChange(for: CGFloat.self, of: \.size.width) { cardWidth = $0 }
         // A card that appears under a person's hands must not take the Return or
-        // click they meant for something else, so its buttons wait 600 ms.
-        .task(id: record.id) {
+        // click they meant for something else, so its buttons wait. They wait again
+        // when another card leaves or joins, since a card above slides into the place
+        // of one that left, under a pointer aimed at that one.
+        .task(id: ApprovalArming.key(card: record.id, shown: controller.escalations.map(\.id))) {
             isArmed = false
-            try? await Task.sleep(for: .milliseconds(600))
+            try? await Task.sleep(for: .milliseconds(ApprovalArming.delayMs))
             isArmed = true
         }
         .padding(13)
