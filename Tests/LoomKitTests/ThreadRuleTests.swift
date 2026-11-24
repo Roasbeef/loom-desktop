@@ -125,8 +125,8 @@ final class ThreadRuleTests: XCTestCase {
             [.words("May "), .code("bash"), .words(" have write access to "), .code("~/.loom"), .words("?")]
         )
         XCTAssertEqual(
-            ThreadRule.approvalTitle(item(wanted: [("writable_root", "~/.loom")])),
-            [.words("May "), .code("bash"), .words(" have write access to "), .code("~/.loom"), .words("?")]
+            ThreadRule.approvalTitle(item(tool: "", wanted: [("writable_root", "~/.loom")])),
+            [.words("May "), .code("this program"), .words(" have write access to "), .code("~/.loom"), .words("?")]
         )
         XCTAssertEqual(
             ThreadRule.approvalTitle(item(wanted: [("network", "full")])),

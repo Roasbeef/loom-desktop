@@ -346,13 +346,20 @@ struct InboxPane: View {
             }
         case .session where row.kind == .review:
             // The row's head is the agent's last message, which is quoted under its own
-            // label below and is never a headline. Until the review is read there is no
-            // title, as in the web view.
+            // label below and is never a headline here. The web falls back to the head
+            // until the review's title arrives; the desktop differs on purpose, so text
+            // a model wrote is never drawn as a headline, unlabelled, in a larger size.
+            // A review not read, or whose read failed, is titled in the app's own words.
             if let review = reader.review {
                 Text(verbatim: ReviewRule.title(review.stat))
+            } else {
+                Text(verbatim: "Ready to review")
             }
         case .session where row.kind == .waiting || row.kind == .working:
             Text(verbatim: row.kind == .working ? "Working" : "Idle, finished")
+        case .session where row.kind == .failed:
+            // The failure's own words are in the body, under the item's title.
+            Text(verbatim: "Its last run failed.")
         case .session where row.kind == .approval:
             if let item = reader.evidence?.items.first, let parts = ThreadRule.approvalTitle(item) {
                 parts.reduce(Text(verbatim: "")) { text, part in
@@ -418,7 +425,7 @@ struct InboxPane: View {
 
     private var failedBody: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Its last run failed, and nothing is running.").font(Theme.caption).foregroundStyle(.secondary)
+            Text("Nothing is running.").font(Theme.caption).foregroundStyle(.secondary)
             ForEach(items) { AttentionItemBody(item: $0) }
         }
     }
@@ -774,6 +781,8 @@ private struct FactsCard: View {
                     Text(verbatim: row.value)
                         .font(row.isCode ? Theme.code : Theme.body)
                         .textSelection(.enabled)
+                        // A command can be long; it is capped so one fact cannot grow a tall row.
+                        .lineLimit(40)
                 } label: {
                     Text(row.label)
                 }

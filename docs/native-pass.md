@@ -178,8 +178,10 @@ scenarios, merged when its gates pass. The order puts correctness first.
   a tinted surface with a hairline border, no dash. `ThreadRule.approvalTitle`
   names the tool ("May fs_write have write access to /path?"), and the title is
   capped at three lines; the command is the "Command" fact. A review's title is
-  empty until the review is read, as in the web view, instead of falling back to
-  the agent's last message; an update's title is "Working" or "Idle, finished".
+  "Ready to review" until the review is read, and when its read fails, instead of
+  falling back to the agent's last message as the web does (it differs on purpose,
+  so text a model wrote is never an unlabelled headline); an update's title is
+  "Working" or "Idle, finished", and a failed run's is "Its last run failed."
   Agent text is a headline only for an ask or a find, where the daemon cut it as
   the row's head, as the web does. The answer options stay as they are: a
   `Picker` radio group cannot carry each option's "recommended" mark and note, or

@@ -210,7 +210,13 @@ private struct ReviewFileView: View {
                 Text(verbatim: "\(ReviewRule.changeWords(file)) \u{00B7} \(ReviewRule.counts(file))")
                     .font(Theme.meta).foregroundStyle(.secondary)
             }
+            // A disclosure group opens from its triangle alone, so the whole label row
+            // opens it too, as the row did before it was a disclosure group.
+            .contentShape(.rect)
+            .onTapGesture { isOpen.toggle() }
             .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { isOpen.toggle() }
             .accessibilityLabel(Text(verbatim: "\(file.path), \(ReviewRule.changeWords(file)), \(ReviewRule.counts(file))"))
             .accessibilityIdentifier("review-file/\(file.path)")
         }
