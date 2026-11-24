@@ -490,17 +490,15 @@ final class AppModel {
     /// steady speed, for measuring frames while scrolling.
     var debugScrollSweep = 0
 
-    /// Set by the UI driver to open one inbox thread by its row identity, which the
-    /// list's rows do not let an accessibility press reach.
-    var debugInboxPick: String?
-
     /// What the inbox last drew, written by the view so the driver can read it: the
     /// folder shown, then each band drawn with its count, and the thread the pane
     /// reads. The list's rows and headings are not in the accessibility tree.
     var debugInboxDrawn: [String] = []
-    var debugInboxOpen = ""
     var debugInboxPaneWidth = 0
-    var debugInboxRail = ""
+
+    /// The row the list highlights, by identity, or empty when the open thread is
+    /// outside the folder drawn. Written by the view from the value it binds.
+    var debugInboxHighlighted = ""
 
     /// Set by the UI driver to choose a new agent's placement by title prefix.
     var debugPlacement = ""
@@ -580,25 +578,62 @@ final class AppModel {
     /// reports a change before it lands, so the recomputation waits one main-actor
     /// turn and reads the new values.
     func trackBoard() {
-        let next = withObservationTracking {
-            InboxRule.board(
-                threads: inboxThreads, feed: attentionRows, raised: approvalRaised, reviewing: reviewing, saved: inboxSaved,
-                now: Int(Date().timeIntervalSince1970 * 1000)
+        let (next, machines) = withObservationTracking {
+            (
+                InboxRule.board(
+                    threads: inboxThreads, feed: attentionRows, raised: approvalRaised, reviewing: reviewing, saved: inboxSaved,
+                    now: Int(Date().timeIntervalSince1970 * 1000)
+                ),
+                inboxMachines
             )
         } onChange: { [weak self] in
             Task { @MainActor in self?.trackBoard() }
         }
         if board != next { board = next }
+
+        // The open thread is settled in the same turn as the board it reads, so the
+        // pane and the highlight never see a board the selection has not met.
+        let settled = InboxRule.settle(inboxOpening, rows: InboxRule.selectable(next.sections), machines: machines)
+        if settled != inboxOpening { inboxOpening = settled }
     }
 
-    /// The thread the inbox should open next, set by a row elsewhere and cleared by
-    /// the inbox once it has opened it.
-    var inboxRequest: InboxSubject?
+    /// The unhealthy machines the inbox lists under its own section.
+    var inboxMachines: [String] { attention.filter { $0.kind == .machine }.map(\.id) }
+
+    /// What the inbox has open. Only `chooseInbox`, `openInbox` and `chooseFolder`
+    /// move it on the owner's behalf, and a refresh settles it without moving it.
+    private(set) var inboxOpening = InboxOpening.none
+
+    /// The folder the inbox list is narrowed to. The list draws `Everything` when
+    /// the chosen folder has emptied.
+    private(set) var inboxFolder: InboxFolder = .everything
+
+    /// The owner picked a row. A nil choice, which a list reports when its selection
+    /// is cleared, leaves the open thread as it is.
+    func chooseInbox(_ selection: InboxSelection?) {
+        guard let selection else { return }
+        inboxOpening = InboxRule.open(selection, rows: InboxRule.selectable(board.sections), machines: inboxMachines)
+    }
+
+    /// The owner picked a folder, and the open thread follows only when the folder
+    /// does not draw it.
+    func chooseFolder(_ folder: InboxFolder) {
+        inboxFolder = folder
+        let shown = InboxRule.shownFolder(chosen: folder, sections: board.sections)
+        inboxOpening = InboxRule.narrow(
+            inboxOpening,
+            visible: InboxRule.selectable(InboxRule.visible(board.sections, in: shown)),
+            rows: InboxRule.selectable(board.sections),
+            machines: inboxMachines
+        )
+    }
 
     /// Opens a thread in the inbox. A decision is made only beside its evidence,
-    /// which the inbox's pane carries, so a row elsewhere goes there to decide.
+    /// which the inbox's pane carries, so a row elsewhere goes there to decide. The
+    /// folder returns to Everything so the row is among those drawn.
     func openInbox(_ subject: InboxSubject) {
-        inboxRequest = subject
+        inboxFolder = .everything
+        inboxOpening = InboxRule.open(.thread(subject), rows: InboxRule.selectable(board.sections), machines: inboxMachines)
         destination = .inbox
     }
 

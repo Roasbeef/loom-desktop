@@ -253,36 +253,28 @@ private struct AgentStrip: View {
 
 // MARK: Inbox
 
-/// What the inbox has selected: one of the rule's threads, or a machine that is not
-/// healthy, which only this app lists.
-private enum InboxSelection: Hashable {
-    case thread(InboxSubject)
-    case machine(String)
-}
-
-/// The attention inbox: a rail of folders with counts, a list of what needs a
-/// person grouped by need, and a pane that reads the selected thread. The grouping
-/// is `InboxRule`, which mirrors the web view's rule, so a session sits in the same
-/// group on both. The list keeps focus, so a person can move down it with the arrow
-/// keys and answer an approval with the keyboard.
+/// The attention inbox: a list of what needs a person grouped by need, beside a pane
+/// that reads the open thread. The grouping is `InboxRule`, which mirrors the web
+/// view's rule, so a session sits in the same group on both. The list keeps focus, so
+/// a person can move down it with the arrow keys and answer an approval with the
+/// keyboard.
 ///
-/// The rail is drawn only while the reading pane keeps `InboxLayout.readablePane` points
-/// beside it. Below that width the window is the app's narrowest, the rail is dropped
-/// (the list's band headings carry the same grouping), and a toolbar menu chooses the
-/// folder instead. The list also gives up width, down to `InboxLayout.listFloor`, so
-/// nothing is cut off at any width the window allows.
+/// The two sit in an `HSplitView`, so the person can move the divider and neither
+/// is cut off at the window's smallest size: the list gives up width down to its
+/// minimum, and the pane keeps a width it can be read at. The folder is chosen from
+/// a toolbar picker at every width, since the band headings already carry the
+/// grouping.
+///
+/// What is open is `AppModel.inboxOpening`, one value that the list's selection is
+/// bound to and the pane reads, so the row highlighted is the thread shown. A refresh
+/// settles it and never moves it (`InboxRule.settle`). A thread that is resolved
+/// stays open, marked resolved, until the owner picks another row.
 ///
 /// The pane is `InboxPane` (InboxThreads.swift). It draws an approval's live card under
 /// its evidence, so an approval is decided here as well as on the session's page
 /// (HM-21).
 struct InboxView: View {
     @Environment(AppModel.self) private var model
-    @State private var folder: InboxFolder = .everything
-    /// The width the inbox is given, which decides the layout and how much of it the
-    /// list takes.
-    @State private var available: CGFloat = 1000
-    @State private var entries: [(folder: InboxFolder, count: Int?)] = []
-    @State private var selection: InboxSelection?
     /// A draft for each thread, so a message half written survives a move down the
     /// list.
     @State private var drafts: [String: String] = [:]
@@ -294,66 +286,56 @@ struct InboxView: View {
             content(now: Int(context.date.timeIntervalSince1970 * 1000))
         }
         .navigationTitle("Inbox")
-        #if DEBUG
-        .onChange(of: model.debugInboxPick) { _, key in
-            // The UI driver opens a thread the list's rows give no way to press.
-            guard let key else { return }
-            if let row = model.board.rows.first(where: { $0.id == key }) { selection = .thread(row.subject) }
-        }
-        #endif
-        .onChange(of: model.inboxRequest, initial: true) { _, subject in
-            // A row elsewhere asked for a thread. The folder returns to Everything so
-            // the row is among those drawn, and the request is spent once it is open.
-            guard let subject else { return }
-            folder = .everything
-            selection = .thread(subject)
-            model.inboxRequest = nil
-        }
         .navigationSubtitle(model.board.subtitle)
-        .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded() } action: { available = $0 }
         .toolbar {
-            // A person without the rail still chooses a folder, from the toolbar.
-            if InboxLayout(width: available) == .narrow {
-                ToolbarItem {
-                    Menu {
-                        ForEach(entries, id: \.folder) { entry in
-                            Button(entry.count.map { "\(entry.folder.title) (\($0))" } ?? entry.folder.title) { folder = entry.folder }
-                        }
-                    } label: {
-                        Label("Folder", systemImage: "line.3.horizontal.decrease.circle")
+            ToolbarItem {
+                Picker("Folder", selection: folderBinding) {
+                    ForEach(InboxRule.folderEntries(model.board.sections), id: \.folder) { entry in
+                        Text(entry.count.map { "\(entry.folder.title) (\($0))" } ?? entry.folder.title).tag(entry.folder)
                     }
-                    .help("Choose a folder")
-                    .accessibilityLabel("Folder menu")
                 }
+                .pickerStyle(.menu)
+                .help("Choose a folder")
+                .accessibilityLabel("Folder")
             }
         }
+    }
+
+    /// The folder drawn, which is Everything once the chosen folder has emptied. A
+    /// choice goes to the model, which moves the open thread only if the folder does
+    /// not draw it.
+    private var folderBinding: Binding<InboxFolder> {
+        Binding(
+            get: { InboxRule.shownFolder(chosen: model.inboxFolder, sections: model.board.sections) },
+            set: { model.chooseFolder($0) }
+        )
     }
 
     private func content(now: Int) -> some View {
         let board = model.board.aged(now: now)
         let all = board.sections
-        let shown = InboxRule.shownFolder(chosen: folder, sections: all)
+        let shown = InboxRule.shownFolder(chosen: model.inboxFolder, sections: all)
         let sections = InboxRule.visible(all, in: shown)
         let machines = model.attention.filter { $0.kind == .machine }
         let tally = board.tally
         let note = InboxRule.countNote(running: board.reported, fromCatalogue: tally.fromCatalogue)
         let headline = InboxRule.headline(tally)
         let drawn = [shown.title] + sections.map { "\($0.title) \u{00B7} \($0.count)" }
-        let chosenSubject: InboxSubject? = if case .thread(let subject)? = selection { subject } else { nil }
-        let open = InboxRule.selection(sections, chosen: chosenSubject)?.key ?? ""
+        let opening = model.inboxOpening
+        let highlighted: String = {
+            guard case .thread(let subject)? = opening.selection, !opening.isResolved,
+                  InboxRule.selectable(sections).contains(where: { $0.subject == subject }) else { return "" }
+            return subject.key
+        }()
 
-        let folders = InboxRule.folderEntries(all)
-        let layout = InboxLayout(width: available)
+        // The list's selection is the model's. A nil the list reports leaves it alone.
+        let selection = Binding<InboxSelection?>(
+            get: { model.inboxOpening.selection },
+            set: { model.chooseInbox($0) }
+        )
 
-        return HStack(spacing: 0) {
-            if layout == .wide {
-                FolderRail(entries: folders, shown: shown, note: note) { folder = $0 }
-                    .frame(width: InboxLayout.railWidth)
-
-                Divider()
-            }
-
-            if sections.isEmpty && machines.isEmpty {
+        return Group {
+            if sections.isEmpty && machines.isEmpty && opening.selection == nil {
                 ContentUnavailableView {
                     // Saved sessions are counted and not listed, so something can wait on the
                     // owner under a list with no row, and then the title says so.
@@ -368,110 +350,93 @@ struct InboxView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                InboxList(sections: sections, machines: machines, headline: headline, selection: $selection)
-                    .frame(width: layout.listWidth(in: available))
+                HSplitView {
+                    InboxList(sections: sections, machines: machines, headline: headline, selection: selection)
+                        .frame(minWidth: InboxPaneWidth.listMinimum, idealWidth: InboxPaneWidth.listIdeal, maxWidth: InboxPaneWidth.listMaximum)
 
-                Divider()
-
-                pane(sections: sections, machines: machines)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    #if DEBUG
-                    .onGeometryChange(for: Int.self) { Int($0.size.width) } action: { model.debugInboxPaneWidth = $0 }
-                    #endif
+                    pane(all: all, machines: machines)
+                        .frame(minWidth: InboxPaneWidth.paneMinimum, idealWidth: InboxPaneWidth.paneIdeal, maxWidth: .infinity, maxHeight: .infinity)
+                        #if DEBUG
+                        .onGeometryChange(for: Int.self) { Int($0.size.width) } action: { model.debugInboxPaneWidth = $0 }
+                        #endif
+                }
             }
         }
-        .onChange(of: folders.map { "\($0.folder.title) \($0.count ?? -1)" }, initial: true) { entries = folders }
         #if DEBUG
-        .onChange(of: layout, initial: true) { _, now in model.debugInboxRail = now == .wide ? "rail" : "menu" }
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
-        .onChange(of: open, initial: true) { _, now in model.debugInboxOpen = now }
+        .onChange(of: highlighted, initial: true) { _, now in model.debugInboxHighlighted = now }
         #endif
     }
 
     @ViewBuilder
-    private func pane(sections: [InboxSection], machines: [AttentionItem]) -> some View {
-        // A selection that is no longer listed falls back to the first thread, so
-        // the pane is never empty while the list is not.
-        let chosen: InboxSubject? = if case .thread(let subject)? = selection { subject } else { nil }
-        let subject = InboxRule.selection(sections, chosen: chosen)
-        if case .machine(let id)? = selection, let item = machines.first(where: { $0.id == id }) {
-            AttentionDetail(items: [item], row: nil).id(item.id)
-        } else if let subject, let row = sections.flatMap(\.rows).first(where: { $0.subject == subject }) {
-            InboxPane(
-                row: row,
-                items: model.attention.filter { item in
-                    if case .session(let id, _) = item.source { return id == subject.sessionID && item.kind != .machine }
-                    return false
-                },
-                draft: Binding(get: { drafts[row.id] ?? "" }, set: { drafts[row.id] = $0 })
-            ).id(row.id)
-        } else if let item = machines.first {
-            AttentionDetail(items: [item], row: nil).id(item.id)
+    private func pane(all: [InboxSection], machines: [AttentionItem]) -> some View {
+        let opening = model.inboxOpening
+        switch opening.selection {
+        case .machine(let id)?:
+            if let item = machines.first(where: { $0.id == id }) {
+                AttentionDetail(items: [item], row: nil).id(item.id)
+            } else {
+                ContentUnavailableView(
+                    "This machine is no longer listed",
+                    systemImage: "checkmark.circle",
+                    description: Text("It stays open until you pick another row.")
+                )
+            }
+
+        case .thread(let subject)?:
+            if let row = InboxRule.selectable(all).first(where: { $0.subject == subject }) {
+                InboxPane(
+                    row: row,
+                    items: model.attention.filter { item in
+                        if case .session(let id, _) = item.source { return id == subject.sessionID && item.kind != .machine }
+                        return false
+                    },
+                    draft: Binding(get: { drafts[row.id] ?? "" }, set: { drafts[row.id] = $0 })
+                ).id(row.id)
+            } else if let held = opening.held, held.subject == subject {
+                ResolvedPane(row: held).id(held.id)
+            }
+
+        case nil:
+            EmptyView()
         }
     }
 }
 
-/// Whether the inbox has room for its folder rail. The rail, the list and a readable
-/// pane together need `wideFrom` points; the window's minimum leaves less than that
-/// beside the sidebar, and then the rail gives way to a toolbar menu.
-enum InboxLayout {
-    case wide
-    case narrow
-
-    static let railWidth: CGFloat = 168
-    static let listWidth: CGFloat = 330
-    /// The narrowest the list is squeezed to before the pane would give up more.
-    static let listFloor: CGFloat = 260
-    /// The width below which the reading pane stops being comfortable to read.
-    static let readablePane: CGFloat = 420
+/// The widths of the inbox's two sides. The window's minimum leaves the detail column
+/// at least the sum of the two minimums, so nothing clips at the smallest size.
+enum InboxPaneWidth {
+    static let listMinimum: CGFloat = 260
+    static let listIdeal: CGFloat = 330
+    static let listMaximum: CGFloat = 480
     /// The least the pane is ever given, at the window's smallest size.
-    static let paneFloor: CGFloat = 340
-    static let wideFrom: CGFloat = railWidth + listWidth + readablePane + 2
-
-    init(width: CGFloat) { self = width >= Self.wideFrom ? .wide : .narrow }
-
-    /// The list keeps its full width while the pane still has its floor beside it,
-    /// and gives up the difference, down to `listFloor`, when it does not.
-    func listWidth(in available: CGFloat) -> CGFloat {
-        let rail = self == .wide ? Self.railWidth + 1 : 0
-        return min(Self.listWidth, max(Self.listFloor, available - rail - 1 - Self.paneFloor))
-    }
+    static let paneMinimum: CGFloat = 340
+    /// The width at which the pane reads comfortably.
+    static let paneIdeal: CGFloat = 520
 }
 
-/// The folders of the rail, each with the number of rows its band draws, and the
-/// note that says what the counts read.
-private struct FolderRail: View {
-    let entries: [(folder: InboxFolder, count: Int?)]
-    let shown: InboxFolder
-    let note: String
-    let pick: (InboxFolder) -> Void
+/// The pane of a thread that was resolved while it was open. It names the thread and
+/// says it no longer needs the owner, and offers the session. It draws none of the
+/// thread's own words, which are agent text, and none of its controls, which would act
+/// on a thread that has already been decided.
+private struct ResolvedPane: View {
+    @Environment(AppModel.self) private var model
+    let row: InboxRow
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(entries, id: \.folder) { entry in
-                Button { pick(entry.folder) } label: {
-                    HStack {
-                        Text(entry.folder.title).font(Theme.body)
-                        Spacer(minLength: 4)
-                        if let count = entry.count {
-                            Text("\(count)")
-                                .font(Theme.caption.monospacedDigit())
-                                .foregroundStyle(entry.folder == .needing ? Theme.attention : .secondary)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(entry.folder == shown ? Theme.tintStrong : .clear, in: .rect(cornerRadius: Theme.radiusInner))
-                    .contentShape(.rect)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Folder \(entry.folder.title)")
-                .accessibilityAddTraits(entry.folder == shown ? .isSelected : [])
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Text(row.kind.chip).font(Theme.caption).foregroundStyle(.secondary)
+            Text(verbatim: row.name).font(.title3.weight(.semibold)).textSelection(.enabled)
+            Text("Resolved. This thread no longer needs you. It stays open here until you pick another row.")
+                .font(Theme.body)
+                .foregroundStyle(.secondary)
+            Button("Open Session") { model.destination = .session(row.sessionID) }
             Spacer()
-            Text(note).font(Theme.caption).foregroundStyle(.secondary).padding(8)
         }
-        .padding(8)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Resolved thread")
     }
 }
 
