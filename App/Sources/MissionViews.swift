@@ -704,6 +704,7 @@ struct CommandPalette: View {
 
     var body: some View {
         let results = results
+        let highlighted = highlightedIndex(in: results)
         ZStack(alignment: .top) {
             Color.black.opacity(0.12)
                 .ignoresSafeArea()
