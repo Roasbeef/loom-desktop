@@ -193,17 +193,40 @@ def the_folder_picker_lists_recent_places_filters_by_typing_and_judges_a_typed_p
 
 
 @scenario("NS-06")
+def the_picker_takes_typing_on_open_and_escape_keeps_the_choice(c):
+    """Typing right after opening reaches the search field, and Escape closes the picker with the folder unchanged."""
+    keep = scratch_folder("escape-place")
+    c.app.dispatch("Seed escape place demo", keep)
+    open_form(c)
+    try:
+        choose_folder(c, keep)
+        wait_for(lambda: chosen_folder(c) == keep, what="the folder to be chosen")
+        c.app.press("Folder")
+
+        # No focus call: the field must already hold the caret.
+        wait_for(lambda: any(n["name"] == "Search folders" for n in c.app.tree()), what="the picker")
+        c.app.type("esc")
+        wait_for(lambda: any(n["name"] == "Search folders" and n["value"] == "esc" for n in c.app.tree()), what="typing to reach the search field")
+        c.app.key("escape")
+        picker_closed(c)
+        check(c.app.snap()["isDispatching"], "Escape in the picker should not close the form")
+        check(chosen_folder(c) == keep, "Escape should leave the chosen folder alone")
+    finally:
+        close_form(c)
+
+
+@scenario("NS-06")
 def search_then_return_finds_a_folder_the_daemon_never_used(c):
     """A folder no session has used is found below the roots by a few letters, and Return chooses it."""
     from pathlib import Path
     from loomui import BASE
-    found = Path(BASE) / "deep" / "zebra-quarry-pick"
+    found = Path(BASE) / "deep" / f"zebra-quarry-{int(time.time())}"
     found.mkdir(parents=True, exist_ok=True)
     wanted = str(found.resolve())
     open_form(c)
     try:
         c.app.press("Folder")
-        c.app.fill("Search folders", "zebra-quar")
+        c.app.fill("Search folders", "zebra-quarry")
         c.app.see(f"Use folder {wanted}")
         c.app.key("return")
         picker_closed(c)
