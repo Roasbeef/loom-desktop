@@ -169,6 +169,13 @@ public actor ControlClient {
         return (body["orchestrators"]?.array ?? []).map(ElsewhereGroup.init)
     }
 
+    /// Lists the projects this daemon runs, for the folder picker. A daemon that
+    /// predates project mode refuses the command, which reads as no projects.
+    public func listProjects() async throws -> [ProjectRef] {
+        let body = try await request("projects.list", body: .object([:]))
+        return (body["projects"]?.array ?? []).compactMap(ProjectRef.init)
+    }
+
     /// One command with its body and reply left undecoded, for `loom-probe raw`.
     /// It is how a decoder is checked against what the daemon really sends.
     public func raw(_ cmd: String, body: JSONValue) async throws -> JSONValue {
