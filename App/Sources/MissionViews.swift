@@ -281,6 +281,8 @@ struct InboxView: View {
     /// list.
     @State private var drafts: [String: String] = [:]
 
+    private var watcher: UpdateWatcher { model.updateWatcher }
+
     var body: some View {
         // Ages are counted from the time the list was drawn, so it redraws each
         // half minute even when nothing the daemon says has changed.
@@ -290,6 +292,14 @@ struct InboxView: View {
         .navigationTitle("Inbox")
         .navigationSubtitle(model.board.subtitle)
         .toolbar {
+            ToolbarItem {
+                Toggle(isOn: Binding(get: { model.inboxWatching }, set: { model.inboxWatching = $0 })) {
+                    Label("Watch all", systemImage: "square.grid.2x2")
+                }
+                .toggleStyle(.button)
+                .help("Watch every working session as a board of live cards")
+                .accessibilityIdentifier("watch-all")
+            }
             ToolbarItem {
                 Picker("Folder", selection: folderBinding) {
                     ForEach(InboxRule.folderEntries(model.board.sections), id: \.folder) { entry in
@@ -348,10 +358,10 @@ struct InboxView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 HSplitView {
-                    InboxList(sections: sections, machines: machines, headline: headline, selection: selection)
+                    InboxList(sections: sections, machines: machines, headline: headline, selection: selection, watcher: watcher, now: now)
                         .frame(minWidth: InboxPaneWidth.listMinimum, idealWidth: InboxPaneWidth.listIdeal, maxWidth: InboxPaneWidth.listMaximum)
 
-                    pane(all: all, machines: machines)
+                    pane(all: all, machines: machines, now: now)
                         .frame(minWidth: InboxPaneWidth.paneMinimum, idealWidth: InboxPaneWidth.paneIdeal, maxWidth: .infinity, maxHeight: .infinity)
                         #if DEBUG
                         .onGeometryChange(for: Int.self) { Int($0.size.width) } action: { model.debugInboxPaneWidth = $0 }
@@ -359,6 +369,9 @@ struct InboxView: View {
                 }
             }
         }
+        // One loop reads the cards' briefs while the inbox is drawn, for the sessions in
+        // Updates only, and re-derives which on each lap.
+        .task { await watcher.run(model: model) }
         #if DEBUG
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
         #endif
@@ -377,8 +390,19 @@ struct InboxView: View {
     }
 
     @ViewBuilder
-    private func pane(all: [InboxSection], machines: [AttentionItem]) -> some View {
+    private func pane(all: [InboxSection], machines: [AttentionItem], now: Int) -> some View {
         let opening = model.inboxOpening
+
+        // The board is what the pane shows when asked to, and when no thread is open.
+        if model.inboxWatching || opening.selection == nil {
+            UpdateBoardView(rows: all.flatMap(\.rows), watcher: watcher, now: now)
+        } else {
+            thread(opening, all: all, machines: machines)
+        }
+    }
+
+    @ViewBuilder
+    private func thread(_ opening: InboxOpening, all: [InboxSection], machines: [AttentionItem]) -> some View {
         switch opening.selection {
         case .machine(let id)?:
             if let item = machines.first(where: { $0.id == id }) {
@@ -467,6 +491,8 @@ private struct InboxList: View {
     let machines: [AttentionItem]
     let headline: String
     @Binding var selection: InboxSelection?
+    let watcher: UpdateWatcher
+    let now: Int
     @Environment(AppModel.self) private var model
 
     /// What the list itself has selected, which is what it highlights. It follows
@@ -494,7 +520,19 @@ private struct InboxList: View {
                 } else {
                     Section {
                         ForEach(section.rows) { row in
-                            InboxRowView(row: row).tag(InboxSelection.thread(row.subject)).inboxContextMenu(for: row)
+                            if section.group == .updates, !row.isTicket {
+                                UpdateCardView(
+                                    card: model.updateCard(for: row, digest: watcher.digests[row.sessionID], now: now),
+                                    layout: .list,
+                                    selected: highlighted == .thread(row.subject)
+                                )
+                                .tag(InboxSelection.thread(row.subject))
+                                .inboxContextMenu(for: row)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
+                            } else {
+                                InboxRowView(row: row).tag(InboxSelection.thread(row.subject)).inboxContextMenu(for: row)
+                            }
                         }
                     } header: { band(section) }
                 }
@@ -514,7 +552,9 @@ private struct InboxList: View {
         }
         .listStyle(.inset)
         .onChange(of: highlighted) { _, now in
-            if let now { selection = now } else { highlighted = selection }
+            // The list echoes a selection the model made, which is no pick and must not
+            // close the board.
+            if let now { if now != selection { selection = now } } else { highlighted = selection }
         }
         .onChange(of: selection, initial: true) { _, now in highlighted = now }
         #if DEBUG
