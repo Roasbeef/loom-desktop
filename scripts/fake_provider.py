@@ -555,7 +555,14 @@ def worker_script(messages):
             yield chunk({}, "tool_calls")
         return
     if last.get("role") == "tool":
-        yield from text_stream("Waiting for the answer.")
+        if not names or names[-1] != "bash":
+            yield from text_stream("Waiting for the answer.")
+            return
+    elif "edit then wait" in json.dumps(messages) and "bash" not in names:
+        # An uncommitted change to a tracked file, so the ticket's Changes section has a
+        # worktree diff to draw. The same question as every other worker follows it.
+        yield call(0, "bash", {"command": "printf 'pub fn main() { Nil }\\npub fn retry() { 3 }\\n' > a.gleam"})
+        yield chunk({}, "tool_calls")
         return
     yield call(0, "project_report", {"status": "waiting", "question": "Which database should the retry log use?"})
     yield chunk({}, "tool_calls")

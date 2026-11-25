@@ -44,6 +44,12 @@ extension ControlClient {
         ])
     }
 
+    /// Queues a message the router declined, or that overload shed, for a fresh read.
+    /// The engine refuses a message that is not waiting, with the project's sentence.
+    public func requeueTrigger(_ project: String, trigger: String) async throws {
+        _ = try await request("projects.requeue", body: ["project": .string(project), "trigger": .string(trigger)])
+    }
+
     /// One of the commands that names a ticket and replies an echo.
     public func actOnTicket(_ act: TicketAct, project: String, ticket: String) async throws {
         _ = try await request(act.command, body: ["project": .string(project), "ticket": .string(ticket)])
