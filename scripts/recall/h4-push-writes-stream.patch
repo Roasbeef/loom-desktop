@@ -1,0 +1,13 @@
+# test: SessionModelTests
+diff --git a/Sources/LoomCore/Session.swift b/Sources/LoomCore/Session.swift
+index ed039ee..80d0346 100644
+--- a/Sources/LoomCore/Session.swift
++++ b/Sources/LoomCore/Session.swift
+@@ -316,6 +316,7 @@ public struct Session: Sendable, Equatable {
+             }
+         } else {
+             effects.append(.project(.pushed))
++            effects.append(.project(.stream))
+         }
+         if frame.event == "held_input_returned" {
+             for draft in conversation.takeReturnedDrafts() {

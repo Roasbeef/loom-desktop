@@ -1,0 +1,15 @@
+# test: DaemonModelTests
+diff --git a/Sources/LoomCore/Daemon.swift b/Sources/LoomCore/Daemon.swift
+index 9cdb873..427202e 100644
+--- a/Sources/LoomCore/Daemon.swift
++++ b/Sources/LoomCore/Daemon.swift
+@@ -206,8 +206,7 @@ public struct Daemon: Sendable, Equatable {
+ 
+             // A new epoch means every ephemeral fact is void (protocol section 6.7).
+             if let previous = self.epoch, previous != epoch {
+-                lanes = [:]
+-                effects.append(.detachAll)
++                _ = effects
+             }
+             self.epoch = epoch
+             connection = .connected

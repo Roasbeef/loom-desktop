@@ -1,0 +1,16 @@
+# test: DispatchModelTests
+diff --git a/Sources/LoomCore/Dispatch.swift b/Sources/LoomCore/Dispatch.swift
+index 061f78a..4a80f15 100644
+--- a/Sources/LoomCore/Dispatch.swift
++++ b/Sources/LoomCore/Dispatch.swift
+@@ -107,8 +107,8 @@ public struct Dispatch: Sendable, Equatable {
+         case (.creating, .createFailed(.unknown)):
+             return end(.unknownCreate(requestKey: requestKey))
+         case (.creating, .createFailed(.worktreeNotHonoured(let session))):
+-            step = .cleaning
+-            return [.cleanUp(session: session)]
++            _ = session
++            return end(.failed("The daemon did not create the session in a worktree of its own."))
+         case (.cleaning, .cleanedUp):
+             return end(.failed("The daemon did not create the session in a worktree of its own."))
+         case (.opening(let session), .opened):

@@ -1,0 +1,14 @@
+# test: LaneModelTests
+diff --git a/Sources/LoomCore/Lane.swift b/Sources/LoomCore/Lane.swift
+index 4e0d813..1b505b0 100644
+--- a/Sources/LoomCore/Lane.swift
++++ b/Sources/LoomCore/Lane.swift
+@@ -593,7 +593,7 @@ public struct Lane: Sendable, Equatable {
+         if let pending = inflight, let ticket = pending.ticket {
+             switch pending.kind {
+             case .mutation:
+-                updates.append(.unknown(ticket, command: pending.command, id: pending.id))
++                updates.append(.failed(ticket, command: pending.command, cause))
+             case .read, .transfer:
+                 updates.append(.failed(ticket, command: pending.command, cause))
+             }

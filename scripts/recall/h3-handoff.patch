@@ -1,0 +1,18 @@
+# test: SessionModelTests
+diff --git a/Sources/LoomKit/Conversation.swift b/Sources/LoomKit/Conversation.swift
+index 018cd6d..7f35f5e 100644
+--- a/Sources/LoomKit/Conversation.swift
++++ b/Sources/LoomKit/Conversation.swift
+@@ -398,11 +398,7 @@ public struct Conversation: Sendable, Equatable {
+         // nothing about this reply. A stream with no reservation, from an older
+         // daemon, keeps the old rule of any landed entry.
+         if landed {
+-            streams = streams.filter { stream in
+-                guard stream.value.ended else { return true }
+-                guard let reserved = stream.value.reserved else { return false }
+-                return entries[reserved] == nil
+-            }
++            streams = streams.filter { !$0.value.ended }
+         }
+         return landed || metadataChanged || !wasAdopted
+     }

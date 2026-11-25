@@ -1,0 +1,13 @@
+# test: SessionModelTests
+diff --git a/Sources/LoomCore/Session.swift b/Sources/LoomCore/Session.swift
+index ed039ee..8052ac3 100644
+--- a/Sources/LoomCore/Session.swift
++++ b/Sources/LoomCore/Session.swift
+@@ -149,7 +149,6 @@ public struct Session: Sendable, Equatable {
+     /// lane that sent it is gone and its reply can no longer arrive.
+     public mutating func inherit(from previous: Session) {
+         focusedStrand = previous.focusedStrand
+-        ledger = previous.ledger
+         let rows = previous.conversation
+         ledger.loseWaiting { Session.occurrences(of: $0.text, in: rows, strand: $0.strand) }
+     }

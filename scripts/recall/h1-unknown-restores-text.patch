@@ -1,0 +1,15 @@
+# test: SessionModelTests
+diff --git a/Sources/LoomCore/Session.swift b/Sources/LoomCore/Session.swift
+index ed039ee..3055663 100644
+--- a/Sources/LoomCore/Session.swift
++++ b/Sources/LoomCore/Session.swift
+@@ -340,8 +340,7 @@ public struct Session: Sendable, Equatable {
+                 }
+                 return []
+             case .unknown:
+-                ledger.lost(id, baseline: Self.occurrences(of: text, in: conversation, strand: strand))
+-                return [.notice(Self.maybeSentWords, .warning)]
++                return refused(id, words: Self.maybeSentWords)
+             case .refused(_, let message, _):
+                 return refused(id, words: message.isEmpty ? "The daemon refused the message." : message)
+             case .failed(let error):

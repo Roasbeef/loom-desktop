@@ -1,0 +1,14 @@
+# test: AppCoreModelTests
+diff --git a/Sources/LoomCore/AppCore.swift b/Sources/LoomCore/AppCore.swift
+index c0d11ca..838cdc8 100644
+--- a/Sources/LoomCore/AppCore.swift
++++ b/Sources/LoomCore/AppCore.swift
+@@ -173,7 +173,7 @@ public struct AppCore: Sendable, Equatable {
+ 
+         // The open thread is settled against the board it reads. Arriving on the inbox opens
+         // the first thread then, and leaving drops a resolved opening.
+-        opening = InboxRule.settle(opening, rows: InboxRule.selectable(board.sections), machines: facts.machines, place: inboxPlace)
++        _ = inboxPlace
+ 
+         // A ticket that has gone from its board never leaves the pane naming it.
+         selection = ProjectSelection.settled(selection, projects: facts.projects)

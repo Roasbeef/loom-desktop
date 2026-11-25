@@ -1,0 +1,14 @@
+# test: AppCoreModelTests
+diff --git a/Sources/LoomCore/AppCore.swift b/Sources/LoomCore/AppCore.swift
+index c0d11ca..584ae50 100644
+--- a/Sources/LoomCore/AppCore.swift
++++ b/Sources/LoomCore/AppCore.swift
+@@ -188,7 +188,7 @@ public struct AppCore: Sendable, Equatable {
+             hasSwept = true
+             effects.append(.sweep(keeping: Set(board.rows.compactMap(Notices.notice(of:)).map(\.identifier))))
+         }
+-        let plan = Notices.plan(previous: previous, next: board)
++        let plan = Notices.plan(previous: .empty, next: board)
+         if board != previous { effects.append(.dockBadge(board.dockLabel)) }
+         previous = board
+         if !plan.isEmpty { effects.append(.notify(plan)) }

@@ -1,0 +1,14 @@
+# test: DaemonModelTests
+diff --git a/Sources/LoomKit/ControlLane.swift b/Sources/LoomKit/ControlLane.swift
+index 11dbca6..fbcaac7 100644
+--- a/Sources/LoomKit/ControlLane.swift
++++ b/Sources/LoomKit/ControlLane.swift
+@@ -205,7 +205,7 @@ public struct ControlLane: Sendable, Equatable {
+     /// Writes the oldest owner command, else the oldest background one, when the credit is free.
+     private mutating func sendNext(now: Int) -> [Update] {
+         guard phase == .ready, !queue.isEmpty else { return [] }
+-        let index = queue.firstIndex { $0.command.priority == .owner } ?? 0
++        let index = 0
+         let next = queue.remove(at: index)
+         let id = nextID
+         nextID += 1
