@@ -83,6 +83,9 @@ public struct SessionRecord: Sendable, Identifiable, Equatable {
     /// ticket's worker are listed with every other session, and a client that offers
     /// a list of conversations leaves them out and reaches a worker from its ticket.
     public let standing: ProjectStanding?
+    /// The worktree of its own the session was created with, which the daemon
+    /// reports only for such a session (loom's protocol-change/133).
+    public let worktree: SessionWorktree?
 
     init?(_ body: JSONValue) {
         guard let id = body["session_id"]?.string else { return nil }
@@ -98,6 +101,7 @@ public struct SessionRecord: Sendable, Identifiable, Equatable {
         executorNode = body["executor_node"]?.string
         hasMoved = body["moved"] != nil
         standing = ProjectStanding(body["standing"])
+        worktree = SessionWorktree(body["worktree"])
     }
 
     /// The name to draw, preferring what a person typed over a default.

@@ -22,12 +22,16 @@ public struct CreationOptions: Sendable, Equatable {
     /// Roles other than `main` pinned to one `[models.<key>]` entry each
     /// (Loom's protocol-change/108), such as `vision`. `main` is pinned by `model`.
     public var pins: [String: String]
+    /// Set when the session should work in a Git worktree of its folder
+    /// (protocol-change/133). Its presence is the choice.
+    public var worktree: WorktreeRequest?
 
-    public init(profile: String? = nil, model: String? = nil, isShareable: Bool = false, pins: [String: String] = [:]) {
+    public init(profile: String? = nil, model: String? = nil, isShareable: Bool = false, pins: [String: String] = [:], worktree: WorktreeRequest? = nil) {
         self.profile = profile
         self.model = model
         self.isShareable = isShareable
         self.pins = pins
+        self.worktree = worktree
     }
 
     func add(to fields: inout [String: JSONValue]) {
@@ -41,6 +45,10 @@ public struct CreationOptions: Sendable, Equatable {
         if !chosen.isEmpty {
             fields["roles"] = .object(chosen.mapValues { .string($0) })
         }
+
+        // Sent only when chosen: a daemon from before protocol-change/133 ignores
+        // the key, which `createSession` detects from the reply.
+        if let worktree { fields["worktree"] = worktree.wire }
     }
 }
 
@@ -194,6 +202,7 @@ public enum Refusal {
         case "stale_epoch": return "The daemon restarted. Try again."
         case "invalid_name": return "That name isn't allowed."
         case "invalid_workspace": return "The daemon can't use that folder."
+        case "not_a_repository": return WorktreeWords.notARepository
         case "invalid_configuration": return "The daemon can't read that configuration."
         case "unknown_profile": return "That profile isn't defined in the configuration."
         case "unknown_model": return "That model isn't defined in the configuration."

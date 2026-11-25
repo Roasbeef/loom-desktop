@@ -1221,6 +1221,7 @@ import scenarios_admin  # noqa: E402,F401
 import scenarios_transcript  # noqa: E402,F401
 import scenarios_inbox  # noqa: E402,F401
 import scenarios_projects  # noqa: E402,F401
+import scenarios_worktree  # noqa: E402,F401
 
 
 # Faults. These run last among the functional scenarios, since they damage the cluster.
