@@ -85,7 +85,7 @@ def the_worktree_toggle_is_off_by_default_local_only_and_judges_the_folder(c):
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed for a good base")
         shoot(c, "worktree-form")
 
-        # Turning it off again sends nothing about a worktree.
+        # Turning it off hides the base field again.
         c.app.press("Worktree")
         wait_for(lambda: worktree_toggle(c)["value"] == "0", what="the toggle to turn off")
         c.app.not_see("Worktree base")
@@ -118,6 +118,9 @@ def a_session_created_in_a_worktree_shows_its_branch_in_the_header_and_the_sideb
                 return "created"
             return "too old" if any(TOO_OLD in t for t in c.app.texts()) else None
         if wait_for(outcome, 60, "the form to close or name a daemon too old") == "too old":
+            # The app deletes the session the old daemon made, so none may remain.
+            close_form(c)
+            wait_for(lambda: not any("Worktree session demo" in s["title"] for s in c.app.sessions()), 30, f"the session an old daemon made to be deleted; sessions: {[(s['title'], s['state']) for s in c.app.sessions()]}")
             raise Unproven("the daemon does not serve protocol-change/133, so it started the session in the folder and the app removed it")
     finally:
         close_form(c)

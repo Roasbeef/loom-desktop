@@ -105,7 +105,7 @@ struct DispatchSheet: View {
     private var worktreeJudgement: (request: WorktreeRequest?, problem: String?) {
         guard worktreeChoice == .ownTree, placement == .local else { return (nil, nil) }
         if let problem = WorktreeWords.problem(withBase: worktreeBase) { return (nil, problem) }
-        if isLocalDisk, !workspace.isEmpty, case .ok = folderJudgement, let problem = WorktreeWords.judge(folder: (workspace as NSString).expandingTildeInPath) {
+        if isLocalDisk, !workspace.isEmpty, case .ok(let path) = folderJudgement, let problem = WorktreeWords.judge(folder: path) {
             return (nil, problem)
         }
         return (WorktreeRequest(base: worktreeBase), nil)

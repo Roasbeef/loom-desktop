@@ -105,6 +105,8 @@ final class SessionWorktreeTests: XCTestCase {
         XCTAssertNotNil(WorktreeWords.problem(withBase: "-D"))
         XCTAssertNotNil(WorktreeWords.problem(withBase: "two words"))
         XCTAssertNotNil(WorktreeWords.problem(withBase: "tab\there"))
+        XCTAssertNotNil(WorktreeWords.problem(withBase: "del\u{7f}"))
+        XCTAssertNil(WorktreeWords.problem(withBase: "caf\u{e9}"), "only code points up to 32 and 127 are refused")
         XCTAssertNotNil(WorktreeWords.problem(withBase: String(repeating: "a", count: 256)))
         XCTAssertNil(WorktreeWords.problem(withBase: String(repeating: "a", count: 255)))
     }
