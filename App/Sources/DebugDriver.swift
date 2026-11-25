@@ -617,7 +617,8 @@ enum Snapshot {
                     "sessions": daemon.sessions.map { record -> [String: Any] in
                         ["id": record.id, "title": record.title, "state": record.state.label,
                          "activity": daemon.activity[record.id]?.state.rawValue ?? "",
-                         "workspace": record.workspace, "executor": record.executor ?? "", "moving": record.movingTo ?? ""]
+                         "workspace": record.workspace, "executor": record.executor ?? "", "moving": record.movingTo ?? "",
+                         "worktreeBranch": record.worktree?.branch ?? "", "worktreeBase": record.worktree?.base ?? ""]
                     },
                 ]
             },
@@ -709,6 +710,13 @@ enum Snapshot {
                 "cacheOutlook": session.cacheOutlook(at: Date()) ?? "",
                 "peers": session.peers.map { "\($0.name) · \($0.role)" },
             ]
+
+            // Kept out of the literal above, which the compiler already type-checks slowly.
+            if case .session(let id) = model.destination, let record = model.sessions.first(where: { $0.id == id }) {
+                var fields = body["session"] as? [String: Any] ?? [:]
+                fields["placeLine"] = record.placeLine(liveBranch: session.branch)
+                body["session"] = fields
+            }
         }
         body["sidebar"] = SidebarSnapshot.encode(model)
         body["inbox"] = InboxSnapshot.encode(model)
@@ -800,6 +808,8 @@ enum SidebarSnapshot {
                 entry["standing"] = row.standing
                 entry["created"] = row.created
                 entry["worktree"] = row.worktree ?? ""
+                entry["ownBranch"] = row.ownBranch ?? ""
+                entry["ownWorktreeHelp"] = row.ownWorktreeHelp ?? ""
                 entry["machine"] = row.machine
                 entry["project"] = row.project
                 return entry

@@ -60,6 +60,8 @@ struct DispatchSheet: View {
     @State private var visionKey = ""
     @State private var catalogue = ModelCatalogue()
     @State private var isShareable = false
+    @State private var worktreeChoice = WorktreeChoice.folder
+    @State private var worktreeBase = ""
     @State private var projects: [ProjectRef] = []
     @State private var error: String?
     @State private var createdID: String?
@@ -94,6 +96,19 @@ struct DispatchSheet: View {
     private var folderJudgement: FolderCheck {
         guard placement == .local, daemon?.isRemote != true else { return workspace.isEmpty ? .empty : .ok(workspace) }
         return FolderCheck.judge(workspace)
+    }
+
+    /// What the worktree choice is worth on this form: the request to send, and
+    /// the sentence that says why it cannot be sent, if there is one. The
+    /// choice applies to a folder on the agent's machine and not to an executor's
+    /// workspace, which chooses its own mode in the executor's table.
+    private var worktreeJudgement: (request: WorktreeRequest?, problem: String?) {
+        guard worktreeChoice == .ownTree, placement == .local else { return (nil, nil) }
+        if let problem = WorktreeWords.problem(withBase: worktreeBase) { return (nil, problem) }
+        if isLocalDisk, !workspace.isEmpty, case .ok = folderJudgement, let problem = WorktreeWords.judge(folder: (workspace as NSString).expandingTildeInPath) {
+            return (nil, problem)
+        }
+        return (WorktreeRequest(base: worktreeBase), nil)
     }
 
     var body: some View {
@@ -193,7 +208,7 @@ struct DispatchSheet: View {
                 Button(isSending ? "Dispatching…" : "Dispatch", action: send)
                     .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent)
-                    .disabled(isSending || createdID != nil || workspace.isEmpty || prompt.isEmpty || (!folderJudgement.isUsable && placement == .local && daemon?.isRemote != true))
+                    .disabled(isSending || createdID != nil || workspace.isEmpty || prompt.isEmpty || worktreeJudgement.problem != nil || (!folderJudgement.isUsable && placement == .local && daemon?.isRemote != true))
             }
             .padding(14)
         }
@@ -237,6 +252,8 @@ struct DispatchSheet: View {
             if !catalogue.imageReaders.contains(where: { $0.key == visionKey }) { visionKey = "" }
         }
         .onChange(of: isShareable) { requestKey = UUID().uuidString }
+        .onChange(of: worktreeChoice) { requestKey = UUID().uuidString }
+        .onChange(of: worktreeBase) { requestKey = UUID().uuidString }
         .task(id: daemonID) {
             // Projects fill the picker while the form is being read, so the popover
             // has them by the time it opens. A daemon slow to answer leaves the
@@ -300,9 +317,17 @@ struct DispatchSheet: View {
                         .lineLimit(1)
                         .truncationMode(.head)
                 }
+                if placement == .local {
+                    WorktreeToggle(choice: $worktreeChoice)
+                }
                 Spacer(minLength: 0)
             }
+            if worktreeChoice == .ownTree, placement == .local {
+                WorktreeBaseField(base: $worktreeBase)
+            }
             if let words = folderJudgement.words {
+                Text(words).font(Theme.caption).foregroundStyle(Theme.failure)
+            } else if let words = worktreeJudgement.problem {
                 Text(words).font(Theme.caption).foregroundStyle(Theme.failure)
             }
             if placement == .local, daemon?.isRemote == true, workspace.isEmpty {
@@ -318,6 +343,7 @@ struct DispatchSheet: View {
         if prompt.isEmpty { return "Describe the work to dispatch." }
         if workspace.isEmpty { return "Choose a folder to dispatch (⌘O)." }
         if let words = folderJudgement.words { return words }
+        if let words = worktreeJudgement.problem { return words }
         return "⌘↩ to dispatch"
     }
 
@@ -353,7 +379,8 @@ struct DispatchSheet: View {
             profile: profile.isEmpty ? nil : profile,
             model: modelKey.isEmpty ? nil : modelKey,
             isShareable: isShareable,
-            pins: visionKey.isEmpty ? [:] : ["vision": visionKey]
+            pins: visionKey.isEmpty ? [:] : ["vision": visionKey],
+            worktree: worktreeJudgement.request
         )
         let typed = (workspace as NSString).expandingTildeInPath
         Task {
@@ -376,10 +403,59 @@ struct DispatchSheet: View {
                 // the one that exists instead.
                 self.createdID = partial.sessionID
                 self.error = partial.localizedDescription
+            } catch let refused as WorktreeNotHonoured {
+                // That session was removed, so the same key must not recover it.
+                requestKey = UUID().uuidString
+                self.error = refused.localizedDescription
             } catch {
                 self.error = error.localizedDescription
             }
         }
+    }
+}
+
+/// Where a new session works: in the folder itself, or in a Git worktree of it
+/// on a branch of its own. Two cases named for the domain, so the form and the
+/// request carry no bare flag.
+enum WorktreeChoice {
+    case folder
+    case ownTree
+}
+
+/// The chip beside the folder that puts the session in its own worktree. Off
+/// unless a person turns it on, since the usual session works in the folder.
+private struct WorktreeToggle: View {
+    @Binding var choice: WorktreeChoice
+
+    var body: some View {
+        Toggle(isOn: Binding(get: { choice == .ownTree }, set: { choice = $0 ? .ownTree : .folder })) {
+            Label("Worktree", systemImage: "arrow.triangle.branch")
+                .font(Theme.label)
+        }
+        .toggleStyle(.button)
+        .controlSize(.small)
+        .help("Work in a Git worktree of this folder, on a branch of its own, so the changes stay out of the folder")
+        .accessibilityLabel("Worktree")
+        .accessibilityValue(choice == .ownTree ? "on" : "off")
+    }
+}
+
+/// The base a worktree's branch starts from, behind a disclosure because the
+/// default, the folder's current commit, is what most sessions want.
+private struct WorktreeBaseField: View {
+    @Binding var base: String
+    @State private var isOpen = false
+
+    var body: some View {
+        DisclosureGroup("Base", isExpanded: $isOpen) {
+            TextField("Base", text: $base, prompt: Text("HEAD"))
+                .font(.system(size: 12).monospaced())
+                .textFieldStyle(.roundedBorder)
+                .accessibilityLabel("Worktree base")
+        }
+        .font(Theme.caption)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Worktree base disclosure")
     }
 }
 

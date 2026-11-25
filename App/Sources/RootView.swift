@@ -346,7 +346,7 @@ private struct SessionRow: View {
     /// The quiet line: the worktree, and where the session stands when that says
     /// something the heading and the age beside the title do not.
     private var quiet: String {
-        [row.worktree, showsStanding ? row.standing : nil].compactMap { $0 }.joined(separator: " · ")
+        [row.worktree ?? row.ownBranch.map { _ in "own worktree" }, showsStanding ? row.standing : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
     var body: some View {
@@ -399,6 +399,7 @@ private struct SessionRow: View {
             }
         }
         .padding(.vertical, 2)
+        .help(row.ownWorktreeHelp ?? "")
         .accessibilityElement(children: .combine)
         .accessibilityValue(isUnseen ? "New reply" : "")
     }

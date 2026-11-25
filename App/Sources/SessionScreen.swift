@@ -122,7 +122,7 @@ private struct LiveSession: View {
     private var subtitle: String {
         var parts: [String] = []
         if let placement { parts.append(placement.label) }
-        parts.append([record.workspaceName, controller.branch].compactMap { $0 }.joined(separator: " · "))
+        parts.append(record.placeLine(liveBranch: controller.branch))
         return parts.joined(separator: "  ·  ")
     }
 

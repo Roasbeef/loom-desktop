@@ -509,15 +509,26 @@ final class DaemonConnection: Identifiable {
         options: CreationOptions = CreationOptions()
     ) async throws -> String {
         guard let control else { throw LoomError.closed("\(label) is not connected.") }
-        let record = try await control.createSession(
-            requestKey: requestKey,
-            workspace: workspace,
-            name: name.isEmpty ? (workspace as NSString).lastPathComponent : name,
-            configuration: configuration,
-            placement: placement,
-            options: options
-        )
-        lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") vision=\(options.pins["vision"] ?? "") shareable=\(options.isShareable)"
+        let record: SessionRecord
+        do {
+            record = try await control.createSession(
+                requestKey: requestKey,
+                workspace: workspace,
+                name: name.isEmpty ? (workspace as NSString).lastPathComponent : name,
+                configuration: configuration,
+                placement: placement,
+                options: options
+            )
+        } catch let ignored as WorktreeNotHonoured {
+            // The daemon made the session but did not give it a worktree, and it was
+            // never opened, so nothing has run in the folder. Removing it leaves no
+            // session that the person did not ask for; a failed removal leaves it
+            // listed as saved, which the error does not hide.
+            try? await control.deleteSession(sessionID: ignored.sessionID)
+            try? await refresh(control)
+            throw ignored
+        }
+        lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") vision=\(options.pins["vision"] ?? "") shareable=\(options.isShareable)" + (record.worktree.map { " worktree=\($0.base) \($0.branch)" } ?? "")
 
         // From here the session exists, so a failure must say so and name it.
         do {
