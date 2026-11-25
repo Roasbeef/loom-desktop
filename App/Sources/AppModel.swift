@@ -840,6 +840,12 @@ final class AppModel {
         return reply.body["status"]?.string
     }
 
+    /// Whether the sidebar draws Projects: a project exists, or a daemon answered with
+    /// none, so a new person can reach New Project.
+    var offersProjects: Bool {
+        ProjectRule.offersEntry(projectCount: projectStates.count, daemonsAnswering: daemons.filter(\.projectsAnswered).count)
+    }
+
     /// Every project on every daemon, each with its board's page zero.
     var projectStates: [ProjectState] {
         daemons.flatMap(\.projects)

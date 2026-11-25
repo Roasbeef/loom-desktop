@@ -14,6 +14,7 @@ controls are pressed by name, and the daemon's own answers are read back from th
 """
 import json
 import os
+import time
 from pathlib import Path
 
 from loomui import BASE, wait_for
@@ -63,6 +64,25 @@ def open_ticket_thread(c, project_id, ticket):
     c.app.go("inbox")
     c.app.cmd("inboxpick " + row)
     c.app.see(r"The worker asks|The check|Why it waits", 15)
+
+
+@scenario("PJ-01")
+def the_projects_entry_is_in_the_sidebar_before_any_project_exists(c):
+    """A person with no project finds Projects in the sidebar, and its empty state offers New Project."""
+    from loomui import Unproven
+
+    if c.app.snap()["projects"]["projects"]:
+        raise Unproven("a project already exists, so the empty sidebar cannot be seen")
+
+    # The sidebar rows carry no accessibility names, so the capture is the evidence for
+    # the entry itself. The poll asks `projects.list` every few ticks, so it waits.
+    c.app.see("Mission Control")
+    time.sleep(10)
+    shoot(c, "sidebar-no-project")
+    c.app.go("projects")
+    c.app.see("A project is one router for one repository")
+    shoot(c, "projects-empty")
+    check(c.app.enabled("New Project"), "the empty state offers New Project")
 
 
 @scenario("PJ-01", "PJ-02", "PJ-03", "PJ-04", "PJ-05")

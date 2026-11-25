@@ -24,7 +24,7 @@ struct ProjectsView: View {
                     Label("No projects", systemImage: "folder.badge.gearshape")
                 } description: {
                     Text(model.daemons.contains { $0.projectsAnswered }
-                        ? "This daemon holds no project yet."
+                        ? "A project is one router for one repository. Choose a folder and Loom proposes how to check its work."
                         : "No connected daemon has project mode on.")
                 } actions: {
                     Button("New Project") { model.isCreatingProject = true }

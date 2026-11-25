@@ -122,6 +122,16 @@ public enum TicketControl: Sendable, Equatable, Hashable {
 }
 
 public enum ProjectRule {
+    // MARK: The sidebar entry
+
+    /// Whether the sidebar draws a Projects entry. It is drawn when any project
+    /// exists, and also when a daemon has answered `projects.list` with none, because
+    /// a person with no project can only find New Project through this entry's empty
+    /// state. A daemon that has no project table never answers, so it stays hidden.
+    public static func offersEntry(projectCount: Int, daemonsAnswering: Int) -> Bool {
+        projectCount > 0 || daemonsAnswering > 0
+    }
+
     // MARK: Waiting tickets
 
     /// The tickets that need a person, project by project in the order given and
