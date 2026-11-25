@@ -65,10 +65,20 @@ struct NewProjectSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("A project runs one router for a repository and a worker for each ticket. Choose the repository's folder on the daemon's machine.")
                 .font(Theme.caption).foregroundStyle(.secondary)
-            HStack {
-                TextField("Folder", text: field("new/folder")).textFieldStyle(.roundedBorder).accessibilityLabel("Project folder")
-                Button("Choose…") { if let path = FolderChoice.choose() { model.projectFields["new/folder"] = path } }
-                    .accessibilityLabel("Choose Folder")
+            HStack(spacing: 8) {
+                FolderPickerChip(
+                    folder: field("new/folder"),
+                    placeholder: "Choose folder",
+                    recent: daemon.map { model.recentPlaces(on: $0, forgotten: []) } ?? [],
+                    projects: [],
+                    roots: model.pickerRoots,
+                    allowsNone: .refused,
+                    canBrowseDisk: daemon?.isRemote != true,
+                    canForget: false
+                )
+                Text(FolderPicker.abbreviate(model.projectFields["new/folder"] ?? ""))
+                    .font(Theme.meta).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.head)
+                Spacer(minLength: 0)
             }
             if let words = judged.words { Text(words).font(Theme.caption).foregroundStyle(Theme.failure) }
             TextField("Name (the folder's name if empty)", text: field("new/name")).textFieldStyle(.roundedBorder)

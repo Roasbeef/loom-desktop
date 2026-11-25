@@ -1,9 +1,10 @@
 import AppKit
 
-/// The one call every form that asks for a folder makes. It runs the system folder
-/// panel and answers the chosen path, or nil when the person cancelled. A form never
-/// builds a panel of its own, so replacing the choice (a searchable popover is
-/// planned) changes this function and no caller.
+/// The system folder panel, which the folder picker's "Open folder…" row runs for
+/// anything its search does not list. It answers the chosen path, or nil when the
+/// person cancelled. No form builds a panel of its own: the new-session and the
+/// new-project sheets both choose through `FolderPickerChip`, which opens
+/// `FolderPickerPopover`, and this is the one place a panel is made.
 enum FolderChoice {
     @MainActor
     static func choose() -> String? {

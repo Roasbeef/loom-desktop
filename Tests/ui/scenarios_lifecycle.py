@@ -134,41 +134,112 @@ def close_form(c):
         wait_for(lambda: not c.app.snap()["isDispatching"], what="the form to close")
 
 
+def picker_closed(c):
+    wait_for(lambda: not any(n["name"] == "Search folders" for n in c.app.tree()), what="the picker to close")
+
+
+def choose_folder(c, text):
+    """Picks a folder as a person does: open the chip, type, press Return."""
+    c.app.press("Folder")
+    c.app.fill("Search folders", text)
+    c.app.key("return")
+    picker_closed(c)
+
+
+def chosen_folder(c):
+    """The folder the chip names, as its whole path."""
+    return next((n["value"] for n in c.app.tree() if n["name"] == "Folder"), None)
+
+
 @scenario("NS-03", "NS-06", "NS-07", "NS-19")
-def the_folder_field_searches_recent_places_and_judges_typing(c):
-    """Recent places are listed and filtered by typing, a bad path is named, and a place can be forgotten."""
+def the_folder_picker_lists_recent_places_filters_by_typing_and_judges_a_typed_path(c):
+    """The picker lists recent folders, filters by typing, names a bad path, and forgets a place."""
     keep = scratch_folder("keep-place")
     gone = scratch_folder(f"forget-place-{int(time.time())}")
     c.app.dispatch("Seed keep place demo", keep)
     c.app.dispatch("Seed forget place demo", gone)
     open_form(c)
     try:
-        c.app.focus("Folder")
-        c.app.press("Projects")
-        c.app.see(f"Project {keep}")
-        c.app.see(f"Project {gone}")
-        c.app.key("escape")
+        c.app.press("Folder")
         c.app.see(f"Use folder {keep}")
         c.app.see(f"Use folder {gone}")
 
-        c.app.fill("Folder", "keep-pl")
+        # A fragment of the path matches, ignoring case, and Return takes the first row.
+        c.app.fill("Search folders", "KEEP-pl")
         c.app.see(f"Use folder {keep}")
         c.app.not_see(f"Use folder {gone}")
+        c.app.key("return")
+        picker_closed(c)
+        wait_for(lambda: chosen_folder(c) == keep, what="Return to choose the filtered folder")
 
-        c.app.fill("Folder", "/no/such/folder/here")
+        # A typed path that does not exist is offered as typed and then named as wrong.
+        choose_folder(c, "/no/such/folder/here")
         c.app.see("That folder doesn.t exist")
         check(not c.app.enabled("Dispatch"), "an unusable folder should not allow dispatch")
 
-        c.app.fill("Folder", "")
+        c.app.press("Folder")
+        c.app.fill("Search folders", "forget-place")
         c.app.press(f"Forget folder {gone}")
+        c.app.fill("Search folders", "")
         wait_for(lambda: not any(f"Use folder {gone}" in t for t in c.app.texts()), what="the forgotten place to leave the list")
         c.app.see(f"Use folder {keep}")
         c.app.press(f"Use folder {keep}")
+        wait_for(lambda: chosen_folder(c) == keep, what="a click to choose the folder")
         c.app.focus("Prompt")
         c.app.type("x")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed for a real folder")
     finally:
         close_form(c)
+
+
+@scenario("NS-06")
+def the_picker_takes_typing_on_open_and_escape_keeps_the_choice(c):
+    """Typing right after opening reaches the search field, and Escape closes the picker with the folder unchanged."""
+    keep = scratch_folder("escape-place")
+    c.app.dispatch("Seed escape place demo", keep)
+    open_form(c)
+    try:
+        choose_folder(c, keep)
+        wait_for(lambda: chosen_folder(c) == keep, what="the folder to be chosen")
+        c.app.press("Folder")
+
+        # No focus call: the field must already hold the caret.
+        wait_for(lambda: any(n["name"] == "Search folders" for n in c.app.tree()), what="the picker")
+        c.app.type("esc")
+        wait_for(lambda: any(n["name"] == "Search folders" and n["value"] == "esc" for n in c.app.tree()), what="typing to reach the search field")
+        c.app.key("escape")
+        picker_closed(c)
+        check(c.app.snap()["isDispatching"], "Escape in the picker should not close the form")
+        check(chosen_folder(c) == keep, "Escape should leave the chosen folder alone")
+    finally:
+        close_form(c)
+
+
+@scenario("NS-06")
+def search_then_return_finds_a_folder_the_daemon_never_used(c):
+    """A folder no session has used is found below the roots by a few letters, and Return chooses it."""
+    from pathlib import Path
+    from loomui import BASE
+    found = Path(BASE) / "deep" / f"zebra-quarry-{int(time.time())}"
+    found.mkdir(parents=True, exist_ok=True)
+    wanted = str(found.resolve())
+    open_form(c)
+    try:
+        c.app.press("Folder")
+        c.app.fill("Search folders", "zebra-quarry")
+        c.app.see(f"Use folder {wanted}")
+        c.app.key("return")
+        picker_closed(c)
+        wait_for(lambda: chosen_folder(c) == wanted, 10, "Return to choose the found folder")
+        c.app.focus("Prompt")
+        c.app.type("Found folder demo")
+        wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
+        c.app.press("Dispatch")
+        wait_for(lambda: not c.app.snap()["isDispatching"], 60, "the form to close")
+    finally:
+        close_form(c)
+    sid = c.app.session_id("Found folder demo")
+    wait_for(lambda: record(c, sid)["workspace"] == wanted, what="the session to start in the found folder")
 
 
 @scenario("NS-14", "NS-15", "NS-16", "NS-17")
@@ -179,7 +250,7 @@ def a_session_is_created_with_a_profile_model_name_and_box(c):
     try:
         c.app.focus("Prompt")
         c.app.type("Options check demo")
-        c.app.fill("Folder", folder)
+        choose_folder(c, folder)
         c.app.fill("Session name", "Named by the form")
         c.app.press("review")
         c.app.press("fake2")
@@ -220,7 +291,11 @@ def an_executor_offers_its_registered_workspaces(c):
     try:
         wait_for(lambda: any(t.startswith("Tools run on") or "box" in t for t in c.app.texts()), what="the placement choice")
         c.app.press(find_box_label(c))
+        c.app.press("Folder")
         c.app.see("Use folder proj")
+        c.app.key("return")
+        picker_closed(c)
+        wait_for(lambda: chosen_folder(c) == "proj", what="the executor's workspace to be chosen")
         c.app.focus("Prompt")
         c.app.type("Executor form check demo")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
@@ -376,7 +451,7 @@ def a_session_is_created_in_a_pool(c):
         c.app.press(find_box_label(c, "boxes"))
         c.app.focus("Prompt")
         c.app.type("Pool form check demo")
-        c.app.fill("Folder", "proj")
+        choose_folder(c, "proj")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
         c.app.press("Dispatch")
         wait_for(lambda: not c.app.snap()["isDispatching"], 60, "the form to close")
