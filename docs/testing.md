@@ -7,9 +7,27 @@ The test tools exist to answer one question: does the app a person runs do what 
 | Layer | Command | What it proves | Judge |
 | --- | --- | --- | --- |
 | Pure rules | `make test` | Protocol assembly, projection, turn folding, the composer's parse, panel boards, sidebar rows, markdown, diffs, merge rules | XCTest, in `Tests/LoomKitTests/` |
+| Simulation | `make test` (`make sim` for a long campaign) | The pure core, `Sources/LoomCore`, under generated schedules of frames, ticks, faults and user intents, with invariants checked after every step | `Tests/LoomCoreTests/`, see `docs/core.md` |
 | Scenarios | `make uitest` | Features work end to end against a real cluster | Accessibility tree and app state |
 | Foreground | `make uitest-foreground` | Real key equivalents with a key window. Takes focus briefly | App state |
 | Parity | `make parity` | No row claims `yes` without a scenario, and no scenario covers a row that is not `yes` | `tests/ui/parity_check.py` |
+
+## What gates a pull request
+
+`make test` gates every pull request. It runs the unit tests and the simulation, which together
+cover everything in `Sources/` that decides something: the lane, the session, the daemon
+connection, the dispatch saga, the board and the form rules.
+
+`make uitest` gates a pull request only if it touches the shell or the views: anything under
+`App/Sources/`, the `Loom` target in `Package.swift`, `scripts/bundle.sh`, or `Tests/ui/`.
+A pull request that changes only `Sources/`, `Tests/LoomCoreTests/` or `Tests/LoomKitTests/` is
+covered by the simulation, which runs the production core with only the world replaced, and
+needs no screen. The owner runs the UI scenarios before a release, and when a pull request
+that does touch the shell or the views is ready, since five of the smoke scenarios need an
+unlocked screen.
+
+A scenario leaves the UI suite only after a simulation or unit test covers what it checked and has
+failed on a deliberately reintroduced bug (`scripts/recall.sh`). No scenario has been removed yet.
 
 ## The app under test
 

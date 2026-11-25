@@ -1,7 +1,19 @@
-.PHONY: help test core-purity app run uitest uitest-update uitest-foreground parity docs-check
+.PHONY: help test sim sim-replay coverage recall core-purity app run uitest uitest-update uitest-foreground parity docs-check
 
 help: ## List the common commands
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'
+
+sim: ## Run the simulations longer: make sim SIM_RUNS=50000 SIM_SEED=7
+	SIM_RUNS=$(or $(SIM_RUNS),20000) SIM_SEED=$(or $(SIM_SEED),1) swift test --filter 'LoomCoreTests.*ModelTests'
+
+sim-replay: ## Replay one seed step by step: make sim-replay MODEL=SessionModelTests SEED=<hex>
+	SIM_REPLAY=$(SEED) swift test --filter 'LoomCoreTests.$(MODEL)/testReplay'
+
+coverage: ## Line coverage of the core under the simulations alone
+	sh scripts/coverage.sh
+
+recall: ## Blind recall: make recall WT=<scratch worktree outside /tmp>
+	sh scripts/recall.sh $(WT)
 
 core-purity: ## Fail if Sources/LoomCore can block, wait or read a clock
 	sh scripts/core-purity.sh
@@ -15,11 +27,11 @@ app: ## Build build/Loom.app, optimized
 run: app ## Build and open the app
 	open build/Loom.app
 
-uitest: ## Run the UI scenarios without taking focus
+uitest: ## UI scenarios, no focus taken. Gates only a PR that touches App/Sources or the views (docs/testing.md)
 	CONFIG=release SWIFT_FLAGS="-Xswiftc -DDEBUG" scripts/bundle.sh
 	python3 tests/ui/run.py $(ARGS)
 
-uitest-foreground: ## Also run the scenarios that need a key window
+uitest-foreground: ## Also the scenarios that need a key window. Same gating as uitest
 	CONFIG=release SWIFT_FLAGS="-Xswiftc -DDEBUG" scripts/bundle.sh
 	python3 tests/ui/run.py --foreground $(ARGS)
 

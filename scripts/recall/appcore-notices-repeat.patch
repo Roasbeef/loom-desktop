@@ -1,14 +1,26 @@
 # test: AppCoreModelTests
 diff --git a/Sources/LoomCore/AppCore.swift b/Sources/LoomCore/AppCore.swift
-index c0d11ca..584ae50 100644
+index c0d11ca..b43ef34 100644
 --- a/Sources/LoomCore/AppCore.swift
 +++ b/Sources/LoomCore/AppCore.swift
-@@ -188,7 +188,7 @@ public struct AppCore: Sendable, Equatable {
-             hasSwept = true
-             effects.append(.sweep(keeping: Set(board.rows.compactMap(Notices.notice(of:)).map(\.identifier))))
+@@ -190,7 +190,6 @@ public struct AppCore: Sendable, Equatable {
          }
--        let plan = Notices.plan(previous: previous, next: board)
-+        let plan = Notices.plan(previous: .empty, next: board)
+         let plan = Notices.plan(previous: previous, next: board)
          if board != previous { effects.append(.dockBadge(board.dockLabel)) }
-         previous = board
+-        previous = board
          if !plan.isEmpty { effects.append(.notify(plan)) }
+         return effects
+     }
+diff --git a/Sources/LoomCore/Lane.swift b/Sources/LoomCore/Lane.swift
+index 4e0d813..1b505b0 100644
+--- a/Sources/LoomCore/Lane.swift
++++ b/Sources/LoomCore/Lane.swift
+@@ -593,7 +593,7 @@ public struct Lane: Sendable, Equatable {
+         if let pending = inflight, let ticket = pending.ticket {
+             switch pending.kind {
+             case .mutation:
+-                updates.append(.unknown(ticket, command: pending.command, id: pending.id))
++                updates.append(.failed(ticket, command: pending.command, cause))
+             case .read, .transfer:
+                 updates.append(.failed(ticket, command: pending.command, cause))
+             }
