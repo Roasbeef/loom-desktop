@@ -134,7 +134,13 @@ private struct LiveSession: View {
                 StreamHead(controller: controller, rail: rail)
             }
             .safeAreaBar(edge: .bottom, spacing: 0) {
-                ComposerStack(controller: controller, rail: rail)
+                VStack(spacing: 0) {
+                    // The reply still being written is drawn here, between the
+                    // transcript and the composer, and not as a row of the
+                    // transcript's lazy stack. See `LiveRegion`.
+                    if query.isEmpty { LiveRegion(controller: controller) }
+                    ComposerStack(controller: controller, rail: rail)
+                }
             }
             // The rail reads the session's feed row and the approval evidence about
             // every five seconds while the page is open, and approval evidence only
@@ -368,10 +374,6 @@ private struct TranscriptView: View {
                         }
                     }
                     .id(item.id)
-                }
-                if query.isEmpty {
-                    LiveTail(controller: controller)
-                        .padding(.leading, GutterRow<EmptyView>.width)
                 }
                 if !query.isEmpty, visibleBlocks.isEmpty {
                     Text("No matches in what is loaded.")

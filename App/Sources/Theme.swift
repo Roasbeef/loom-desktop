@@ -255,6 +255,17 @@ enum MarkdownRun: Equatable {
     }
 }
 
+/// One run of a reply as a view that compares by value, so a streaming reply that
+/// is parsed again on every token lays out only the run that changed.
+struct RunView: View, Equatable {
+    let run: MarkdownRun
+    var isStreaming = false
+
+    var body: some View {
+        MarkdownView(source: "", isStreaming: isStreaming).view(forRun: run)
+    }
+}
+
 struct MarkdownView: View {
     let source: String
     var isStreaming = false
@@ -266,15 +277,13 @@ struct MarkdownView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The blocks with no stack of their own. A reply still streaming can grow
-    /// without bound, so the live tail places these directly in the transcript's
-    /// lazy stack, and only the ones on screen pay for each token. A second lazy
-    /// stack nested inside would leave the bottom-anchored scroll view with no
-    /// height to measure, and it draws nothing.
+    /// The blocks with no stack of their own, so the caller places them in the
+    /// stack it chooses. The live region puts them in a plain stack of its own,
+    /// where a run that has not changed is not laid out again.
     @ViewBuilder
     var blocks: some View {
         ForEach(Array(MarkdownRun.group(Markdown.parse(source)).enumerated()), id: \.offset) { _, run in
-            view(forRun: run)
+            RunView(run: run, isStreaming: isStreaming).equatable()
         }
     }
 

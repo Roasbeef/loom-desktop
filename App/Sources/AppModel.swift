@@ -1364,6 +1364,12 @@ final class SessionController {
             let rows = conversation.rows(strand: focusedStrand, clearedThrough: cleared)
             assign(\.blocks, TranscriptBlock.group(rows, running: isBusy))
 
+            // The durable row and the end of its stream arrive together, so the
+            // live region and the list change in the same pass: the text is not
+            // drawn twice for the coalescing delay of the stream flush, and not
+            // missing for it either.
+            setStream()
+
             // Older records are paged in from the chain, so a cleared window would
             // fetch and hide them again. It offers none.
             assign(\.hasOlder, cleared == nil && conversation.hasOlder(strand: focusedStrand))

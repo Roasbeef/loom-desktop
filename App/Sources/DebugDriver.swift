@@ -629,6 +629,7 @@ enum Snapshot {
                 "thinkingLevel": session.strand?.thinkingLevel ?? "",
                 "profile": session.surfaces["profile"]?["profile"]?.string ?? "",
                 "isBusy": session.isBusy,
+                "liveText": session.stream?.text ?? "",
                 "isAdopted": session.isAdopted,
                 "blocks": session.blocks.count,
                 "escalations": session.escalations.map(\.id),
