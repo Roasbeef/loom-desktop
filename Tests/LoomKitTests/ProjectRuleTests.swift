@@ -425,6 +425,7 @@ final class ProjectRuleTests: XCTestCase {
             "extent": "whole", "files": [],
         ]))!
         XCTAssertEqual(ProjectRule.cleanTreeWords(clean), "The worker's session reports no change.")
+        XCTAssertTrue(ProjectRule.changesCaption.contains("Untrusted text from the worker"), "the diff is labelled as the worker's own text")
         XCTAssertTrue(ProjectRule.changesCaption.contains("daemon"))
     }
 

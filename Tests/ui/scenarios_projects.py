@@ -256,7 +256,7 @@ def a_tickets_changes_are_drawn_as_a_diff(c):
     c.app.cmd(f"projectpick {pid} {edited['id']}")
     c.app.see("Changes")
     c.app.see("review-file/a.gleam|a.gleam", 30)
-    c.app.see("Read from the worker's session")
+    c.app.see("Untrusted text from the worker. The daemon reports")
     shoot(c, "projects-ticket-diff")
 
     # A file the worker committed is in the daemon's read too.

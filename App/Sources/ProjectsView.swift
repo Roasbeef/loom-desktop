@@ -131,6 +131,9 @@ struct ProjectPanel: View {
     let project: String
     @State private var offered: [String: TicketResult] = [:]
 
+    /// The messages whose Offer Again is out, so a second press queues nothing.
+    @State private var offering: Set<String> = []
+
     private var state: ProjectState? { model.projectStates.first { $0.id == project } }
 
     var body: some View {
@@ -196,6 +199,7 @@ struct ProjectPanel: View {
                         .font(Theme.caption).foregroundStyle(.secondary)
                     HStack {
                         Button("Offer Again") { offerAgain(item, project: state.id) }.buttonStyle(.bordered)
+                            .disabled(offering.contains(item.trigger))
                             .accessibilityLabel("Offer message again: \(item.trigger)")
                         if let result = offered[item.trigger] {
                             Text(verbatim: result.words).font(Theme.caption).foregroundStyle(result.isRefusal ? Theme.failure : .secondary)
@@ -209,11 +213,16 @@ struct ProjectPanel: View {
     /// Queues a declined message for the router again. The engine refuses one that is
     /// not waiting, and its sentence is shown as it came.
     private func offerAgain(_ item: ProjectUnrouted, project: String) {
-        guard let daemon = model.daemon(holdingProject: project), let control = daemon.control else { return }
+        guard let daemon = model.daemon(holdingProject: project), let control = daemon.control,
+              offering.insert(item.trigger).inserted else { return }
         Task {
+            defer { offering.remove(item.trigger) }
             do {
                 try await control.requeueTrigger(project, trigger: item.trigger)
-                offered[item.trigger] = TicketResult(words: "Queued for the router again.", isRefusal: false)
+
+                // The message leaves the declined list once it is queued, so there is nothing
+                // to say beside it; the router's next read of it is its own news.
+                offered[item.trigger] = nil
                 await daemon.readProjectsNow()
             } catch LoomError.server(let code, let message, _) {
                 offered[item.trigger] = TicketResult(words: ProjectRule.requeueRefusal(code: code, message: message), isRefusal: true)

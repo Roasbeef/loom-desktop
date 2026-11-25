@@ -354,11 +354,12 @@ public enum ProjectRule {
         return nil
     }
 
-    /// The caption under the changes: what the read is. Measured against a daemon, the
-    /// read lists the files the worker committed as well as those it left uncommitted,
-    /// so the caption claims no more than the daemon's own read.
+    /// The caption under the changes. The files and lines are the worker's own work and
+    /// are drawn as text, so the caption says whose they are and what reports them. Measured
+    /// against a daemon, the read lists the files a worker committed as well as those it
+    /// left uncommitted, so the caption claims no more than the daemon's own report.
     public static let changesCaption =
-        "Read from the worker's session, as the daemon reports its working tree. It is not a check of the work."
+        "Untrusted text from the worker. The daemon reports its session's working tree; this is not a check of the work."
 
     /// The words for a session that reports no change.
     public static func cleanTreeWords(_ review: ReviewRead) -> String? {
