@@ -116,6 +116,12 @@ public actor ControlClient {
         guard let record = SessionRecord(body) else {
             throw LoomError.protocolViolation("sessions.create returned no record")
         }
+
+        // An older daemon ignores the `worktree` key and starts the session in the
+        // folder, so the reply's own `worktree` member is the only confirmation.
+        if options.worktree != nil, record.worktree == nil {
+            throw WorktreeNotHonoured(sessionID: record.id)
+        }
         return record
     }
 

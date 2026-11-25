@@ -15,6 +15,11 @@ public struct SidebarRow: Sendable, Equatable, Identifiable {
     public let created: String
     /// The directory name of the git worktree the session runs in, if it runs in one.
     public let worktree: String?
+    /// The branch of the worktree the daemon made for the session at its creation
+    /// (`worktree` on the session record), with the base it started from.
+    public let ownBranch: String?
+    /// The row's tooltip about that worktree.
+    public let ownWorktreeHelp: String?
     /// The project heading the row belongs under.
     public let project: String
     /// The machine whose tools the row uses, which a single machine never names.
@@ -101,6 +106,8 @@ public enum SidebarRows {
             created: ago(record.createdAt, now: now),
             worktree: record.executor == nil && record.pool == nil
                 ? worktree(workspace: record.workspace, gitPointer: gitPointer) : nil,
+            ownBranch: record.worktree?.branch,
+            ownWorktreeHelp: record.worktreeHelp,
             project: record.workspaceName,
             machine: machine
         )
