@@ -32,6 +32,7 @@ import LoomKit
 /// | 1 | duplicate | the last push is delivered again |
 /// | 2 | reorder | two queued pushes swap |
 /// | 3 | disconnect | the socket closes at any step, including inside a transfer |
+/// | 4 | lost request | a prompt or steer is dropped on its way to the daemon, which never sees it |
 ///
 /// ## Rules
 ///
@@ -60,7 +61,7 @@ struct SessionModel: SimSpec {
     static let maxSteps = 64
 
     enum Fault: Int {
-        case lostReply = 0, duplicate, reorder, disconnect
+        case lostReply = 0, duplicate, reorder, disconnect, lostRequest
     }
 
     static let tickSizes = [10, 33, 34, 60, 100, 250, 1_000, 3_000, 5_000, 9_999, 10_000, 30_000]
@@ -94,6 +95,8 @@ struct SessionModel: SimSpec {
         var pendingCutVersion = 0
         var lastCutVersion: Int?
         var healing = false
+        /// The next prompt or steer is dropped on its way to the daemon, which never sees it.
+        var dropNextCommand = false
         /// What the T1 check last read, so an unchanged transcript is not walked again.
         var rowsKey: [Int] = []
         var census: [String: Int] = [:]
@@ -141,7 +144,13 @@ struct SessionModel: SimSpec {
                 perform(&world, world.session.apply(.focus(world.session.focusedStrand == "main" ? "side" : "main"), now: world.now))
                 world.rowBase = []
             }
-        default: perform(&world, world.session.apply(.cancelWaiting, now: world.now))
+        default:
+            if arg % 2 == 1, faulty(.lostRequest) {
+                world.dropNextCommand = true
+                world.count("lostRequest")
+            } else {
+                perform(&world, world.session.apply(.cancelWaiting, now: world.now))
+            }
         }
         try check(&world)
     }
@@ -313,6 +322,11 @@ struct SessionModel: SimSpec {
             switch effect {
             case .transmit(let text):
                 let before = world.daemon.version
+                if world.dropNextCommand, let command = Frames.decode(command: text), command.cmd == "prompt" || command.cmd == "steer" {
+                    world.dropNextCommand = false
+                    world.daemon.socket.owed += 1
+                    continue
+                }
                 let replies = world.daemon.receive(command: text)
                 if let command = Frames.decode(command: text), ["subscribe", "catch_up", "history"].contains(command.cmd) {
                     world.pendingCutVersion = world.daemon.version
@@ -480,7 +494,7 @@ final class SessionModelTests: XCTestCase {
                 for (key, value) in outcome.tallies { seen[key, default: 0] += value }
             }
         }
-        for key in ["send", "daemonProgress", "lostReply", "disconnect", "reattach", "maybeSent", "restoreDraft", "unrelatedEntry", "duplicatePush", "reorderedPushes"] where (seen[key] ?? 0) == 0 {
+        for key in ["send", "daemonProgress", "lostRequest", "lostReply", "disconnect", "reattach", "maybeSent", "restoreDraft", "unrelatedEntry", "duplicatePush", "reorderedPushes"] where (seen[key] ?? 0) == 0 {
             XCTFail("no run reached \(key); reached \(seen.sorted(by: { $0.key < $1.key }))")
         }
     }

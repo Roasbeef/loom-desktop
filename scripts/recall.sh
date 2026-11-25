@@ -23,7 +23,7 @@ for name in $names; do
     test_class="$(sed -n '1s/^# test: //p' "$patch")"
     git -C "$scratch" checkout -q -- .
     git -C "$scratch" apply "$patch"
-    log="$(SIM_RUNS="$runs" swift test --package-path "$scratch" --filter "LoomCoreTests.$test_class/testTheSwarmKeeps" 2>&1 || true)"
+    log="$(SIM_RUNS="$runs" swift test --package-path "$scratch" --filter "LoomCoreTests.$test_class/test(TheSwarmKeeps|TheOperatorAndObserverCampaignsKeep)" 2>&1 || true)"
     found="$(printf '%s\n' "$log" | sed -n 's/.*generator \([0-9]*\): violation \([A-Za-z0-9]*\):.* at run \([0-9]*\) step.*/generator \1, run \3, rule \2/p' | head -1)"
     if [ -z "$found" ]; then
         found="$(printf '%s\n' "$log" | sed -n 's/.*violation \([A-Za-z0-9]*\):.* at run \([0-9]*\) step.*/run \2, rule \1/p' | head -1)"

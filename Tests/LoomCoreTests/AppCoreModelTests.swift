@@ -35,6 +35,8 @@ struct AppCoreModel: SimSpec {
         var asks = 0
         var replyCounter = 0
         var census: [String: Int] = [:]
+        /// An ask just added to a session the app had already read the feed of: N3 expects one notice for it.
+        var expectedAsk: (session: String, id: String, wasChecked: Bool)?
 
         mutating func count(_ key: String) { census[key, default: 0] += 1 }
     }
@@ -81,6 +83,15 @@ struct AppCoreModel: SimSpec {
         default: break
         }
         if [0, 1, 2, 3, 12, 13, 15].contains(kind) { try apply(&world, .facts(world.facts, now: world.now)) }
+
+        // N3: an ask that appears on a session whose feed was already read posts one notice for it.
+        if let expected = world.expectedAsk {
+            world.expectedAsk = nil
+            if expected.wasChecked, let row = world.core.board.rows.first(where: { $0.subject == .ask(session: expected.session, id: expected.id) }),
+               let notice = Notices.notice(of: row), !world.posted.contains(notice.identifier) {
+                throw Sim.Violation("N3", "a new ask \(expected.id) on \(expected.session) posted no notice")
+            }
+        }
         try check(world)
     }
 
@@ -119,6 +130,7 @@ struct AppCoreModel: SimSpec {
         guard world.facts.threads.contains(where: { $0.id == id }) else { return }
         world.asks += 1
         let ask = AttentionAsk(id: "a\(world.asks)", strand: "main", createdAt: world.now, head: "Which?", questions: 1)
+        world.expectedAsk = (id, "a\(world.asks)", world.core.board.checked.contains(id))
         let existing = world.facts.feed[id]?.asks.items ?? []
         world.facts.feed[id] = AttentionRow(sessionID: id, asks: .init(count: existing.count + 1, items: existing + [ask]))
     }
