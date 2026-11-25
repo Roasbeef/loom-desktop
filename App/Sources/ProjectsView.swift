@@ -20,12 +20,15 @@ struct ProjectsView: View {
         let projects = model.projectStates
         Group {
             if projects.isEmpty {
-                ContentUnavailableView(
-                    "No projects", systemImage: "folder.badge.gearshape",
-                    description: Text(model.daemons.contains { $0.projectsAnswered }
+                ContentUnavailableView {
+                    Label("No projects", systemImage: "folder.badge.gearshape")
+                } description: {
+                    Text(model.daemons.contains { $0.projectsAnswered }
                         ? "This daemon holds no project yet."
                         : "No connected daemon has project mode on.")
-                )
+                } actions: {
+                    Button("New Project") { model.isCreatingProject = true }
+                }
             } else {
                 HSplitView {
                     List(selection: $model.projectSelection) {
@@ -36,6 +39,12 @@ struct ProjectsView: View {
                     detail
                         .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
                 }
+            }
+        }
+        .toolbar {
+            ToolbarItem {
+                Button { model.isCreatingProject = true } label: { Label("New Project", systemImage: "plus") }
+                    .help("Make a project for a folder")
             }
         }
         .navigationTitle("Projects")
@@ -120,6 +129,10 @@ private struct TicketRow: View {
 struct ProjectPanel: View {
     @Environment(AppModel.self) private var model
     let project: String
+    @State private var offered: [String: TicketResult] = [:]
+
+    /// The messages whose Offer Again is out, so a second press queues nothing.
+    @State private var offering: Set<String> = []
 
     private var state: ProjectState? { model.projectStates.first { $0.id == project } }
 
@@ -132,9 +145,11 @@ struct ProjectPanel: View {
                         Text(verbatim: state.summary.workspace).font(Theme.meta).foregroundStyle(.secondary).textSelection(.enabled)
                         Text(verbatim: ProjectRule.health(state.summary)).font(Theme.meta).foregroundStyle(.secondary)
                     }
+                    ProjectComposer(project: project)
                     router(state)
                     declined(state)
                     workers(state)
+                    ProjectSettingsView(project: project)
                 }
                 .padding(24)
                 .frame(maxWidth: 680, alignment: .leading)
@@ -154,7 +169,8 @@ struct ProjectPanel: View {
     private func router(_ state: ProjectState) -> some View {
         let session = record(state.summary.routerSession)
         return PaneSection("Router") {
-            Text(verbatim: ProjectRule.routerWords(session?.state)).font(Theme.body)
+            Text(verbatim: ProjectRule.routerWords(session?.state)
+                + (session.map { " \u{00B7} \(ProjectRule.activityWords(model.activity[$0.id]))" } ?? "")).font(Theme.body)
             if let page = state.page, page.replies > 0 {
                 Text("\(page.replies) replies queued").font(Theme.caption).foregroundStyle(.secondary)
             }
@@ -178,8 +194,40 @@ struct ProjectPanel: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(verbatim: "Untrusted text from \(item.actor) via \(item.source)").font(Theme.caption).foregroundStyle(.secondary)
                     Text(verbatim: item.text).font(Theme.body).textSelection(.enabled)
-                    Text(verbatim: "Reason: \(item.reason)").font(Theme.caption).foregroundStyle(.secondary)
+                    Text(verbatim: "Reason: \(item.reason)"
+                        + (ProjectRule.declinedAge(item, now: Int(Date().timeIntervalSince1970 * 1000)).map { " \u{00B7} \($0) ago" } ?? ""))
+                        .font(Theme.caption).foregroundStyle(.secondary)
+                    HStack {
+                        Button("Offer Again") { offerAgain(item, project: state.id) }.buttonStyle(.bordered)
+                            .disabled(offering.contains(item.trigger))
+                            .accessibilityLabel("Offer message again: \(item.trigger)")
+                        if let result = offered[item.trigger] {
+                            Text(verbatim: result.words).font(Theme.caption).foregroundStyle(result.isRefusal ? Theme.failure : .secondary)
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    /// Queues a declined message for the router again. The engine refuses one that is
+    /// not waiting, and its sentence is shown as it came.
+    private func offerAgain(_ item: ProjectUnrouted, project: String) {
+        guard let daemon = model.daemon(holdingProject: project), let control = daemon.control,
+              offering.insert(item.trigger).inserted else { return }
+        Task {
+            defer { offering.remove(item.trigger) }
+            do {
+                try await control.requeueTrigger(project, trigger: item.trigger)
+
+                // The message leaves the declined list once it is queued, so there is nothing
+                // to say beside it; the router's next read of it is its own news.
+                offered[item.trigger] = nil
+                await daemon.readProjectsNow()
+            } catch LoomError.server(let code, let message, _) {
+                offered[item.trigger] = TicketResult(words: ProjectRule.requeueRefusal(code: code, message: message), isRefusal: true)
+            } catch {
+                offered[item.trigger] = TicketResult(words: error.localizedDescription, isRefusal: true)
             }
         }
     }
@@ -196,7 +244,8 @@ struct ProjectPanel: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: ProjectRule.titleWords(ticket)).lineLimit(1)
-                        Text(verbatim: "\(ticket.stage.word) \u{00B7} session \(record(ticket.session)?.state.label.lowercased() ?? "not listed")")
+                        Text(verbatim: "\(ticket.stage.word) \u{00B7} session \(record(ticket.session)?.state.label.lowercased() ?? "not listed")"
+                            + (ticket.session.map { " \u{00B7} \(ProjectRule.activityWords(model.activity[$0]))" } ?? ""))
                             .font(Theme.caption).foregroundStyle(.secondary)
                     }
                     Spacer()

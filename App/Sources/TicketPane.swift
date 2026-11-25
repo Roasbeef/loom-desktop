@@ -23,6 +23,46 @@ final class TicketReader {
     private(set) var unreadable = false
     private(set) var sending = false
     private(set) var confirming: TicketControl?
+    private(set) var review: ReviewRead?
+    private(set) var reviewWords: String?
+
+    private var isReadingChanges = false
+    private var pending: (ControlClient, String)?
+
+    /// The session the held review was read from. A review of another session is not
+    /// shown, so a retry that binds a new worker never draws the old one's files.
+    private var reviewSession: String?
+
+    /// Reads the worker session's files. A refusal is the daemon's own words and leaves
+    /// the last read in place, drawn beside the words. A request made while one is out
+    /// is kept, with its own client and session, and read when the first returns. A
+    /// cancelled caller cannot close the connection (`ControlClient.request` runs the
+    /// exchange apart from its caller), so this needs no task of its own.
+    func readChanges(control: ControlClient?, session: String) async {
+        guard let control else { return }
+        if reviewSession != session {
+            review = nil
+            reviewWords = nil
+            reviewSession = session
+        }
+        if isReadingChanges {
+            pending = (control, session)
+            return
+        }
+        isReadingChanges = true
+        var next: (ControlClient, String)? = (control, session)
+        while let (client, id) = next {
+            pending = nil
+            do {
+                let read = try await client.review(sessionID: id)
+                if reviewSession == id { review = read; reviewWords = nil }
+            } catch {
+                if reviewSession == id { reviewWords = ComposerModel.words(error) }
+            }
+            next = pending
+        }
+        isReadingChanges = false
+    }
 
     func read(control: ControlClient?, project: String, ticket: String) async {
         guard let control else { return }
@@ -140,6 +180,12 @@ struct TicketPane: View {
         .task(id: "\(project)/\(ticket)/\(state?.page?.revision ?? -1)") {
             await reader.read(control: daemon?.control, project: project, ticket: ticket)
         }
+        // The tree is read when the ticket is opened, and again when the owner asks or the
+        // worker's session changes. A read spends the credential's allowance for workspace
+        // reads, which the whole app shares, so a ledger that moves does not read it again.
+        .task(id: "changes/\(project)/\(ticket)/\(current?.session ?? "")") {
+            if let current { await readChanges(current) }
+        }
         .accessibilityIdentifier("ticket-pane/\(project)/\(ticket)")
     }
 
@@ -153,6 +199,7 @@ struct TicketPane: View {
                 if let review = ticket.review { sentence("Why it waits for you", review) }
                 if let url = ticket.pullRequest { sentence("Pull request", url) }
                 if let detail = reader.detail { threadSection(detail) }
+                changesSection(ticket)
                 controls(ticket)
             }
             .padding(24)
@@ -274,6 +321,50 @@ struct TicketPane: View {
     private func inputLabel(_ input: ProjectInput) -> String {
         let who = [input.actor, input.source.map { "via \($0)" }].compactMap { $0 }.joined(separator: " ")
         return "Untrusted text from " + (who.isEmpty ? "an unknown author" : who) + " \u{00B7} " + input.delivery
+    }
+
+    // MARK: Changes
+
+    private var sessionState: SessionState? {
+        guard let id = current?.session else { return nil }
+        return model.sessions.first { $0.id == id }?.state
+    }
+
+    /// The worker's changes in the app's own diff view, red for what it removed and
+    /// green for what it added, read-only: a ticket's changes are judged here and
+    /// acted on with the controls, so there is no verdict, comment or find to stage.
+    private func changesSection(_ ticket: ProjectTicket) -> some View {
+        PaneSection("Changes") {
+            if let words = ProjectRule.changesPrecondition(session: ticket.session, state: sessionState) {
+                Text(verbatim: words).font(Theme.caption).foregroundStyle(.secondary)
+            } else {
+                ReviewThread(
+                    review: reader.review, words: reader.reviewWords, commandWords: nil, finds: [], reads: [:], acting: false,
+                    outbox: .constant(ReviewOutbox()),
+                    readAgain: { Task { await readChanges(ticket) } }
+                ) { EmptyView() }
+                if let review = reader.review, let words = ProjectRule.cleanTreeWords(review) {
+                    Text(verbatim: words).font(Theme.caption).foregroundStyle(.secondary)
+                }
+
+                // After a good read a failed one would otherwise be invisible, since the thread
+                // draws the held review and keeps its own words for a first read only.
+                if reader.review != nil, let words = reader.reviewWords {
+                    Text(verbatim: "The last read failed: \(words)").font(Theme.caption).foregroundStyle(Theme.failure)
+                }
+                HStack(spacing: 10) {
+                    if reader.review != nil {
+                        Button("Read Changes Again") { Task { await readChanges(ticket) } }.buttonStyle(.bordered)
+                    }
+                    Text(verbatim: ProjectRule.changesCaption).font(Theme.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func readChanges(_ ticket: ProjectTicket) async {
+        guard let session = ticket.session, ProjectRule.changesPrecondition(session: session, state: sessionState) == nil else { return }
+        await reader.readChanges(control: model.daemon(holding: session)?.control, session: session)
     }
 
     // MARK: Controls

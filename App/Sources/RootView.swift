@@ -36,6 +36,9 @@ struct RootView: View {
         .sheet(isPresented: $model.isAddingDaemon) {
             AddDaemonSheet()
         }
+        .sheet(isPresented: $model.isCreatingProject) {
+            NewProjectSheet()
+        }
     }
 
     @ViewBuilder

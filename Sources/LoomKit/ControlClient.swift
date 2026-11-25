@@ -5,13 +5,26 @@ public actor ControlClient {
     /// `sessions.activity` accepts at most this many ids per request.
     static let activityBatch = 24
 
-    private let socket: WebSocket
+    private let socket: any ControlTransport
     private let lock = CreditLock()
     private var nextID = 1
     public private(set) var hello: DaemonHello?
 
     public init(endpoint: DaemonEndpoint) throws {
         socket = WebSocket(url: try endpoint.url(path: "/v2/control"), bearer: endpoint.token)
+    }
+
+    /// A client over any transport, for a test that stands in for the daemon.
+    init(transport: any ControlTransport) {
+        socket = transport
+    }
+
+    /// How long a reply may take before its outcome is called unknown. Most commands
+    /// answer at once. `sessions.review` runs Git in the session's sandbox and the
+    /// protocol lets it wait up to 14 seconds (section 3.35), so its deadline is longer
+    /// than that, or a slow read would be reported lost and would close the socket.
+    static func deadline(for command: String) -> Double {
+        command == "sessions.review" ? 16 : 6
     }
 
     /// Reads the `hello` every other command depends on for the epoch.
@@ -191,10 +204,18 @@ public actor ControlClient {
 
     /// One command, one correlated reply. The control socket pushes nothing
     /// after `hello`, so a read here can only be this command's answer.
+    ///
+    /// The exchange runs in a task of its own, so cancelling the caller (a view whose
+    /// task was restarted, a sheet that was dismissed) never reaches the socket. A
+    /// cancelled exchange would otherwise close the shared connection, which fails every
+    /// other read in flight and reconnects the daemon. The reply is still consumed in
+    /// order, and the caller that was cancelled simply does not use it.
     func request(_ cmd: String, body: JSONValue) async throws -> JSONValue {
-        let frame = try await lock.withCredit { [self] in
-            try await exchange(cmd, body: body)
-        }
+        let frame = try await Task { [self] in
+            try await lock.withCredit { [self] in
+                try await exchange(cmd, body: body)
+            }
+        }.value
         guard frame.event != "error" else {
             throw LoomError.server(
                 code: frame.body["code"]?.string ?? "unknown",
@@ -211,7 +232,7 @@ public actor ControlClient {
         let socket = self.socket
         do {
             try await socket.send(try encodeCommand(id: id, cmd: cmd, body: body))
-            let text = try await withDeadline(seconds: 6, command: cmd) { try await socket.receive() }
+            let text = try await withDeadline(seconds: Self.deadline(for: cmd), command: cmd) { try await socket.receive() }
             let frame = try EventEnvelope.decode(text)
             guard frame.replyTo == id else {
                 throw LoomError.protocolViolation("reply_to \(frame.replyTo ?? -1) answers no outstanding command")

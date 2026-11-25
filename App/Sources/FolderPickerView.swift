@@ -62,6 +62,70 @@ struct FolderChip: View {
     }
 }
 
+/// A folder chip with its popover and the folder walk behind it, which every form
+/// that asks for a folder uses. The form says where its choices come from and
+/// keeps the chosen folder in a binding; the chip owns whether the popover is
+/// open and when the walk of the disk starts.
+///
+/// The walk starts when the popover first opens and not when the form does,
+/// because reading Desktop, Documents and Downloads can raise a macOS privacy
+/// prompt, and a person should meet that after asking to choose a folder. It is
+/// bounded (`FolderIndex`), runs off the main actor, and a walk already done is
+/// kept. `allowsNone` is false where a folder is required, so the list does not
+/// offer "No folder".
+struct FolderPickerChip: View {
+    @Binding var folder: String
+    let placeholder: String
+    let recent: [String]
+    let projects: [ProjectRef]
+    let roots: [URL]
+    var allowsNone = FolderPickerNone.allowed
+    var canBrowseDisk = true
+    var canForget = true
+    var recentTitle = "Recent"
+    var emptyNote = "No folders yet. Type a path."
+    var forgotten: Set<String> = []
+    var onForget: (String) -> Void = { _ in }
+    @State private var isOpen = false
+    @State private var found: [String] = []
+
+    var body: some View {
+        FolderChip(workspace: folder, placeholder: placeholder, isOpen: $isOpen)
+            .popover(isPresented: $isOpen, arrowEdge: .bottom) {
+                FolderPickerPopover(
+                    source: FolderPickerSource(
+                        recent: recent,
+                        projects: projects,
+                        found: canBrowseDisk ? found.filter { !forgotten.contains($0) } : [],
+                        canOpenPanel: canBrowseDisk,
+                        canForget: canForget,
+                        recentTitle: recentTitle,
+                        emptyNote: emptyNote,
+                        currentIsChosen: !folder.isEmpty && allowsNone == .allowed,
+                        current: folder,
+                        onPick: { folder = $0 },
+                        onForget: onForget,
+                        onClear: { folder = "" }
+                    ),
+                    dismiss: { isOpen = false }
+                )
+            }
+            .task(id: isOpen) {
+                guard isOpen, found.isEmpty, canBrowseDisk else { return }
+                let walked = await FolderIndex.scanOffMain(roots: roots)
+                guard !Task.isCancelled else { return }
+                found = walked
+            }
+    }
+}
+
+/// Whether a form may be left without a folder, which decides whether the
+/// picker offers "No folder".
+enum FolderPickerNone {
+    case allowed
+    case refused
+}
+
 /// What the picker draws: where the choices come from, and what a choice does.
 struct FolderPickerSource {
     var recent: [String]
@@ -248,10 +312,7 @@ struct FolderPickerPopover: View {
 
     private func openPanel() {
         dismiss()
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        if panel.runModal() == .OK, let url = panel.url { source.onPick(url.path) }
+        if let path = FolderChoice.choose() { source.onPick(path) }
     }
 }
 

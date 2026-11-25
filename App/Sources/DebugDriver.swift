@@ -290,6 +290,12 @@ enum DebugDriver {
         case "ticketdraft" where parts.count > 2:
             // Writes the answer to a ticket's question as typing would, without a key window.
             model.ticketDrafts[.ticket(project: parts[1], ticket: parts[2])] = line.split(separator: " ", maxSplits: 3).dropFirst(3).first.map(String.init) ?? ""
+        case "projectfield" where parts.count > 1:
+            // Writes a project form's field as typing would, without a key window:
+            // `projectfield post/<project> text`, `new/folder`, `new/check` and so on.
+            model.projectFields[parts[1]] = line.split(separator: " ", maxSplits: 2).dropFirst(2).first.map(String.init) ?? ""
+        case "palette":
+            model.isPaletteOpen = parts.count > 1 && parts[1] == "open"
         case "projectraw" where parts.count > 1:
             // Sends one `projects.*` command with a JSON body through the first daemon
             // that holds a project table, and replies the daemon's answer. It is for
@@ -977,7 +983,11 @@ enum ProjectsSnapshot {
         case nil: ""
         }
         return [
-            "selection": selection,
+            "selection": selection, "creating": model.isCreatingProject,
+            "results": Dictionary(uniqueKeysWithValues: model.ticketResults.compactMap { key, value -> (String, String)? in
+                guard case .ticket(let project, let ticket) = key else { return nil }
+                return ("\(project)/\(ticket)", value.words)
+            }),
             "projects": model.projectStates.map { project -> [String: Any] in
                 [
                     "id": project.id, "name": project.summary.name, "router": project.summary.routerSession ?? "",

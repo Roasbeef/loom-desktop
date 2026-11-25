@@ -60,9 +60,7 @@ struct DispatchSheet: View {
     @State private var visionKey = ""
     @State private var catalogue = ModelCatalogue()
     @State private var isShareable = false
-    @State private var isPickingFolder = false
     @State private var projects: [ProjectRef] = []
-    @State private var foundFolders: [String] = []
     @State private var error: String?
     @State private var createdID: String?
     @State private var isSending = false
@@ -247,19 +245,6 @@ struct DispatchSheet: View {
             guard let daemon else { return }
             projects = await daemon.pickerProjects()
         }
-        .onChange(of: daemonID) { foundFolders = [] }
-        .task(id: isPickingFolder) {
-            // The walk starts when the popover first opens and not when the form
-            // does, because reading Desktop, Documents and Downloads can raise a
-            // macOS privacy prompt, and a person should meet that after asking to
-            // choose a folder. It is bounded (FolderIndex), runs off the main
-            // actor, and is a task of its own so a slow `projects.list` cannot
-            // delay it. A walk already done is kept.
-            guard isPickingFolder, foundFolders.isEmpty, let daemon, !daemon.isRemote else { return }
-            let walked = await FolderIndex.scanOffMain(roots: model.pickerRoots)
-            guard !Task.isCancelled else { return }
-            foundFolders = walked
-        }
         .task(id: placement) {
             remoteWorkspaces = []
             if case .executor(let name) = placement, let daemon {
@@ -295,30 +280,19 @@ struct DispatchSheet: View {
     private var folderRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
-                FolderChip(
-                    workspace: workspace,
+                FolderPickerChip(
+                    folder: $workspace,
                     placeholder: placement == .local ? "Choose folder" : "Choose workspace",
-                    isOpen: $isPickingFolder
+                    recent: places,
+                    projects: placement == .local ? projects : [],
+                    roots: model.pickerRoots,
+                    canBrowseDisk: isLocalDisk,
+                    canForget: placement == .local,
+                    recentTitle: placement == .local ? "Recent" : "Registered workspaces",
+                    emptyNote: pickerEmptyNote,
+                    forgotten: forgotten,
+                    onForget: { forgottenText = forgotten.union([$0]).sorted().joined(separator: "\n") }
                 )
-                .popover(isPresented: $isPickingFolder, arrowEdge: .bottom) {
-                    FolderPickerPopover(
-                        source: FolderPickerSource(
-                            recent: places,
-                            projects: placement == .local ? projects : [],
-                            found: isLocalDisk ? foundFolders.filter { !forgotten.contains($0) } : [],
-                            canOpenPanel: isLocalDisk,
-                            canForget: placement == .local,
-                            recentTitle: placement == .local ? "Recent" : "Registered workspaces",
-                            emptyNote: pickerEmptyNote,
-                            currentIsChosen: !workspace.isEmpty,
-                            current: workspace,
-                            onPick: { workspace = $0 },
-                            onForget: { forgottenText = forgotten.union([$0]).sorted().joined(separator: "\n") },
-                            onClear: { workspace = "" }
-                        ),
-                        dismiss: { isPickingFolder = false }
-                    )
-                }
                 if !workspace.isEmpty {
                     Text(FolderPicker.abbreviate((workspace as NSString).deletingLastPathComponent))
                         .font(Theme.meta)
