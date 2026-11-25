@@ -173,6 +173,15 @@ def settings_value(c, pid, key):
 def a_project_is_created_set_up_and_given_work(c):
     """The new-project sheet makes a project, saves its check, and the composer's request becomes a ticket."""
     import subprocess
+    from loomui import Unproven
+
+    # The settings and the proposal the sheet's second step shows were added to the
+    # daemon after the pinned harness build. Such a daemon makes the project and
+    # then cannot give the settings, so the sheet closes at step one, which is the
+    # sheet's designed answer and not what this scenario proves.
+    for command in ("projects.settings", "projects.propose"):
+        if "unsupported control command" in c.app.cmd(f'projectraw {command} {{"project":"none"}}'):
+            raise Unproven(f"the daemon does not serve {command}, which the sheet's second step reads")
 
     repo = BASE / "create-ws"
     if not repo.exists():
