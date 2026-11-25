@@ -520,11 +520,16 @@ final class DaemonConnection: Identifiable {
                 options: options
             )
         } catch let ignored as WorktreeNotHonoured {
-            // The daemon made the session but did not give it a worktree, and it was
-            // never opened, so nothing has run in the folder. Removing it leaves no
-            // session that the person did not ask for; a failed removal leaves it
-            // listed as saved, which the error does not hide.
-            try? await control.deleteSession(sessionID: ignored.sessionID)
+            // The daemon made the session without a worktree and may already be
+            // opening it, so it is stopped before it is deleted: the daemon refuses
+            // to delete a session that is opening or running, and the stop settles
+            // within a few reads. A failed removal leaves it listed, which the
+            // error does not hide.
+            try? await control.stopSession(sessionID: ignored.sessionID)
+            for _ in 0..<20 {
+                if (try? await control.deleteSession(sessionID: ignored.sessionID)) != nil { break }
+                try? await Task.sleep(for: .milliseconds(250))
+            }
             try? await refresh(control)
             throw ignored
         }
