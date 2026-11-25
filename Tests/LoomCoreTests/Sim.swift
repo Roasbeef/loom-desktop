@@ -130,6 +130,25 @@ enum Sim {
         return .success(Outcome(snapshot: spec.snapshot(world), steps: steps, tallies: spec.tallies(world)))
     }
 
+    /// Replays one seed with a line per step, then the final snapshot or the violation.
+    /// This is the entry point for reading a failure: `SIM_REPLAY=<hex> swift test --filter Replay`.
+    static func replay<S: SimSpec>(_ spec: S, seed: Seed, log: (String) -> Void) {
+        var rng = SimRandom(seed: seed.orderSeed)
+        var world = spec.makeWorld(mode: seed.mode % S.modes, faults: seed.faults, rng: &rng)
+        log("mode \(seed.mode % S.modes) faults \(seed.faults)")
+        do {
+            for (index, byte) in seed.ops.prefix(S.maxSteps).enumerated() {
+                log("step \(index): kind \(byte % 16) arg \(byte / 16)")
+                try spec.step(&world, kind: Int(byte % 16), arg: Int(byte / 16), rng: &rng)
+                log(spec.snapshot(world).split(separator: "\n").map { "    " + $0 }.joined(separator: "\n"))
+            }
+            try spec.finish(&world, rng: &rng)
+            log("finish ok\n" + spec.snapshot(world))
+        } catch {
+            log("VIOLATION \(error)\n" + spec.snapshot(world))
+        }
+    }
+
     /// Generates seeds from a generator seed and runs each until one fails. Each
     /// seed is `3 + n` random bytes, `n` up to the spec's step limit.
     static func check<S: SimSpec>(_ spec: S, runs: Int, generator: UInt64) -> Failure? {
@@ -270,5 +289,17 @@ struct SimRandom {
 private extension String {
     func leftPad(_ width: Int) -> String {
         count >= width ? self : String(repeating: "0", count: width - count) + self
+    }
+}
+
+extension Sim {
+    /// How many seeds a campaign runs. `SIM_RUNS` raises it for a long campaign and
+    /// `SIM_SEED` picks the generator seed, so a night's run is reproducible.
+    static func runs(default count: Int) -> Int {
+        ProcessInfo.processInfo.environment["SIM_RUNS"].flatMap { Int($0) } ?? count
+    }
+
+    static func generator(default seed: UInt64) -> UInt64 {
+        ProcessInfo.processInfo.environment["SIM_SEED"].flatMap { UInt64($0) } ?? seed
     }
 }

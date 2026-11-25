@@ -709,11 +709,10 @@ struct LaneModel: SimSpec {
 final class LaneModelTests: XCTestCase {
     func testTheOperatorAndObserverCampaignsKeepEveryRule() throws {
         let spec = LaneModel()
-        if let failure = Sim.check(spec, runs: 6_000, generator: 1) {
-            XCTFail("\(failure)")
-        }
-        if let failure = Sim.check(spec, runs: 6_000, generator: 2) {
-            XCTFail("\(failure)")
+        for generator in [Sim.generator(default: 1), Sim.generator(default: 1) + 1] {
+            if let failure = Sim.check(spec, runs: Sim.runs(default: 6_000), generator: generator) {
+                XCTFail("\(failure)")
+            }
         }
     }
 
