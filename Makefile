@@ -1,9 +1,12 @@
-.PHONY: help test app run uitest uitest-update uitest-foreground parity docs-check
+.PHONY: help test core-purity app run uitest uitest-update uitest-foreground parity docs-check
 
 help: ## List the common commands
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-20s %s\n", $$1, $$2}'
 
-test: ## Run the unit tests
+core-purity: ## Fail if Sources/LoomCore can block, wait or read a clock
+	sh scripts/core-purity.sh
+
+test: core-purity ## Run the unit tests and the simulation
 	swift test
 
 app: ## Build build/Loom.app, optimized

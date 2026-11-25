@@ -1,5 +1,6 @@
 import Foundation
 import LoomKit
+import LoomShell
 
 // A headless driver over LoomKit. It proves the protocol core against a real
 // daemon without a window, and its raw dump is how decoders get checked against

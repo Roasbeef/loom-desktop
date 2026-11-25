@@ -25,7 +25,7 @@ public struct Cut: Sendable, Equatable {
 /// This is a pure state machine so that every rule in protocol section 4.3 can
 /// be tested without a socket. A cut becomes visible only from `finish`, which
 /// is what stops a partial transfer reaching the view.
-public struct TransferAssembler: Sendable {
+public struct TransferAssembler: Sendable, Equatable {
     /// A record above this size is drained and kept as a placeholder, the same
     /// bound the reference terminal uses.
     public static let presentationLimit = 4_194_304

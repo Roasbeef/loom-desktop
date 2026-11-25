@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import LoomKit
+import LoomShell
 import SwiftUI
 import MissionKit
 import Observation
