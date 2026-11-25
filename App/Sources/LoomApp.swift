@@ -223,9 +223,7 @@ private struct MenuBarContent: View {
 @MainActor
 final class Announcer {
     static let shared = Announcer()
-    private var previous = InboxBoard.empty
     private var isWatching = false
-    private var hasSwept = false
 
     #if DEBUG
     /// The identifiers of every notice the plan listed. A real run posts those while
@@ -267,16 +265,13 @@ final class Announcer {
         let board = model.board
         NSApp.dockTile.badgeLabel = board.dockLabel
 
-        // The first board that holds a session is the baseline. Notices a previous run
-        // delivered for items that resolved while the app was quit are cleared against it.
-        if !hasSwept, board.reported > 0 {
-            hasSwept = true
-            sweep(keeping: Set(board.rows.compactMap(Notices.notice(of:)).map(\.identifier)))
-        }
-        let plan = Notices.plan(previous: previous, next: board)
-        previous = board
-        guard !plan.isEmpty else { return }
+        // The core decided what to post, remove and sweep when it settled the board.
+        let pending = model.takePendingNotices()
+        for keeping in pending.sweeps { sweep(keeping: keeping) }
+        for plan in pending.plans where !plan.isEmpty { deliver(plan) }
+    }
 
+    private func deliver(_ plan: NoticePlan) {
         // A resolved item's notice goes whether or not notifications are on or the
         // app is in front, so nothing stale is left in the center.
         #if DEBUG

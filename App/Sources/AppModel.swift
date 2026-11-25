@@ -717,38 +717,74 @@ final class AppModel {
     /// reports a change before it lands, so the recomputation waits one main-actor
     /// turn and reads the new values.
     func trackBoard() {
-        let (next, machines, place) = withObservationTracking {
-            (
-                InboxRule.board(
-                    threads: inboxThreads, feed: attentionRows, raised: approvalRaised, reviewing: reviewing, saved: inboxSaved,
-                    tickets: ProjectRule.waiting(projectStates),
-                    ticketsLeftOut: projectStates.reduce(0) { $0 + ProjectRule.leftOutWaiting($1) },
-                    now: Int(Date().timeIntervalSince1970 * 1000)
-                ),
-                inboxMachines,
-                destination == .inbox ? InboxPlace.inbox : InboxPlace.elsewhere
-            )
+        let (facts, place) = withObservationTracking {
+            (boardFacts(), destination == .inbox ? AppCore.Place.inbox : destination.flatMap { dest -> AppCore.Place? in
+                if case .session(let id) = dest { return .session(id) }
+                return nil
+            } ?? .other)
         } onChange: { [weak self] in
             Task { @MainActor in self?.trackBoard() }
         }
-        if board != next { board = next }
 
-        // The open thread is settled in the same turn as the board it reads, so the
-        // pane and the highlight never see a board the selection has not met.
-        // Destination is tracked as well, so arriving on the Inbox opens the first
-        // thread then and not at launch, and leaving drops a resolved opening.
-        let settled = InboxRule.settle(inboxOpening, rows: InboxRule.selectable(next.sections), machines: machines, place: place)
-        if settled != inboxOpening { inboxOpening = settled }
-
-        // The Projects destination's selection is settled by the same read, so a ticket
-        // that has gone from its board never leaves the pane naming it.
-        let selection = ProjectSelection.settled(projectSelection, projects: projectStates)
-        if selection != projectSelection { projectSelection = selection }
-
-        // A folder that has emptied is drawn as Everything. Forget it here, or a
-        // later item in that folder would narrow the list again with no click.
-        if InboxRule.shownFolder(chosen: inboxFolder, sections: next.sections) != inboxFolder { inboxFolder = .everything }
+        // The core settles the board, the open thread, the folder, the project selection
+        // and the notices in one step, from these facts, so the pane and the highlight never
+        // see a board the selection has not met.
+        run(core.apply(.place(place)))
+        run(core.apply(.facts(facts, now: Int(Date().timeIntervalSince1970 * 1000))))
     }
+
+    /// What the board and the unseen marks are computed from, as the shell holds it.
+    private func boardFacts() -> AppCore.Facts {
+        var facts = AppCore.Facts()
+        facts.threads = inboxThreads
+        facts.feed = attentionRows
+        facts.raised = approvalRaised
+        facts.reviewing = reviewing
+        facts.saved = inboxSaved
+        facts.projects = projectStates
+        facts.machines = inboxMachines
+        for (id, row) in activity { if let reply = row.lastMessage { facts.replies[id] = Self.replyDigest(reply) } }
+        return facts
+    }
+
+    /// Copies what the core decided to the observed properties views read, and performs
+    /// the effects it asked for.
+    private func run(_ effects: [AppCore.Effect]) {
+        if board != core.board { board = core.board }
+        if inboxOpening != core.opening { inboxOpening = core.opening }
+        if inboxFolder != core.folder { inboxFolder = core.folder }
+        if projectSelection != core.selection { projectSelection = core.selection }
+        for effect in effects {
+            switch effect {
+            case .persist(let key, let value):
+                if case .object(let fields) = value { UserDefaults.standard.set(fields.compactMapValues(\.string), forKey: key) }
+            case .notify(let plan):
+                pendingNotices.append(plan)
+            case .sweep(let keeping):
+                pendingSweeps.append(keeping)
+            case .dockBadge:
+                break
+            case .navigate:
+                destination = .inbox
+            }
+        }
+    }
+
+    /// The notice plans and sweeps the core decided, for the notifier to carry out.
+    @ObservationIgnored private var pendingNotices: [NoticePlan] = []
+    @ObservationIgnored private var pendingSweeps: [Set<String>] = []
+
+    func takePendingNotices() -> (sweeps: [Set<String>], plans: [NoticePlan]) {
+        defer {
+            pendingNotices = []
+            pendingSweeps = []
+        }
+        return (pendingSweeps, pendingNotices)
+    }
+
+    @ObservationIgnored private var core = AppCore(
+        seenReplies: UserDefaults.standard.dictionary(forKey: AppCore.repliesKey) as? [String: String] ?? [:]
+    )
 
     /// The unhealthy machines the inbox lists under its own section.
     var inboxMachines: [String] { attention.filter { $0.kind == .machine }.map(\.id) }
@@ -804,30 +840,21 @@ final class AppModel {
     func chooseInbox(_ selection: InboxSelection?) {
         guard let selection else { return }
         inboxWatching = false
-        inboxOpening = InboxRule.open(selection, from: inboxOpening, rows: InboxRule.selectable(board.sections), machines: inboxMachines)
+        run(core.apply(.chooseInbox(selection)))
     }
 
     /// The owner picked a folder, and the open thread follows only when the folder
     /// does not draw it.
     func chooseFolder(_ folder: InboxFolder) {
-        inboxFolder = folder
-        let shown = InboxRule.shownFolder(chosen: folder, sections: board.sections)
-        inboxOpening = InboxRule.narrow(
-            inboxOpening,
-            visible: InboxRule.selectable(InboxRule.visible(board.sections, in: shown)),
-            rows: InboxRule.selectable(board.sections),
-            machines: inboxMachines
-        )
+        run(core.apply(.chooseFolder(folder)))
     }
 
     /// Opens a thread in the inbox. A decision is made only beside its evidence,
     /// which the inbox's pane carries, so a row elsewhere goes there to decide. The
     /// folder returns to Everything so the row is among those drawn.
     func openInbox(_ subject: InboxSubject) {
-        inboxFolder = .everything
         inboxWatching = false
-        inboxOpening = InboxRule.open(.thread(subject), from: inboxOpening, rows: InboxRule.selectable(board.sections), machines: inboxMachines)
-        destination = .inbox
+        run(core.apply(.openInbox(subject)))
     }
 
     /// The one line a surface other than the inbox says about a row: an approval's
@@ -916,7 +943,12 @@ final class AppModel {
     /// What the Projects destination has open: a project's page or one of its
     /// tickets. Only the owner's choice moves it, and a refresh that drops what it
     /// names settles it back to nothing.
-    var projectSelection: ProjectSelection?
+    var projectSelection: ProjectSelection? {
+        didSet {
+            // A choice from a view goes to the core, which settles it against the boards.
+            if projectSelection != core.selection { run(core.apply(.selectProject(projectSelection))) }
+        }
+    }
 
     /// An answer half written to a ticket's question, by ticket.
     var ticketDrafts: [ProjectSelection: String] = [:]
@@ -978,14 +1010,11 @@ final class AppModel {
         }
     }
 
-    /// A digest of the last reply a person saw in each session, kept across launches.
-    /// A session whose latest reply differs finished something while they were away.
-    /// Only the digest is stored, since replies belong to the daemon and preferences
-    /// are a plain file that backups and other programs can read.
-    private(set) var seenReplies: [String: String] = {
-        UserDefaults.standard.removeObject(forKey: "seenReplies")
-        return UserDefaults.standard.dictionary(forKey: "seenReplyDigests") as? [String: String] ?? [:]
-    }()
+    /// A digest of the last reply a person saw in each session, kept across launches by the
+    /// core. A session whose latest reply differs finished something while they were away.
+    /// Only the digest is stored, since replies belong to the daemon and preferences are a
+    /// plain file that backups and other programs can read.
+    var seenReplies: [String: String] { core.seenReplies }
 
     private static func replyDigest(_ reply: String) -> String {
         SHA256.hash(data: Data(reply.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
@@ -994,30 +1023,21 @@ final class AppModel {
     func hasUnseenReply(_ sessionID: String) -> Bool {
         guard let reply = activity[sessionID]?.lastMessage else { return false }
         if case .session(sessionID) = destination { return false }
-        guard let seen = seenReplies[sessionID] else { return false }
+        guard let seen = core.seenReplies[sessionID] else { return false }
         return seen != Self.replyDigest(reply)
     }
 
-    /// Takes the first reply seen from each session as already read. A session that
-    /// has never been looked at is not news, or every row would shout on first launch.
+    /// Takes the first reply seen from each session as already read. A session that has
+    /// never been looked at is not news, or every row would shout on first launch.
     func recordFirstReplies() {
-        var changed = false
-        for (id, row) in activity where seenReplies[id] == nil {
-            if let reply = row.lastMessage {
-                seenReplies[id] = Self.replyDigest(reply)
-                changed = true
-            }
-        }
-        if changed { UserDefaults.standard.set(seenReplies, forKey: "seenReplyDigests") }
+        run(core.apply(.facts(boardFacts(), now: Int(Date().timeIntervalSince1970 * 1000))))
+        run(core.apply(.recordFirstReplies))
     }
 
     /// Records what the open session shows, called as its activity changes.
     func markSeen(_ sessionID: String) {
-        guard let reply = activity[sessionID]?.lastMessage else { return }
-        let digest = Self.replyDigest(reply)
-        guard seenReplies[sessionID] != digest else { return }
-        seenReplies[sessionID] = digest
-        UserDefaults.standard.set(seenReplies, forKey: "seenReplyDigests")
+        run(core.apply(.facts(boardFacts(), now: Int(Date().timeIntervalSince1970 * 1000))))
+        run(core.apply(.markSeen(session: sessionID)))
     }
 
     /// The session the main window shows, which the Session menu acts on.
