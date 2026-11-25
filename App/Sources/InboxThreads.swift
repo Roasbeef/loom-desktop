@@ -41,6 +41,10 @@ final class ThreadReader {
     private(set) var reviewWords: String?
     private(set) var findReads: [String: FindRead] = [:]
 
+    /// Called with each brief this reader lands, so the Updates card of the same
+    /// session shows the read the pane shows.
+    var onBrief: ((SessionBrief) -> Void)?
+
     /// How long a pane waits before its first read.
     private static let settle: Duration = .milliseconds(350)
 
@@ -81,7 +85,9 @@ final class ThreadReader {
         guard ThreadRule.briefDue(last: last, now: now, since: since) else { return }
         last = BriefRead(started: now, since: since)
         do {
-            brief = try await control.brief(sessionID: session, since: since)
+            let read = try await control.brief(sessionID: session, since: since)
+            brief = read
+            onBrief?(read)
             briefSince = since
             briefWords = nil
         } catch {
@@ -268,6 +274,15 @@ struct InboxPane: View {
         // "To review" once the scan has read its tree, and the review is read only for the
         // second, so a task keyed on the row alone would never read it.
         .task(id: "\(row.id)/\(row.kind.chip)") {
+            // The pane reads this session's brief itself, so the card list's loop leaves
+            // it alone and takes each read the pane lands.
+            let watcher = model.updateWatcher
+            let shared = sessionID
+            if reads.brief {
+                watcher.paneSession = shared
+                reader.onBrief = { watcher.offer($0, session: shared) }
+            }
+            defer { if watcher.paneSession == shared { watcher.paneSession = nil } }
             await reader.run(reads: reads, session: sessionID, control: model.daemon(holding: sessionID)?.control)
         }
         .task(id: findIDs) {

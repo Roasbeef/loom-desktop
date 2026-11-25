@@ -320,7 +320,7 @@ enum DebugDriver {
             }
         case "inboxtoggle" where parts.count > 1:
             // Expands or collapses an Updates card by row identity.
-            model.debugToggleCard = parts[1]
+            model.toggleCard(parts[1])
         case "inboxwatch" where parts.count > 1:
             // Turns the Watch all board on or off, as the toolbar's toggle does.
             model.inboxWatching = parts[1] == "on"
@@ -777,14 +777,14 @@ enum InboxSnapshot {
                 let card = model.updateCard(for: row, digest: model.updateWatcher.digests[row.sessionID], now: Int(Date().timeIntervalSince1970 * 1000))
                 return [
                     "id": card.id, "name": card.name, "state": card.state, "message": card.message ?? "",
-                    "step": card.step.map { "\($0.tool) \($0.words) \($0.outcome.rawValue)" } ?? "",
-                    "steps": card.steps.map { "\($0.tool) \($0.words)" }, "strands": card.strandsLine ?? "",
+                    "step": card.step.map { "\($0.tool.text) \($0.words.text) \($0.outcome.rawValue)" } ?? "",
+                    "steps": card.steps.map { "\($0.tool.text) \($0.words.text)" }, "strands": card.strandsLine ?? "",
                     "failure": card.failure ?? "", "machine": card.machine ?? "",
                 ]
             },
             "watching": model.inboxWatching,
             "board": model.debugBoard,
-            "expandedCards": model.debugCardsExpanded.sorted(),
+            "expandedCards": model.expandedCards.sorted(),
         ]
     }
 }

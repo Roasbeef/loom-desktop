@@ -795,11 +795,12 @@ def a_working_session_is_a_live_card_that_expands_and_joins_the_board(c):
     except Exception:
         raise Failure(f"cards: {c.app.snap()['inbox']['cards']} rows: {rows(c)}")
 
-    # A new step reaches the card without the owner doing anything.
+    # A new step reaches the card without the owner doing anything. The brief lists
+    # the newest step first, and a card holds four at most.
     before = card_of(c, names[0])["steps"]
     wait_for(lambda: (card_of(c, names[0]) or {}).get("steps") not in (before, None), 40, "a new step on the card")
     check(card_of(c, names[0])["step"].startswith("bash"), card_of(c, names[0]))
-    check(len(card_of(c, names[0])["steps"]) <= 5, "a card holds at most five steps")
+    check(len(card_of(c, names[0])["steps"]) <= 4, "a card holds at most four steps")
 
     # A card expands in place and collapses again, in the list.
     first = card_of(c, names[0])
@@ -810,6 +811,11 @@ def a_working_session_is_a_live_card_that_expands_and_joins_the_board(c):
     c.app.cmd("inboxtoggle " + first["id"])
     wait_for(lambda: first["id"] not in c.app.snap()["inbox"]["expandedCards"], 5, "the card to collapse")
 
+    # Before the toggle the pane shows a thread and no board.
+    c.app.cmd("inboxpick " + first["id"])
+    wait_for(lambda: c.app.snap()["inbox"]["open"] == first["id"], 5, "the thread to open")
+    check(not c.app.snap()["inbox"]["watching"] and c.app.snap()["inbox"]["board"] == [], c.app.snap()["inbox"]["board"])
+
     # The board draws one card per working session, and keeps their places.
     c.app.cmd("inboxwatch on")
     wait_for(lambda: len(c.app.snap()["inbox"]["board"]) >= 3, 10, "the board to hold three cards")
@@ -818,6 +824,13 @@ def a_working_session_is_a_live_card_that_expands_and_joins_the_board(c):
     time.sleep(3)
     check(c.app.snap()["inbox"]["board"] == board, "the board's order must not change while watched")
 
-    # A card opens its session's thread and leaves the board.
-    c.app.cmd("inboxwatch off")
-    wait_for(lambda: not c.app.snap()["inbox"]["watching"], 5, "the board to close")
+    # Picking a card leaves the board for its thread, also the thread that was already open.
+    second = card_of(c, names[1])
+    c.app.cmd("inboxpick " + second["id"])
+    wait_for(lambda: not c.app.snap()["inbox"]["watching"], 5, "the pick to close the board")
+    check(c.app.snap()["inbox"]["open"] == second["id"], c.app.snap()["inbox"]["open"])
+    check(c.app.snap()["inbox"]["board"] == [], "the board is gone with the pick")
+    c.app.cmd("inboxwatch on")
+    wait_for(lambda: len(c.app.snap()["inbox"]["board"]) >= 3, 10, "the board again")
+    c.app.cmd("inboxpick " + second["id"])
+    wait_for(lambda: not c.app.snap()["inbox"]["watching"], 5, "the pick of the open thread to close the board")

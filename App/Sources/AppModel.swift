@@ -566,12 +566,7 @@ final class AppModel {
     var debugInboxPaneWidth = 0
 
     /// The Updates cards the owner expanded, and the order of the Watch all board.
-    var debugCardsExpanded: Set<String> = []
     var debugBoard: [String] = []
-
-    /// A card to toggle, by identity, as a click on its disclosure would. The list's
-    /// rows are not in the accessibility tree, so the driver cannot press them.
-    var debugToggleCard: String?
 
     /// The row the list highlights, by identity, or empty when the open thread is
     /// outside the folder drawn. Written by the view from the value it binds.
@@ -707,6 +702,13 @@ final class AppModel {
     /// on screen.
     let updateWatcher = UpdateWatcher()
 
+    /// The Updates cards the owner expanded, by row identity. It is not saved.
+    private(set) var expandedCards: Set<String> = []
+
+    func toggleCard(_ id: String) {
+        if expandedCards.contains(id) { expandedCards.remove(id) } else { expandedCards.insert(id) }
+    }
+
     /// The thread whose message field the owner asked to write in, by row id. The
     /// pane that draws it takes the request, focuses its field and clears it, so a
     /// request made before the pane exists (a row's context menu opens the thread
@@ -734,6 +736,7 @@ final class AppModel {
     /// is cleared, leaves the open thread as it is.
     func chooseInbox(_ selection: InboxSelection?) {
         guard let selection else { return }
+        inboxWatching = false
         inboxOpening = InboxRule.open(selection, from: inboxOpening, rows: InboxRule.selectable(board.sections), machines: inboxMachines)
     }
 
@@ -755,6 +758,7 @@ final class AppModel {
     /// folder returns to Everything so the row is among those drawn.
     func openInbox(_ subject: InboxSubject) {
         inboxFolder = .everything
+        inboxWatching = false
         inboxOpening = InboxRule.open(.thread(subject), from: inboxOpening, rows: InboxRule.selectable(board.sections), machines: inboxMachines)
         destination = .inbox
     }

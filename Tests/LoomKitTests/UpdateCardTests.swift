@@ -23,8 +23,10 @@ final class UpdateCardTests: XCTestCase {
     private func brief(steps: Int, command: JSONValue? = nil, strands: [JSONValue] = []) -> SessionBrief {
         var fields: [String: JSONValue] = [
             "assistant": ["text": "Reading the module now.", "at": 9_990_000],
+
+            // The wire lists the newest step first, and step 0 here is the newest.
             "steps": .array((0..<steps).map { n in
-                ["at": .int(Int64(9_900_000 + n)), "tool": "run", "words": .string("Ran step \(n)"), "outcome": n == steps - 1 ? "running" : "succeeded"]
+                ["at": .int(Int64(9_900_000 - n)), "tool": "run", "words": .string("Ran step \(n)"), "outcome": n == 0 ? "running" : "succeeded"]
             }),
             "strands": .array(strands),
         ]
@@ -37,18 +39,27 @@ final class UpdateCardTests: XCTestCase {
         let card = UpdateCard.make(row: row("a"), activity: activity(), digest: digest, machine: nil, now: now)
         XCTAssertEqual(card.state, "working \u{00B7} 2 min into a turn")
         XCTAssertEqual(card.message, "Reading the module now.")
-        XCTAssertEqual(card.step?.words, "Ran step 3")
+        XCTAssertEqual(card.step?.words.text, "Ran step 0")
         XCTAssertEqual(card.step?.outcome, .running)
-        XCTAssertEqual(card.compact.map(\.words), ["Ran step 1", "Ran step 2", "Ran step 3"])
+        XCTAssertEqual(card.compact.map(\.words.text), ["Ran step 0", "Ran step 1", "Ran step 2"])
         XCTAssertNil(card.strandsLine)
         XCTAssertNil(card.failure)
         XCTAssertNil(card.machine)
     }
 
-    func testTheDigestIsBoundedToFiveSteps() {
+    func testTheDigestIsBoundedToFourStepsAndKeepsTheNewest() {
         let digest = UpdateDigest(brief: brief(steps: 40))
-        XCTAssertEqual(digest.steps.count, UpdateDigest.maxSteps)
-        XCTAssertEqual(digest.steps.last?.words.text, "Ran step 39")
+        XCTAssertEqual(digest.steps.count, 4)
+        XCTAssertEqual(digest.steps.map(\.words.text), ["Ran step 0", "Ran step 1", "Ran step 2", "Ran step 3"])
+    }
+
+    func testWhenNothingRunsTheCurrentStepIsTheNewest() {
+        let finished = SessionBrief(["brief": ["steps": [
+            ["at": 200, "tool": "run", "words": "Ran newer", "outcome": "succeeded"],
+            ["at": 100, "tool": "run", "words": "Ran older", "outcome": "failed"],
+        ]]])!
+        let card = UpdateCard.make(row: row("a"), activity: nil, digest: UpdateDigest(brief: finished), machine: nil, now: now)
+        XCTAssertEqual(card.step?.words.text, "Ran newer")
     }
 
     func testWithoutADigestTheCardFallsBackToTheStreamedActivity() {
@@ -78,17 +89,24 @@ final class UpdateCardTests: XCTestCase {
         XCTAssertEqual(card.commandExit, 0)
     }
 
-    func testReadsAreCappedAndTheUnreadGoFirst() {
+    func testReadsAreCapped() {
         let rows = (0..<12).map { row("s\($0)") }
-        let targets = UpdateWatch.targets(rows: rows, held: ["s0", "s1"])
+        let targets = UpdateWatch.targets(rows: rows)
         XCTAssertEqual(targets.count, UpdateWatch.readCap)
-        XCTAssertEqual(targets.prefix(6).map { $0 }, ["s2", "s3", "s4", "s5", "s6", "s7"])
-        XCTAssertEqual(Array(targets.suffix(2)), ["s0", "s1"])
+        XCTAssertEqual(targets.first, "s0")
+        XCTAssertEqual(UpdateWatch.targets(rows: rows, excluding: "s0").first, "s1")
+    }
+
+    func testTheOldestReadGoesNextAndTheUnreadFirst() {
+        XCTAssertEqual(UpdateWatch.next(targets: ["a", "b", "c"], readAt: ["a": 5, "b": 3, "c": 9]), "b")
+        XCTAssertEqual(UpdateWatch.next(targets: ["a", "b", "c"], readAt: ["a": 5, "c": 9]), "b")
+        XCTAssertEqual(UpdateWatch.next(targets: ["a", "b"], readAt: [:]), "a")
+        XCTAssertNil(UpdateWatch.next(targets: [], readAt: [:]))
     }
 
     func testOnlyUpdatesAreRead() {
         let rows = [row("a"), row("b", kind: .waiting)]
-        XCTAssertEqual(UpdateWatch.targets(rows: rows, held: []), ["a"])
+        XCTAssertEqual(UpdateWatch.targets(rows: rows), ["a"])
     }
 
     func testTheBoardStartsByRecencyAndThenKeepsPlaces() {

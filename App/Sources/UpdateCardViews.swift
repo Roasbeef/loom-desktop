@@ -11,36 +11,57 @@ import SwiftUI
 // ## Flow
 //
 // `UpdateWatcher` holds one `UpdateDigest` for each session in Updates. While the inbox
-// is on screen it reads one `session.brief` at a time, one every `UpdateWatch.pause`,
+// is on screen it reads one `session.brief` at a time, one every `UpdateWatch.pauseMs`,
 // over at most `UpdateWatch.readCap` sessions, and drops the digest of a session that
 // left Updates. `UpdateCardView` draws one card, compact in the list and expandable in
 // place, or expanded on the board. `UpdateBoardView` lays the cards in a grid whose
 // order `UpdateBoard.order` keeps, so a card does not move while it is watched.
 
 /// The briefs the cards draw from. Nothing here is persisted.
+///
+/// One loop reads them, and it re-derives what to read on every lap from the rows the
+/// board holds then, so a session that joins or leaves Updates needs no restart. Each
+/// lap reads the session read longest ago and then waits `UpdateWatch.pauseMs`, which
+/// is about one read a second in all, inside the daemon's six in four seconds for a
+/// credential. The session whose pane is open is left out, since the pane reads its
+/// brief itself and hands each one to `offer`, so the card and the pane show one read.
 @MainActor
 @Observable
 final class UpdateWatcher {
     private(set) var digests: [String: UpdateDigest] = [:]
 
-    /// Reads the briefs of `rows` in turn until cancelled. The reads are sequential
-    /// and spaced, so the daemon's limit of six brief reads in four seconds for a
-    /// credential is never near, and a read that fails keeps the digest held.
-    func run(rows: [InboxRow], model: AppModel) async {
-        let wanted = UpdateWatch.targets(rows: rows, held: Set(digests.keys))
-        digests = digests.filter { wanted.contains($0.key) }
-        guard !wanted.isEmpty else { return }
-        let gap = UpdateWatch.pause(count: wanted.count)
+    /// The session whose open pane reads its own brief, which this loop then skips.
+    var paneSession: String?
 
+    @ObservationIgnored private var readAt: [String: Int] = [:]
+
+    /// Keeps a brief the open pane read, as if this loop had read it.
+    func offer(_ brief: SessionBrief, session: String) {
+        digests[session] = UpdateDigest(brief: brief)
+        readAt[session] = Self.nowMs
+    }
+
+    private static var nowMs: Int { Int(Date().timeIntervalSince1970 * 1000) }
+
+    func run(model: AppModel) async {
         while !Task.isCancelled {
-            for id in wanted {
-                if Task.isCancelled { return }
+            let rows = model.board.rows
+            let targets = UpdateWatch.targets(rows: rows, excluding: paneSession)
+            let present = Set(UpdateWatch.targets(rows: rows))
+            if digests.keys.contains(where: { !present.contains($0) }) { digests = digests.filter { present.contains($0.key) } }
+            readAt = readAt.filter { present.contains($0.key) }
+
+            if let id = UpdateWatch.next(targets: targets, readAt: readAt) {
+                readAt[id] = Self.nowMs
                 if let control = model.daemon(holding: id)?.control, let brief = try? await control.brief(sessionID: id) {
+                    // A read that outlived the inbox must not write, and one for a
+                    // session that left Updates while it ran must not bring it back.
+                    guard !Task.isCancelled, present.contains(id) else { return }
                     let digest = UpdateDigest(brief: brief)
                     if digests[id] != digest { digests[id] = digest }
                 }
-                try? await Task.sleep(for: .milliseconds(gap))
             }
+            try? await Task.sleep(for: .milliseconds(UpdateWatch.pauseMs))
         }
     }
 }
@@ -65,8 +86,9 @@ struct UpdateCardView: View {
     let layout: Layout
     var selected = false
 
-    /// Whether the owner expanded this card. It lives in the view and is not saved.
-    @State private var expanded = false
+    /// Whether the owner expanded this card. The set is the inbox view's and is not
+    /// saved, so a card scrolled out of the list keeps what the owner chose.
+    private var expanded: Bool { model.expandedCards.contains(card.id) }
 
     private var isExpanded: Bool { layout == .board || expanded }
 
@@ -84,17 +106,6 @@ struct UpdateCardView: View {
         .contentShape(.rect)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(card.id)
-        #if DEBUG
-        .onChange(of: expanded) { _, now in
-            if now { model.debugCardsExpanded.insert(card.id) } else { model.debugCardsExpanded.remove(card.id) }
-        }
-        .onDisappear { model.debugCardsExpanded.remove(card.id) }
-        .onChange(of: model.debugToggleCard) { _, request in
-            guard request == card.id, layout == .list else { return }
-            expanded.toggle()
-            model.debugToggleCard = nil
-        }
-        #endif
     }
 
     private var header: some View {
@@ -103,7 +114,7 @@ struct UpdateCardView: View {
                 Text(verbatim: card.name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 6)
                 if layout == .list {
-                    Button { withAnimation(.snappy(duration: 0.18)) { expanded.toggle() } } label: {
+                    Button { withAnimation(.snappy(duration: 0.18)) { model.toggleCard(card.id) } } label: {
                         Image(systemName: "chevron.right")
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                             .frame(width: 18, height: 18)
@@ -120,7 +131,7 @@ struct UpdateCardView: View {
 
     private func messageBlock(_ message: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(verbatim: "Latest message, untrusted text" + (card.messageAt.map { " \u{00B7} " + ClockTime.local($0) } ?? ""))
+            Text(verbatim: "Latest message and step, untrusted text" + (card.messageAt.map { " \u{00B7} " + ClockTime.local($0) } ?? ""))
                 .font(Theme.caption.weight(.semibold)).foregroundStyle(.tertiary).lineLimit(1)
             Text(verbatim: message)
                 .font(.system(size: 12))
@@ -143,8 +154,8 @@ struct UpdateCardView: View {
             if isExpanded { Text(ClockTime.local(step.at)).font(Theme.meta).foregroundStyle(.secondary) }
             Image(systemName: Self.symbol(step.outcome)).font(Theme.caption)
                 .foregroundStyle(step.outcome == .failed ? Theme.failure : .secondary)
-            Text(verbatim: step.tool).font(Theme.code).lineLimit(1)
-            Text(verbatim: step.words).font(Theme.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(verbatim: step.tool.text).font(Theme.code).lineLimit(1)
+            Text(verbatim: step.words.text).font(Theme.caption).foregroundStyle(.secondary).lineLimit(1)
             Spacer(minLength: 0)
         }
     }
@@ -186,18 +197,18 @@ struct UpdateCardView: View {
     private var detail: some View {
         VStack(alignment: .leading, spacing: 10) {
             if !card.steps.isEmpty {
-                section("Last steps") {
+                section("Last steps, untrusted text") {
                     ForEach(Array(card.steps.enumerated()), id: \.offset) { _, step in stepLine(step) }
                 }
             }
             if !card.strands.isEmpty {
-                section("Strands") {
+                section("Strands, glances are untrusted text") {
                     ForEach(card.strands, id: \.name) { strand in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(verbatim: strand.name).font(Theme.code)
                             Text(verbatim: strand.state).font(Theme.caption).foregroundStyle(.secondary)
                             if let glance = strand.glance {
-                                Text(verbatim: glance).font(Theme.caption).foregroundStyle(.secondary).lineLimit(2)
+                                Text(verbatim: glance.text).font(Theme.caption).foregroundStyle(.secondary).lineLimit(2)
                             }
                         }
                     }
@@ -206,9 +217,9 @@ struct UpdateCardView: View {
                 Text(verbatim: line).font(Theme.caption).foregroundStyle(.secondary)
             }
             if let command = card.command, let exit = card.commandExit {
-                section("Last command") {
+                section("Last command, untrusted text") {
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(verbatim: command).font(Theme.code).lineLimit(2)
+                        Text(verbatim: command.text).font(Theme.code).lineLimit(2)
                         Text("exit \(exit)").font(Theme.caption).foregroundStyle(exit == 0 ? Color.secondary : Theme.failure)
                     }
                 }

@@ -15,16 +15,20 @@ import LoomKit
 //
 // `UpdateDigest` keeps the part of a `session.brief` a card draws, cut to
 // `maxSteps` steps. `UpdateWatch.targets` picks which sessions the app reads a brief
-// for, at most `readCap` of them and the ones never read first. `UpdateCard.make`
-// puts a row, its activity and its digest into one card. `UpdateBoard.order` keeps
-// the board's cards where they were when the set changes.
+// for, at most `readCap` of them, and `UpdateWatch.next` names the one read next:
+// the one read longest ago. `UpdateCard.make` puts a row, its activity and its digest
+// into one card. `UpdateBoard.order` keeps the board's cards where they were when the
+// set changes.
+//
+// The brief lists its steps newest first (protocol-change/125), so the first step is
+// the current one and a cut keeps a prefix.
 //
 // ## Why the reads are bounded
 //
-// The daemon allows six `session.brief` reads in four seconds for a credential, and
-// the open thread's pane reads one too. The app reads one brief at a time, one every
-// `UpdateWatch.gapMs`, over at most `readCap` sessions, so the cards add under one
-// read each 1.5 s whatever the number of sessions, and a session past the cap is
+// The daemon allows six `session.brief` reads in four seconds for a credential. The
+// app reads one brief at a time, one every `UpdateWatch.pauseMs`, over at most
+// `readCap` sessions, so the cards use about one read a second whatever the number of
+// sessions, which leaves room for the open pane's own read. A session past the cap is
 // drawn from the activity alone.
 
 /// What a card keeps of one session's brief: the last few steps, the strands, the
@@ -32,25 +36,25 @@ import LoomKit
 /// the goal), which a card never draws, so none of it is kept.
 public struct UpdateDigest: Sendable, Equatable {
     /// The most steps a digest holds, which is what the expanded card and the board
-    /// draw. A compact card draws `UpdateCard.compactSteps` of them.
-    public static let maxSteps = 5
+    /// draw. The daemon's brief holds four. A compact card draws `UpdateCard.compactSteps`.
+    public static let maxSteps = 4
 
     public let assistant: BriefAssistant?
-    /// The last steps, oldest first.
+    /// The last steps, newest first, as the brief lists them.
     public let steps: [BriefStep]
     public let strands: [BriefStrand]
     public let command: BriefCommand?
 
     public init(brief: SessionBrief) {
         assistant = brief.assistant
-        steps = Array(brief.steps.suffix(Self.maxSteps))
+        steps = Array(brief.steps.prefix(Self.maxSteps))
         strands = brief.strands
         command = brief.command
     }
 
     init(assistant: BriefAssistant?, steps: [BriefStep], strands: [BriefStrand], command: BriefCommand?) {
         self.assistant = assistant
-        self.steps = Array(steps.suffix(Self.maxSteps))
+        self.steps = Array(steps.prefix(Self.maxSteps))
         self.strands = strands
         self.command = command
     }
@@ -60,28 +64,32 @@ public struct UpdateDigest: Sendable, Equatable {
 public enum UpdateWatch {
     /// The most sessions read. Rows past it are drawn from the streamed activity.
     public static let readCap = 8
-    /// The wait between two reads, in milliseconds.
-    public static let gapMs = 1_500
+    /// The wait after each read, in milliseconds. One read a second is inside the
+    /// daemon's six in four seconds and leaves room for the open pane's read.
+    public static let pauseMs = 1_000
 
-    /// The wait after each read when `count` sessions are read in turn: the gap, or
-    /// longer for few sessions, so one session is read about every six seconds and
-    /// not every gap.
-    public static func pause(count: Int) -> Int { max(gapMs, 6_000 / max(count, 1)) }
-
-    /// The sessions to read, in the order to read them: those with no digest yet
-    /// first, then the rest in list order, cut to `readCap`.
-    public static func targets(rows: [InboxRow], held: Set<String>) -> [String] {
+    /// The sessions to read: those in Updates, in list order, cut to `readCap`, and
+    /// without `excluding`, the session the open pane reads for itself.
+    public static func targets(rows: [InboxRow], excluding: String? = nil) -> [String] {
         var seen: Set<String> = []
         let ids = rows.filter { $0.group == .updates && !$0.isTicket }.map(\.sessionID).filter { seen.insert($0).inserted }
-        let capped = Array(ids.prefix(readCap))
-        return capped.filter { !held.contains($0) } + capped.filter { held.contains($0) }
+        return Array(ids.prefix(readCap)).filter { $0 != excluding }
+    }
+
+    /// The session to read next: one never read, else the one read longest ago, with
+    /// the earlier in `targets` winning a tie. Nil when there is none.
+    public static func next(targets: [String], readAt: [String: Int]) -> String? {
+        targets.enumerated().min { left, right in
+            let (a, b) = (readAt[left.element] ?? Int.min, readAt[right.element] ?? Int.min)
+            return a != b ? a < b : left.offset < right.offset
+        }?.element
     }
 }
 
 /// One step as a card draws it.
 public struct UpdateStepLine: Sendable, Equatable {
-    public let tool: String
-    public let words: String
+    public let tool: UntrustedText
+    public let words: UntrustedText
     public let outcome: BriefStep.Outcome
     public let at: Int
 }
@@ -90,7 +98,8 @@ public struct UpdateStepLine: Sendable, Equatable {
 public struct UpdateStrandLine: Sendable, Equatable {
     public let name: String
     public let state: String
-    public let glance: String?
+    /// What the strand's glance says, which is model text.
+    public let glance: UntrustedText?
 }
 
 /// One card.
@@ -106,15 +115,15 @@ public struct UpdateCard: Sendable, Equatable, Identifiable {
     /// The agent's latest message, which is model text.
     public let message: String?
     public let messageAt: Int?
-    /// The step the session is on: the running one, else the last.
+    /// The step the session is on: the running one, else the newest.
     public let step: UpdateStepLine?
-    /// The last steps, oldest first.
+    /// The last steps, newest first.
     public let steps: [UpdateStepLine]
     /// `2 strands · advisor idle`, or nil when the session has only main.
     public let strandsLine: String?
     public let strands: [UpdateStrandLine]
-    /// The last command and its exit, as the brief reports them.
-    public let command: String?
+    /// The last command, which is model text.
+    public let command: UntrustedText?
     public let commandExit: Int?
     /// `last command failed, exit 2`, only for a failed command.
     public let failure: String?
@@ -127,9 +136,9 @@ public struct UpdateCard: Sendable, Equatable, Identifiable {
         row: InboxRow, activity: SessionActivity?, digest: UpdateDigest?, machine: String?, now: Int
     ) -> UpdateCard {
         let lines = (digest?.steps ?? []).map {
-            UpdateStepLine(tool: $0.tool.text, words: InboxRule.oneLine($0.words.text), outcome: $0.outcome, at: $0.at)
+            UpdateStepLine(tool: $0.tool, words: UntrustedText(InboxRule.oneLine($0.words.text)), outcome: $0.outcome, at: $0.at)
         }
-        let current = lines.last { $0.outcome == .running } ?? lines.last
+        let current = lines.first { $0.outcome == .running } ?? lines.first
 
         // The brief's latest text may belong to the turn still running, so it is
         // preferred over the activity's last finished message.
@@ -142,7 +151,7 @@ public struct UpdateCard: Sendable, Equatable, Identifiable {
         let strands: [UpdateStrandLine] = delegates.map { strand in
             UpdateStrandLine(
                 name: strand.name, state: strand.state.rawValue,
-                glance: glances.first { $0.strand == strand.name }.map(\.summary).flatMap { $0.isEmpty ? nil : InboxRule.oneLine($0) }
+                glance: glances.first { $0.strand == strand.name }.map(\.summary).flatMap { $0.isEmpty ? nil : UntrustedText(InboxRule.oneLine($0)) }
             )
         }
         let others = glances.filter { $0.strand != "main" }
@@ -154,21 +163,21 @@ public struct UpdateCard: Sendable, Equatable, Identifiable {
         }
 
         let exit = digest?.command?.exit
-        let command = digest?.command.map { InboxRule.oneLine($0.command.text) }
+        let command = digest?.command.map { UntrustedText(InboxRule.oneLine($0.command.text)) }
         let failure = exit.flatMap { $0 == 0 ? nil : "last command failed, exit \($0)" }
 
-        let stamps = [messageAt, row.since, lines.last?.at].compactMap { $0 }
+        let stamps = [messageAt, row.since, lines.first?.at].compactMap { $0 }
         return UpdateCard(
             id: row.id, sessionID: row.sessionID, name: row.name,
             state: stateWords(row: row, now: now), message: message, messageAt: messageAt,
-            step: current, steps: Array(lines.suffix(UpdateDigest.maxSteps)),
+            step: current, steps: Array(lines.prefix(UpdateDigest.maxSteps)),
             strandsLine: strandsLine, strands: strands, command: command, commandExit: exit, failure: failure,
             machine: machine, lastActivity: stamps.max() ?? 0
         )
     }
 
-    /// The steps a compact card draws: the last `compactSteps`.
-    public var compact: [UpdateStepLine] { Array(steps.suffix(Self.compactSteps)) }
+    /// The steps a compact card draws: the newest `compactSteps`.
+    public var compact: [UpdateStepLine] { Array(steps.prefix(Self.compactSteps)) }
 
     /// `working · 2 min into a turn` for a working row, and `waiting 1m` for any
     /// other row that carries an age.

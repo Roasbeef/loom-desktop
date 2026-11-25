@@ -338,12 +338,7 @@ struct InboxView: View {
         // The list's selection is the model's. A nil the list reports leaves it alone.
         let selection = Binding<InboxSelection?>(
             get: { model.inboxOpening.selection },
-            set: { choice in
-                // A pick of another row leaves the board; the list reporting the row
-                // that is already open is not a pick.
-                if let choice, choice != model.inboxOpening.selection { model.inboxWatching = false }
-                model.chooseInbox(choice)
-            }
+            set: { model.chooseInbox($0) }
         )
 
         return Group {
@@ -374,12 +369,9 @@ struct InboxView: View {
                 }
             }
         }
-        // The cards' briefs are read while the inbox is drawn, for the sessions in
-        // Updates only. The task restarts when the set of sessions changes, not when
-        // a digest lands.
-        .task(id: UpdateWatch.targets(rows: board.rows, held: []).sorted().joined(separator: ",")) {
-            await watcher.run(rows: board.rows, model: model)
-        }
+        // One loop reads the cards' briefs while the inbox is drawn, for the sessions in
+        // Updates only, and re-derives which on each lap.
+        .task { await watcher.run(model: model) }
         #if DEBUG
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
         #endif
@@ -560,7 +552,9 @@ private struct InboxList: View {
         }
         .listStyle(.inset)
         .onChange(of: highlighted) { _, now in
-            if let now { selection = now } else { highlighted = selection }
+            // The list echoes a selection the model made, which is no pick and must not
+            // close the board.
+            if let now { if now != selection { selection = now } } else { highlighted = selection }
         }
         .onChange(of: selection, initial: true) { _, now in highlighted = now }
         #if DEBUG
