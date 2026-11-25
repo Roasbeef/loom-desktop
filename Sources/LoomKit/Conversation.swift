@@ -38,6 +38,9 @@ public struct PendingInput: Sendable, Equatable, Identifiable {
 /// part of durable history, so this is display state only.
 public struct LiveStream: Sendable, Equatable {
     public var generation: String?
+    /// The durable entry this response is reserved for, read from the generation's
+    /// identity. A stream that names one is removed only when that entry is held.
+    public var reserved: String?
     public var text = ""
     public var thinking = ""
     public var tools: [LiveTool] = []
@@ -386,9 +389,17 @@ public struct Conversation: Sendable, Equatable {
         if !wasAdopted { generation.attached(busy: strands.filter(\.isBusy).map(\.id)) }
 
         // An ended stream stays drawn until its durable entry lands, or the
-        // reply would vanish for the moment between `end` and this cut.
+        // reply would vanish for the moment between `end` and this cut. A stream
+        // that names its reserved entry waits for that entry and no other, as in
+        // Loom's stream_identity: an unrelated entry landing on any strand says
+        // nothing about this reply. A stream with no reservation, from an older
+        // daemon, keeps the old rule of any landed entry.
         if landed {
-            streams = streams.filter { !$0.value.ended }
+            streams = streams.filter { stream in
+                guard stream.value.ended else { return true }
+                guard let reserved = stream.value.reserved else { return false }
+                return entries[reserved] == nil
+            }
         }
         return landed || metadataChanged || !wasAdopted
     }
@@ -552,7 +563,7 @@ public struct Conversation: Sendable, Equatable {
 
         // A new generation replaces every old fragment on the strand.
         if stream.generation != generation {
-            stream = LiveStream(generation: generation)
+            stream = LiveStream(generation: generation, reserved: StreamIdentity.responseEntry(generation))
         }
         switch body["kind"]?.string {
         case "text":
@@ -569,6 +580,13 @@ public struct Conversation: Sendable, Equatable {
             }
         case "end":
             stream.ended = true
+
+            // The reserved entry may already be held, when the cut that carries it
+            // beat the end of the stream to this client.
+            if let reserved = stream.reserved, entries[reserved] != nil {
+                streams[strand] = nil
+                return
+            }
         default:
             break
         }
