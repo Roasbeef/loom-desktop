@@ -18,7 +18,7 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from loomui import App, BASE, Cluster, ROOT, screen_locked  # noqa: E402
+from loomui import App, BASE, Cluster, ROOT, Unproven, screen_locked  # noqa: E402
 import scenarios  # noqa: E402
 import visual  # noqa: E402
 
@@ -77,6 +77,8 @@ def main():
                 app.cmd("stopall", timeout=60)
                 scenario.run(context)
                 error = None
+            except Unproven as reason:
+                error = f"Not run: {reason}"
             except Exception:
                 error = traceback.format_exc()
             if not app.alive():
@@ -91,14 +93,17 @@ def main():
                 if error:
                     dump_failure(app, scenario.name)
             results.append((scenario, error, elapsed, shot))
-            print(f"{'FAIL' if error else 'ok  '} {scenario.name} ({elapsed:.1f}s)", flush=True)
-            if error:
+            unproven = bool(error) and error.startswith("Not run:")
+            print(f"{'blocked' if unproven else 'FAIL' if error else 'ok  '} {scenario.name} ({elapsed:.1f}s)", flush=True)
+            if unproven:
+                print(error, flush=True)
+            elif error:
                 print(error, flush=True)
     finally:
         app.quit()
         cluster.stop()
 
-    blocked = sum(1 for _, e, _, _ in results if e == BLOCKED)
+    blocked = sum(1 for _, e, _, _ in results if e and e.startswith("Not run:"))
     failed = sum(1 for _, e, _, _ in results if e) - blocked
     report(results, context)
     print(f"\n{len(results) - failed - blocked} passed, {failed} failed, {blocked} blocked. Report: {OUT / 'report.html'}")

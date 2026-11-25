@@ -27,6 +27,11 @@ class Failure(AssertionError):
     pass
 
 
+class Unproven(Exception):
+    """The scenario cannot run against this cluster, and says why. It is counted as
+    blocked and not as passed, so a daemon too old for a feature never reads green."""
+
+
 def wait_for(condition, timeout=DEFAULT_TIMEOUT, what="condition", every=0.1):
     """Polls until `condition` returns something true, and returns it."""
     deadline = time.monotonic() + timeout
@@ -153,7 +158,19 @@ class App:
         self.log = open(self.dir / "app.log", "ab")
         self.proc = subprocess.Popen([str(self.binary)], env=env, stdout=self.log, stderr=self.log)
         wait_for(lambda: self.ready(), 30, "the app to answer")
+
+        # A scenario run alone starts at once, so the app must be connected to the
+        # orchestrator before it is handed over. Run with the rest, the first
+        # scenario's own wait hid this.
+        wait_for(lambda: self.connected(), 30, "the app to connect to the orchestrator")
         return self
+
+    def connected(self):
+        try:
+            daemons = json.loads(self.cmd("snapshot", timeout=2.0)).get("daemons", [])
+        except (Failure, ValueError):
+            return False
+        return bool(daemons) and daemons[0]["state"] == "connected"
 
     def ready(self):
         try:
