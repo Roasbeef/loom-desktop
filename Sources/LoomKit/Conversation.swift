@@ -341,6 +341,9 @@ public struct Conversation: Sendable, Equatable {
 
     public var entryCount: Int { entries.count }
 
+    /// Whether the durable entry with this id is held, which is what hands a stream to it.
+    public func holds(entry id: String) -> Bool { entries[id] != nil }
+
     /// Total spend reported for the session, when the provider priced it.
     public var totalCost: Double? { usage["cost"]?["total"]?.double }
 
