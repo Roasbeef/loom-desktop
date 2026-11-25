@@ -54,7 +54,11 @@ struct DispatchFormModel: SimSpec {
             let judged: FolderCheck = path.isEmpty ? .empty : path == "/missing" ? .missing : path == "/file" ? .notAFolder : .ok(path)
             createParameterChanged = path != world.form.fields.workspace
             _ = world.form.apply(.edit(.workspace(path, folder: judged, worktreeProblem: path == "/b" ? "That folder is not a Git repository." : nil)))
-        case 1: _ = world.form.apply(.edit(.prompt(arg % 3 == 0 ? "" : "do it \(arg)")))
+        case 1:
+            // With no name typed the prompt's first line is the session's name, a create parameter.
+            let before = world.form.effectiveName
+            _ = world.form.apply(.edit(.prompt(arg % 3 == 0 ? "" : "do it \(arg)")))
+            createParameterChanged = world.form.effectiveName != before
         case 2:
             createParameterChanged = "n\(arg % 2)" != world.form.fields.name
             _ = world.form.apply(.edit(.name("n\(arg % 2)")))
@@ -197,6 +201,14 @@ final class DispatchFormModelTests: XCTestCase {
         }
     }
 
+    /// The corpus: seeds that once failed, kept so they keep passing. The first is the campaign
+    /// failure on generator 100 (the prompt's first line names the session and did not move the key).
+    func testTheRegressionSeedsPass() {
+        for hex in ["61000041102e211bba2b", "93000080b1cf71dcba5c"] {
+            guard let seed = Sim.Seed(hex: hex), case .success = Sim.run(DispatchFormModel(), seed: seed) else { return XCTFail("seed \(hex) fails") }
+        }
+    }
+
     func testTheCorpusIsDeterministicOnTwoRuns() {
         var rng = SimRandom(seed: 53)
         let seeds = (0..<300).map { _ -> Sim.Seed in
@@ -244,13 +256,30 @@ final class DispatchFormModelTests: XCTestCase {
         XCTAssertTrue(form.apply(.submit).isEmpty, "sending again would make a second session")
     }
 
+    /// Found by a long campaign: with no name typed, editing the prompt changed the name the
+    /// session was created with and not the key, so a retry recovered a session named for the old prompt.
+    func testEditingThePromptMovesTheKeyWhenItNamesTheSession() {
+        var form = DispatchForm(seed: "f")
+        _ = form.apply(.edit(.prompt("first task")))
+        let key = form.requestKey
+        _ = form.apply(.edit(.prompt("second task")))
+        XCTAssertNotEqual(form.requestKey, key, "the first line is the name, a create parameter")
+        let named = form.requestKey
+        _ = form.apply(.edit(.name("My session")))
+        let afterName = form.requestKey
+        XCTAssertNotEqual(afterName, named)
+        _ = form.apply(.edit(.prompt("third task")))
+        XCTAssertEqual(form.requestKey, afterName, "with a name typed the prompt is not a create parameter")
+    }
+
     func testARetryAfterANewFolderNeverCarriesTheOldKey() {
         var form = DispatchForm(seed: "f")
         _ = form.apply(.edit(.workspace("/a", folder: .ok("/a"), worktreeProblem: nil)))
+        _ = form.apply(.edit(.name("Fix the build")))
         _ = form.apply(.edit(.prompt("go")))
         let first = form.requestKey
         _ = form.apply(.edit(.prompt("go, please")))
-        XCTAssertEqual(form.requestKey, first, "the prompt is not a create parameter")
+        XCTAssertEqual(form.requestKey, first, "with a name typed the prompt is not a create parameter")
         _ = form.apply(.edit(.workspace("/b", folder: .ok("/b"), worktreeProblem: nil)))
         XCTAssertNotEqual(form.requestKey, first, "the folder is, so a retry cannot recover the session made for /a")
     }

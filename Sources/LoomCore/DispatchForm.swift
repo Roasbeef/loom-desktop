@@ -16,8 +16,9 @@ import LoomKit
 /// not when the folder or the name did, so a retry after a lost reply and a new folder would
 /// have recovered the session made for the old folder (O4). The key here is derived from a
 /// seed the host supplies once and a generation that moves on every change to any field the
-/// create carries, the folder and the name included. The prompt is not a create parameter and
-/// does not move it: it is sent afterwards, once.
+/// create carries, the folder and the name included. The prompt moves it only through the name:
+/// with no name typed, the session is named for the prompt's first line. Otherwise the prompt is
+/// not a create parameter, and it is sent afterwards, once.
 ///
 /// ## What the host supplies
 ///
@@ -245,7 +246,11 @@ public struct DispatchForm: Sendable, Equatable {
             fields.configuration = text
             generation += 1
         case .prompt(let text):
+            // With no name typed, the session is named for the first line of the prompt, so
+            // editing that line changes a create parameter and must move the key.
+            let before = effectiveName
             fields.prompt = text
+            if effectiveName != before { generation += 1 }
         case .name(let text):
             guard text != fields.name else { return }
             fields.name = text
@@ -278,10 +283,15 @@ public struct DispatchForm: Sendable, Equatable {
         }
     }
 
-    private func request() -> Request {
-        let wanted = worktreeJudgement.wanted
+    /// The name the session is created with: the one typed, or the first line of the prompt.
+    public var effectiveName: String {
         let typed = fields.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let firstLine = fields.prompt.split(separator: "\n").first.map { String($0.prefix(60)) } ?? ""
+        return typed.isEmpty ? firstLine : typed
+    }
+
+    private func request() -> Request {
+        let wanted = worktreeJudgement.wanted
         let workspace: String
         if case .ok(let path) = folderJudgement, fields.placement == .local, fields.disk == .thisMac {
             workspace = path
@@ -292,7 +302,7 @@ public struct DispatchForm: Sendable, Equatable {
             requestKey: requestKey,
             daemon: fields.daemon,
             workspace: workspace,
-            name: typed.isEmpty ? firstLine : typed,
+            name: effectiveName,
             prompt: fields.prompt,
             placement: fields.placement,
             configuration: fields.configuration,
