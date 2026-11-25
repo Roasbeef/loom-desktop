@@ -61,8 +61,9 @@ public enum WorktreeWords {
         if text.isEmpty { return nil }
         if text.utf8.count > 255 { return "That base is too long. Use a branch, tag or commit name." }
         if text.hasPrefix("-") { return "A base cannot start with a dash." }
-        if text.unicodeScalars.contains(where: { $0 == " " || CharacterSet.controlCharacters.contains($0) }) {
-            return "A base cannot hold a space. Use a branch, tag or commit name."
+        // The daemon refuses code points up to 32 (space and the controls) and 127.
+        if text.unicodeScalars.contains(where: { $0.value <= 32 || $0.value == 127 }) {
+            return "A base cannot hold a space or a control character. Use a branch, tag or commit name."
         }
         return nil
     }
