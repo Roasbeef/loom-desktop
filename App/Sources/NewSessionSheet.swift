@@ -436,7 +436,6 @@ private struct WorktreeToggle: View {
         .controlSize(.small)
         .help("Work in a Git worktree of this folder, on a branch of its own, so the changes stay out of the folder")
         .accessibilityLabel("Worktree")
-        .accessibilityValue(choice == .ownTree ? "on" : "off")
     }
 }
 
@@ -455,7 +454,6 @@ private struct WorktreeBaseField: View {
         }
         .font(Theme.caption)
         .foregroundStyle(.secondary)
-        .accessibilityLabel("Worktree base disclosure")
     }
 }
 

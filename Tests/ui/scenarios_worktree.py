@@ -62,13 +62,13 @@ def the_worktree_toggle_is_off_by_default_local_only_and_judges_the_folder(c):
         c.app.type("Worktree form demo")
         choose_folder(c, plain)
         wait_for(lambda: worktree_toggle(c), what="the Worktree toggle")
-        check(worktree_toggle(c)["value"] == "off", f"the toggle should start off: {worktree_toggle(c)}")
+        check(worktree_toggle(c)["value"] == "0", f"the toggle should start off: {worktree_toggle(c)}")
         c.app.not_see("Worktree base")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed with the toggle off")
 
         # On, a folder that is not a repository is named, and nothing can be sent.
         c.app.press("Worktree")
-        wait_for(lambda: worktree_toggle(c)["value"] == "on", what="the toggle to turn on")
+        wait_for(lambda: worktree_toggle(c)["value"] == "1", what="the toggle to turn on")
         c.app.see(NOT_A_REPOSITORY)
         check(not c.app.enabled("Dispatch"), "a folder that is not a repository should not allow a worktree dispatch")
 
@@ -76,7 +76,7 @@ def the_worktree_toggle_is_off_by_default_local_only_and_judges_the_folder(c):
         choose_folder(c, repo)
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed for a repository")
         c.app.not_see(NOT_A_REPOSITORY)
-        c.app.press("Worktree base disclosure")
+        c.app.press("Base")
         c.app.fill("Worktree base", "-bad")
         c.app.see("cannot start with a dash")
         check(not c.app.enabled("Dispatch"), "a base that starts with a dash should not allow dispatch")
@@ -87,7 +87,7 @@ def the_worktree_toggle_is_off_by_default_local_only_and_judges_the_folder(c):
 
         # Turning it off again sends nothing about a worktree.
         c.app.press("Worktree")
-        wait_for(lambda: worktree_toggle(c)["value"] == "off", what="the toggle to turn off")
+        wait_for(lambda: worktree_toggle(c)["value"] == "0", what="the toggle to turn off")
         c.app.not_see("Worktree base")
 
         # An executor's workspace chooses its own mode, so the toggle is not drawn.
@@ -107,7 +107,7 @@ def a_session_created_in_a_worktree_shows_its_branch_in_the_header_and_the_sideb
         c.app.type("Worktree session demo")
         choose_folder(c, repo)
         c.app.press("Worktree")
-        wait_for(lambda: worktree_toggle(c)["value"] == "on", what="the toggle to turn on")
+        wait_for(lambda: worktree_toggle(c)["value"] == "1", what="the toggle to turn on")
         wait_for(lambda: c.app.enabled("Dispatch"), what="Dispatch to be allowed")
         c.app.press("Dispatch")
 
