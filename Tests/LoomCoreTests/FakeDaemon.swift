@@ -80,6 +80,8 @@ struct FakeDaemon: Equatable {
     var socket = Socket()
     var counter = 0
     var strands: [String] = ["main"]
+    /// The fragments of each entry, which never change once written, so a transfer does not encode it again.
+    var fragmentsByEntry: [String: [Fragment]] = [:]
 
     mutating func attach() {
         socket = Socket(role: socket.role)
@@ -146,23 +148,10 @@ struct FakeDaemon: Equatable {
         }
         counter += 1
         let snapshot = "x\(counter)"
-        var fragments: [Fragment] = []
-        func add(record: String, kind: String, seq: Int?, payload: JSONValue) {
-            let data = Array(Frames.text(payload).utf8)
-            var offset = 0
-            repeat {
-                let end = min(offset + Self.fragmentBytes, data.count)
-                fragments.append(Fragment(
-                    record: record, kind: kind, seq: seq, total: data.count, offset: offset,
-                    data: Data(data[offset..<end]).base64EncodedString()
-                ))
-                offset = end
-            } while offset < data.count
-        }
-        add(record: "metadata", kind: "metadata", seq: nil, payload: metadata())
+        var fragments = Self.fragments(record: "metadata", kind: "metadata", seq: nil, payload: metadata())
         if window != "decided" {
             for entry in entries where window == "history" ? false : entry.seq >= from {
-                add(record: entry.id, kind: "entry", seq: entry.seq, payload: entryJSON(entry))
+                fragments += fragmentsByEntry[entry.id] ?? []
             }
         }
         socket.transfer = OpenTransfer(id: snapshot, nextSeq: nextSeq, fragments: fragments)
@@ -226,7 +215,24 @@ struct FakeDaemon: Equatable {
         append(entry)
     }
 
+    /// Cuts one record into the fragments a transfer sends, so a record spans several chunks.
+    static func fragments(record: String, kind: String, seq: Int?, payload: JSONValue) -> [Fragment] {
+        let data = Array(Frames.text(payload).utf8)
+        var out: [Fragment] = []
+        var offset = 0
+        repeat {
+            let end = min(offset + fragmentBytes, data.count)
+            out.append(Fragment(
+                record: record, kind: kind, seq: seq, total: data.count, offset: offset,
+                data: Data(data[offset..<end]).base64EncodedString()
+            ))
+            offset = end
+        } while offset < data.count
+        return out
+    }
+
     private mutating func append(_ entry: Entry) {
+        fragmentsByEntry[entry.id] = Self.fragments(record: entry.id, kind: "entry", seq: entry.seq, payload: entryJSON(entry))
         entries.append(entry)
         leaf[entry.strand] = entry.id
         nextSeq += 1

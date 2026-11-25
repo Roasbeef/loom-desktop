@@ -32,6 +32,8 @@ struct DispatchModel: SimSpec {
         var faults: Sim.FaultMask
         var attempts = 1
         var wantsWorktree: Bool
+        var lastSend: Dispatch.SendResult?
+        var ignored: Set<String> = []
         var census: [String: Int] = [:]
         let key: String
 
@@ -94,6 +96,7 @@ struct DispatchModel: SimSpec {
                     events = [.createFailed(.unknown)]
                     world.count("createLost")
                 } else if world.wantsWorktree, faulty(.worktreeIgnored) {
+                    world.ignored.insert(session)
                     events = [.createFailed(.worktreeNotHonoured(session: session))]
                     world.count("worktreeIgnored")
                 } else {
@@ -116,12 +119,15 @@ struct DispatchModel: SimSpec {
             let session = world.fake.keys[world.key] ?? "?"
             world.promptWrites[session, default: 0] += 1
             if faulty(.promptRefused) {
+                world.lastSend = .refused("busy")
                 events = [.sendSettled(.refused("busy"))]
                 world.count("promptRefused")
             } else if faulty(.promptLost) {
+                world.lastSend = .unknown
                 events = [.sendSettled(.unknown)]
                 world.count("promptLost")
             } else {
+                world.lastSend = .acknowledged
                 events = [.sendSettled(.acknowledged)]
             }
         case .cleanUp(let session):
@@ -173,8 +179,16 @@ struct DispatchModel: SimSpec {
         guard world.fake.sessions.count <= world.keys.count else { throw Sim.Violation("O4", "a second session was made for one key") }
 
         // H2: an attempt that ended with the prompt not acknowledged never reports `sent`.
-        if let outcome = world.outcomes.last, case .sent(let session) = outcome, world.promptWrites[session, default: 0] == 0 {
-            throw Sim.Violation("H2", "sent was reported but no prompt was written")
+        if let outcome = world.outcomes.last, case .sent(let session) = outcome {
+            if world.promptWrites[session, default: 0] == 0 { throw Sim.Violation("H2", "sent was reported but no prompt was written") }
+            if world.lastSend != .acknowledged { throw Sim.Violation("H2", "sent was reported though the first prompt ended as \(String(describing: world.lastSend))") }
+        }
+
+        // A session the daemon made without the worktree asked for is removed, not left listed.
+        if world.queue.isEmpty, !world.outcomes.isEmpty {
+            for session in world.ignored where world.fake.sessions.contains(where: { $0.id == session }) {
+                throw Sim.Violation("cleanup", "session \(session) was made without its worktree and was left behind")
+            }
         }
     }
 }

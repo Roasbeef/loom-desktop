@@ -7,10 +7,54 @@ import LoomKit
 /// thing everywhere. They follow the v2 envelope the client decodes: `v`, `event`,
 /// an optional `reply_to` and `seq`, and a `body`.
 enum Frames {
+    /// Compact JSON with sorted keys. A direct serializer, because `JSONEncoder` over
+    /// `JSONValue` dominated the cost of a simulated schedule.
     static func text(_ value: JSONValue) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        return String(decoding: (try? encoder.encode(value)) ?? Data(), as: UTF8.self)
+        var out = ""
+        write(value, to: &out)
+        return out
+    }
+
+    private static func write(_ value: JSONValue, to out: inout String) {
+        switch value {
+        case .null: out += "null"
+        case .bool(let flag): out += flag ? "true" : "false"
+        case .int(let number): out += String(number)
+        case .double(let number): out += String(number)
+        case .string(let text): writeString(text, to: &out)
+        case .array(let items):
+            out += "["
+            for (index, item) in items.enumerated() {
+                if index > 0 { out += "," }
+                write(item, to: &out)
+            }
+            out += "]"
+        case .object(let fields):
+            out += "{"
+            for (index, key) in fields.keys.sorted().enumerated() {
+                if index > 0 { out += "," }
+                writeString(key, to: &out)
+                out += ":"
+                if let field = fields[key] { write(field, to: &out) }
+            }
+            out += "}"
+        }
+    }
+
+    private static func writeString(_ text: String, to out: inout String) {
+        out += "\""
+        for scalar in text.unicodeScalars {
+            switch scalar {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            default:
+                if scalar.value < 0x20 { out += String(format: "\\u%04x", scalar.value) } else { out.unicodeScalars.append(scalar) }
+            }
+        }
+        out += "\""
     }
 
     static func envelope(replyTo: Int?, event: String, seq: Int? = nil, body: JSONValue = .object([:])) -> String {

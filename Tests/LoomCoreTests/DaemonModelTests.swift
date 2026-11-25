@@ -50,6 +50,7 @@ struct DaemonModel: SimSpec {
         var helloEpoch: String?
         var census: [String: Int] = [:]
         var opens = 0
+        var endedLanes: Set<String> = []
 
         mutating func count(_ key: String) { census[key, default: 0] += 1 }
     }
@@ -179,6 +180,7 @@ struct DaemonModel: SimSpec {
         guard !ups.isEmpty else { return }
         let id = ups[arg % ups.count]
         world.lanes[id]?.up = false
+        world.endedLanes.insert(id)
         world.daemon.laneEnded(id)
         world.count("laneEnded")
     }
@@ -253,10 +255,15 @@ struct DaemonModel: SimSpec {
             case .state, .catalogue:
                 break
             case .attach(let id, let inheriting):
+                // A lane that ended is replaced by one that takes over what it held.
+                if world.endedLanes.remove(id) != nil, inheriting != .previous {
+                    world.fake.violations.append(Sim.Violation("B7", "session \(id) lost its lane and was attached fresh, dropping what the old lane held"))
+                }
                 world.lanes[id] = HostLane(epoch: world.fake.epoch, up: true)
                 world.count(inheriting == .previous ? "reattach" : "attach")
             case .detachAll:
                 world.lanes = [:]
+                world.endedLanes = []
                 world.count("detachAll")
             case .due:
                 world.count("due")

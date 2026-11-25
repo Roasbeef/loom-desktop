@@ -332,6 +332,10 @@ struct SessionModel: SimSpec {
                 case .pushed:
                     world.host.pushedProjections += 1
                 case .stream:
+                    // T5: the stream is projected at most once per flush window, whatever pushes arrive in it.
+                    if let last = world.lastStream, world.now - last < 33 {
+                        world.daemon.violations.append(Sim.Violation("T5", "the stream was projected twice within \(world.now - last) ms"))
+                    }
                     world.host.streamProjections += 1
                     world.host.stream = conversation.streams[world.session.focusedStrand]
                     world.lastStream = world.now
