@@ -10,7 +10,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 dir="$root/Sources/LoomCore"
 pattern='(^|[^A-Za-z_])(async|await|Task|Date\(|ContinuousClock|SuspendingClock|UserDefaults|FileManager|URLSession|DispatchQueue|DispatchTime|Process\(|NSWorkspace|@MainActor|Thread\.|sleep\(|NotificationCenter|ProcessInfo)([^A-Za-z_]|$)'
 status=0
-for file in $(find "$dir" -name '*.swift' | sort); do
+for file in $(find "$dir" -name '*.swift' | sort) "$root/Sources/LoomKit/ControlLane.swift"; do
     # Strip // comments (including doc comments) before matching.
     hits="$(sed -e 's://.*$::' "$file" | grep -nE "$pattern" || true)"
     if [ -n "$hits" ]; then

@@ -27,7 +27,13 @@ final class SessionWorktreeTests: XCTestCase {
             }
         }
 
+        private var greeted = false
+
         func receive() async throws -> String {
+            // A control socket opens with hello, and the client sends nothing before it.
+            if lock.withLock({ defer { greeted = true }; return !greeted }) {
+                return #"{"v":2,"event":"hello","body":{"epoch":"e1"}}"#
+            }
             while lock.withLock({ ids.isEmpty }) { try await Task.sleep(for: .milliseconds(5)) }
             let id = lock.withLock { ids.removeFirst() }
             return #"{"v":2,"reply_to":\#(id),"event":"sessions.create","body":\#(reply)}"#

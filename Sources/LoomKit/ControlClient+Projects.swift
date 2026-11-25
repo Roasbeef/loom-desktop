@@ -11,7 +11,7 @@ import Foundation
 extension ControlClient {
     /// The owner's projects with their counts by stage.
     public func projects() async throws -> [ProjectSummary] {
-        ProjectList.decode(try await request("projects.list", body: [:]))
+        ProjectList.decode(try await request("projects.list", body: [:], priority: .background))
     }
 
     /// One page of a project's board, needs-a-person first. Page zero also carries
@@ -19,7 +19,7 @@ extension ControlClient {
     public func projectBoard(_ project: String, page: Int = 0) async throws -> ProjectPage {
         let body = try await request("projects.board", body: [
             "project": .string(project), "page": .int(Int64(page)),
-        ])
+        ], priority: .background)
         guard let page = ProjectPage(body) else {
             throw LoomError.protocolViolation("projects.board returned no board")
         }

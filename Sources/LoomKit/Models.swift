@@ -87,7 +87,7 @@ public struct SessionRecord: Sendable, Identifiable, Equatable {
     /// reports only for such a session (loom's protocol-change/133).
     public let worktree: SessionWorktree?
 
-    init?(_ body: JSONValue) {
+    public init?(_ body: JSONValue) {
         guard let id = body["session_id"]?.string else { return nil }
         self.id = id
         workspace = body["workspace"]?.string ?? ""
@@ -147,7 +147,7 @@ public struct SessionActivity: Sendable, Equatable {
     public let model: String?
     public let glances: [Glance]
 
-    init?(_ body: JSONValue) {
+    public init?(_ body: JSONValue) {
         guard let id = body["session_id"]?.string else { return nil }
         sessionID = id
 
@@ -204,7 +204,7 @@ public struct DeploymentNode: Sendable, Equatable, Identifiable {
     public let ledgerBytes: Int?
     public let ledgerLimit: Int?
 
-    init?(_ body: JSONValue) {
+    public init?(_ body: JSONValue) {
         guard let node = body["node"]?.string else { return nil }
         id = node
         name = body["name"]?.string ?? node
@@ -240,7 +240,7 @@ public struct UncleanScope: Sendable, Equatable, Identifiable {
     public let state: String
     public var id: String { sessionID }
 
-    init?(_ body: JSONValue) {
+    public init?(_ body: JSONValue) {
         guard let session = body["session"]?.string else { return nil }
         sessionID = session
         state = body["state"]?.string ?? "unknown"
@@ -258,7 +258,7 @@ public struct OtherOrchestrator: Sendable, Equatable, Identifiable {
     public let serves: [String]
     public var id: String { name }
 
-    init?(_ body: JSONValue) {
+    public init?(_ body: JSONValue) {
         guard let name = body["name"]?.string else { return nil }
         self.name = name
         node = body["node"]?.string ?? name
@@ -276,7 +276,7 @@ public struct MoveInFlight: Sendable, Equatable, Identifiable {
     public let reason: String?
     public var id: String { sessionID }
 
-    init?(_ body: JSONValue) {
+    public init?(_ body: JSONValue) {
         guard let session = body["session_id"]?.string else { return nil }
         sessionID = session
         destination = body["to"]?.string ?? ""
@@ -394,7 +394,7 @@ public struct DeploymentEdge: Sendable, Equatable {
     public let link: String
     public let sessions: Int
 
-    init?(_ body: JSONValue) {
+    public init?(_ body: JSONValue) {
         guard let from = body["from"]?.string, let to = body["to"]?.string else { return nil }
         self.from = from
         self.to = to

@@ -178,20 +178,20 @@ final class DaemonConnection: Identifiable {
 
     /// The deployment read connects to every node, so it runs far less often
     /// than the catalogue poll.
-    private static let deploymentEvery = 8
+    private static let deploymentEvery = Daemon.deploymentEvery
 
     /// The attention feed is a fresh observation on every call, and the daemon
     /// neither caches nor pushes it, so it is read about every 30 seconds beside
     /// the 2 second catalogue poll.
-    private static let attentionEvery = 15
+    private static let attentionEvery = Daemon.attentionEvery
 
     /// Projects are read about every eight seconds: the list and each board's page
     /// zero are fresh observations, and the daemon pushes no change.
-    private static let projectsEvery = 4
+    private static let projectsEvery = Daemon.projectsEvery
 
     /// The worktree scan starts at most one read about every six seconds, which
     /// keeps within the daemon's two reads in four seconds for a credential.
-    private static let reviewEvery = 3
+    private static let reviewEvery = Daemon.reviewEvery
 
     init(id: String, source: Source) {
         self.id = id
@@ -256,13 +256,13 @@ final class DaemonConnection: Identifiable {
                 ticks = 0
                 while !Task.isCancelled {
                     try await refresh(control)
-                    try await Task.sleep(for: .seconds(2))
+                    try await Task.sleep(for: .milliseconds(Daemon.pollMs))
                 }
             } catch {
                 await control?.close()
                 control = nil
                 state = .unavailable(error.localizedDescription)
-                try? await Task.sleep(for: .seconds(3))
+                try? await Task.sleep(for: .milliseconds(Daemon.retryMs))
             }
         }
     }
@@ -295,17 +295,15 @@ final class DaemonConnection: Identifiable {
             self.activity = activity
         }
 
-        // An approval count says only that a record exists, so a session asking
-        // for one gets a lane in order to read the record the inbox must show.
-        for row in activity.values where row.approvals > 0 && attached[row.sessionID]?.isLive != true {
-            attach(row.sessionID)
-        }
-
-        // A socket can drop while its session lives on, so a session someone
-        // attached to is reattached. Nothing unsent is carried across, as the
-        // protocol requires (section 6.7).
-        for (id, controller) in attached where !controller.isLive && resident.contains(id) {
-            attach(id)?.inherit(from: controller)
+        // The core decides which sessions need a lane: one asking for an approval, and one
+        // whose socket dropped while it lives on. A socket can drop, so a session someone
+        // attached to is attached again, taking over the draft and the sent lines. Nothing
+        // unsent is carried across the wire, as the protocol requires (section 6.7).
+        let lanes = attached.mapValues { $0.isLive ? Daemon.LaneState.up : .ended }
+        for step in Daemon.attachPlan(resident: resident, approvals: activity.mapValues(\.approvals), lanes: lanes) {
+            let previous = attached[step.session]
+            let next = attach(step.session)
+            if step.inheriting == .previous, let previous { next?.inherit(from: previous) }
         }
 
         if ticks % Self.deploymentEvery == 0 {

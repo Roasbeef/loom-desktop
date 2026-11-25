@@ -26,7 +26,7 @@ extension ControlClient {
             let body = try await request("sessions.attention", body: [
                 "sessions": .array(batch.map { .string($0) }),
                 "epoch": .string(epoch),
-            ])
+            ], priority: .background)
             for row in (body["attention"]?.array ?? []).compactMap(AttentionRow.init) {
                 rows[row.sessionID] = row
             }
@@ -40,7 +40,7 @@ extension ControlClient {
             "session": .string(sessionID),
             "id": .string(id),
             "epoch": .string(try currentEpoch()),
-        ])
+        ], priority: .background)
         guard let record = AttentionRecord(body) else {
             throw LoomError.protocolViolation("attention.read returned no record")
         }
@@ -77,7 +77,7 @@ extension ControlClient {
         var rows: [String: SavedAttention] = [:]
         for start in stride(from: 0, to: sessions.count, by: AttentionWire.savedBatch) {
             let batch = Array(sessions[start..<min(start + AttentionWire.savedBatch, sessions.count)])
-            let body = try await request("sessions.saved_attention", body: AttentionWire.savedBody(sessions: batch, epoch: epoch))
+            let body = try await request("sessions.saved_attention", body: AttentionWire.savedBody(sessions: batch, epoch: epoch), priority: .background)
             rows.merge(AttentionWire.savedRows(body)) { _, new in new }
         }
         return rows
@@ -135,7 +135,7 @@ extension ControlClient {
         let body = try await request("sessions.review", body: [
             "session": .string(sessionID),
             "epoch": .string(try currentEpoch()),
-        ])
+        ], priority: .background)
         guard let review = ReviewRead(body) else {
             throw LoomError.protocolViolation("sessions.review returned no review")
         }
