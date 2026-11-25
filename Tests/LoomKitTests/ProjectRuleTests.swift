@@ -9,6 +9,14 @@ import XCTest
 /// ticket rows the inbox draws (`InboxRule`), which mirror the web view's
 /// `ticket_rule.gleam` and `project_board.gleam`.
 final class ProjectRuleTests: XCTestCase {
+    // MARK: The sidebar entry
+
+    func testTheProjectsEntryIsOfferedToAPersonWithNoProjectWhenADaemonAnswered() {
+        XCTAssertTrue(ProjectRule.offersEntry(projectCount: 0, daemonsAnswering: 1))
+        XCTAssertTrue(ProjectRule.offersEntry(projectCount: 2, daemonsAnswering: 1))
+        XCTAssertFalse(ProjectRule.offersEntry(projectCount: 0, daemonsAnswering: 0))
+    }
+
     // MARK: Builders
 
     private func ticketJSON(

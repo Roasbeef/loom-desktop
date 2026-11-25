@@ -156,7 +156,7 @@ private struct SidebarView: View {
                     .tag(Destination.inbox)
                 Label("Mission Control", systemImage: "square.grid.2x2")
                     .tag(Destination.mission)
-                if !model.projectStates.isEmpty {
+                if model.offersProjects {
                     Label("Projects", systemImage: "folder.badge.gearshape")
                         .badge(model.projectStates.reduce(0) { $0 + ProjectRule.needing($1.summary) })
                         .tag(Destination.projects)
