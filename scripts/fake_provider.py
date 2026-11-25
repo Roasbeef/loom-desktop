@@ -27,6 +27,7 @@ keyword in the last user turn selects a script:
   spawnagent starts a subagent with `agent_spawn`, waits for its report, then answers
   stopmid    one finished step, then a reply that hangs, for a turn the person stops
   readpicture reads pixel.png from the workspace, which returns an image
+  watchrun   ten shell steps of eight seconds each, with a line of text first, for a session to watch
   slowstep   a shell command that runs for several seconds, for a step still going
   cachehit   an ordinary reply whose usage reports a large cached prefix
   cachemiss  an ordinary reply whose usage reports that prefix billed again
@@ -293,6 +294,16 @@ def script(messages):
             yield chunk({}, "tool_calls")
         else:
             yield from text_stream("I looked at the picture.")
+        return
+
+    if "watchrun" in prompt:
+        if steps < 10:
+            if steps == 0:
+                yield chunk({"content": "Working through the list, one step at a time."})
+            yield call(0, "bash", {"command": f"sleep 8; echo watch-{steps}"})
+            yield chunk({}, "tool_calls")
+        else:
+            yield from text_stream("The list is done.")
         return
 
     if "slowstep" in prompt:

@@ -318,6 +318,12 @@ enum DebugDriver {
             if let entry = InboxRule.folderEntries(model.board.sections).first(where: { $0.folder.title == title }) {
                 model.chooseFolder(entry.folder)
             }
+        case "inboxtoggle" where parts.count > 1:
+            // Expands or collapses an Updates card by row identity.
+            model.debugToggleCard = parts[1]
+        case "inboxwatch" where parts.count > 1:
+            // Turns the Watch all board on or off, as the toolbar's toggle does.
+            model.inboxWatching = parts[1] == "on"
         case "lanedelay" where parts.count > 1:
             // Holds each send before it reaches the lane, so a test can see the
             // pending line that a quick daemon answer would remove at once.
@@ -767,6 +773,18 @@ enum InboxSnapshot {
             "resolved": model.inboxOpening.isResolved,
             "folder": model.inboxFolder.title,
             "paneWidth": model.debugInboxPaneWidth,
+            "cards": sections.filter { $0.group == .updates }.flatMap(\.rows).filter { !$0.isTicket }.map { row -> [String: Any] in
+                let card = model.updateCard(for: row, digest: model.updateWatcher.digests[row.sessionID], now: Int(Date().timeIntervalSince1970 * 1000))
+                return [
+                    "id": card.id, "name": card.name, "state": card.state, "message": card.message ?? "",
+                    "step": card.step.map { "\($0.tool) \($0.words) \($0.outcome.rawValue)" } ?? "",
+                    "steps": card.steps.map { "\($0.tool) \($0.words)" }, "strands": card.strandsLine ?? "",
+                    "failure": card.failure ?? "", "machine": card.machine ?? "",
+                ]
+            },
+            "watching": model.inboxWatching,
+            "board": model.debugBoard,
+            "expandedCards": model.debugCardsExpanded.sorted(),
         ]
     }
 }

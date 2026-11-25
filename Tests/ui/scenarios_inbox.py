@@ -16,7 +16,7 @@ import re
 import subprocess
 import time
 
-from loomui import BASE, wait_for
+from loomui import BASE, Failure, wait_for
 from scenarios import check, run_command, scenario, settle
 
 FEED_WAIT = 120
@@ -757,3 +757,67 @@ def a_notification_plans_for_an_ask_and_a_click_opens_its_thread(c):
     c.app.press("Send answers")
     wait_for(lambda: find_row(c, "Ask", "Noticed session") is None, 60, "the answered ask to leave the inbox")
     wait_for(lambda: notice in c.app.snap()["notices"]["removed"], 30, "the notice to be removed")
+
+
+# The Updates cards and the Watch all board.
+
+
+def card_of(c, name):
+    for card in c.app.snap()["inbox"]["cards"]:
+        if card["name"] == name:
+            return card
+    return None
+
+
+@scenario("AI-46", "AI-47")
+def a_working_session_is_a_live_card_that_expands_and_joins_the_board(c):
+    """Each working session is a card in Updates with its state, latest message and current step, which expands in place, and Watch all shows the cards as a board in a stable order."""
+    repo = fresh_repo("inbox-cards")
+    wait_for(lambda: c.app.snap()["daemons"][0]["state"] == "connected", 30, "the daemon connection")
+    wait_for(lambda: c.app.snap()["daemons"][0]["deployment"], 30, "the deployment")
+    names = ["Card alpha watchrun", "Card beta watchrun", "Card gamma watchrun"]
+    for name in names:
+        c.app.dispatch(name, repo)
+    c.app.go("inbox")
+    for name in names:
+        wait_row(c, "Update", name, 60)
+
+    # The card holds the state and the agent's words, from the activity at once and from the brief once read.
+    for name in names:
+        card = wait_for(lambda: card_of(c, name), 20, f"a card for {name}")
+        check(card["state"].startswith("working"), card)
+    def held():
+        cards = [card_of(c, n) or {} for n in names]
+        return cards if all(x.get("message") or x.get("step") for x in cards) else None
+
+    try:
+        wait_for(held, 60, "every card to hold a message or a step")
+    except Exception:
+        raise Failure(f"cards: {c.app.snap()['inbox']['cards']} rows: {rows(c)}")
+
+    # A new step reaches the card without the owner doing anything.
+    before = card_of(c, names[0])["steps"]
+    wait_for(lambda: (card_of(c, names[0]) or {}).get("steps") not in (before, None), 40, "a new step on the card")
+    check(card_of(c, names[0])["step"].startswith("bash"), card_of(c, names[0]))
+    check(len(card_of(c, names[0])["steps"]) <= 5, "a card holds at most five steps")
+
+    # A card expands in place and collapses again, in the list.
+    first = card_of(c, names[0])
+    check(first["id"] not in c.app.snap()["inbox"]["expandedCards"], "cards start compact")
+    c.app.cmd("inboxtoggle " + first["id"])
+    wait_for(lambda: first["id"] in c.app.snap()["inbox"]["expandedCards"], 5, "the card to expand")
+    check(not c.app.snap()["inbox"]["watching"], "expanding is not the board")
+    c.app.cmd("inboxtoggle " + first["id"])
+    wait_for(lambda: first["id"] not in c.app.snap()["inbox"]["expandedCards"], 5, "the card to collapse")
+
+    # The board draws one card per working session, and keeps their places.
+    c.app.cmd("inboxwatch on")
+    wait_for(lambda: len(c.app.snap()["inbox"]["board"]) >= 3, 10, "the board to hold three cards")
+    board = c.app.snap()["inbox"]["board"]
+    check(all(card_of(c, n)["id"] in board for n in names), board)
+    time.sleep(3)
+    check(c.app.snap()["inbox"]["board"] == board, "the board's order must not change while watched")
+
+    # A card opens its session's thread and leaves the board.
+    c.app.cmd("inboxwatch off")
+    wait_for(lambda: not c.app.snap()["inbox"]["watching"], 5, "the board to close")

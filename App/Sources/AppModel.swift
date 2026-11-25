@@ -565,6 +565,14 @@ final class AppModel {
     var debugInboxDrawn: [String] = []
     var debugInboxPaneWidth = 0
 
+    /// The Updates cards the owner expanded, and the order of the Watch all board.
+    var debugCardsExpanded: Set<String> = []
+    var debugBoard: [String] = []
+
+    /// A card to toggle, by identity, as a click on its disclosure would. The list's
+    /// rows are not in the accessibility tree, so the driver cannot press them.
+    var debugToggleCard: String?
+
     /// The row the list highlights, by identity, or empty when the open thread is
     /// outside the folder drawn. Written by the view from the value it binds.
     var debugInboxHighlighted = ""
@@ -690,6 +698,14 @@ final class AppModel {
     /// The folder the inbox list is narrowed to. The list draws `Everything` when
     /// the chosen folder has emptied.
     private(set) var inboxFolder: InboxFolder = .everything
+
+    /// Whether the inbox's reading pane shows the "Watch all" board of the working
+    /// sessions in place of the open thread. It is not saved.
+    var inboxWatching = false
+
+    /// The briefs the Updates cards and the board draw from, read while the inbox is
+    /// on screen.
+    let updateWatcher = UpdateWatcher()
 
     /// The thread whose message field the owner asked to write in, by row id. The
     /// pane that draws it takes the request, focuses its field and clears it, so a
