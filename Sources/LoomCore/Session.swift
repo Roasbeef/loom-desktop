@@ -89,6 +89,8 @@ public struct Session: Sendable, Equatable {
         case restoreReturned(text: String, strand: String, attachments: Int)
         /// The lane ended. A nil error is a close this client asked for.
         case ended(LoomError?)
+        /// A frame of this kind was pushed, for a host that counts them.
+        case pushedEvent(String)
     }
 
     /// What a host asks of the session.
@@ -103,6 +105,10 @@ public struct Session: Sendable, Equatable {
         case clear
         /// Cancel the commands that have not been written.
         case cancelWaiting
+        /// Start reading a page of a subagent on another orchestrator.
+        case beginPeek(child: String)
+        /// Stop reading it.
+        case endPeek
     }
 
     /// The shortest and longest wait between stream projections, by reply length.
@@ -133,16 +139,19 @@ public struct Session: Sendable, Equatable {
             lane: Lane.start(sessionID: sessionID, admission: .daemonDecides, now: now),
             conversation: Conversation(sessionID: sessionID)
         )
-        if let previous {
-            session.focusedStrand = previous.focusedStrand
-            session.ledger = previous.ledger
-
-            // Their replies can no longer arrive: the lane that sent them is gone.
-            let rows = previous.conversation
-            session.ledger.loseWaiting { Session.occurrences(of: $0.text, in: rows, strand: $0.strand) }
-        }
+        if let previous { session.inherit(from: previous) }
         let effects = session.drainOutputs()
         return (session, effects)
+    }
+
+    /// Takes over what the session this one replaces had in flight. The strand being
+    /// drawn and the ledger carry over. A line still waiting is marked unknown, because the
+    /// lane that sent it is gone and its reply can no longer arrive.
+    public mutating func inherit(from previous: Session) {
+        focusedStrand = previous.focusedStrand
+        ledger = previous.ledger
+        let rows = previous.conversation
+        ledger.loseWaiting { Session.occurrences(of: $0.text, in: rows, strand: $0.strand) }
     }
 
     private init(lane: Lane, conversation: Conversation) {
@@ -220,6 +229,14 @@ public struct Session: Sendable, Equatable {
 
         case .cancelWaiting:
             return route(lane.cancelWaiting(reason: "cancelled"), now: now)
+
+        case .beginPeek(let child):
+            conversation.beginPeek(child: child)
+            return [.project(.pushed)]
+
+        case .endPeek:
+            conversation.endPeek()
+            return [.project(.pushed)]
         }
     }
 
@@ -291,7 +308,7 @@ public struct Session: Sendable, Equatable {
 
     private mutating func pushed(_ frame: EventEnvelope, now: Int) -> [Effect] {
         conversation.apply(push: frame, now: now)
-        var effects: [Effect] = []
+        var effects: [Effect] = [.pushedEvent(frame.event)]
         if frame.event == "stream_delta" {
             if flushAt == nil {
                 let length = conversation.streams[focusedStrand]?.text.utf8.count ?? 0
@@ -356,6 +373,12 @@ public struct Session: Sendable, Equatable {
             effects.append(.notice(Self.offeredBackWords, .warning))
         }
         return effects
+    }
+
+    /// The reasoning blocks in `rows` that have no label and no read in flight. Asking marks
+    /// them, so each is asked once.
+    public mutating func takeWantedSummaries(in rows: [TranscriptRow]) -> [(entry: String, block: Int)] {
+        conversation.takeWantedSummaries(in: rows)
     }
 
     /// How many user rows on the strand carry exactly this text.

@@ -1,4 +1,5 @@
 import AppKit
+import LoomCore
 import LoomKit
 import Observation
 import UniformTypeIdentifiers
@@ -39,7 +40,11 @@ final class ComposerModel {
     var editing: HeldEdit?
 
     private(set) var images: [ImageAttachment] = []
-    private(set) var ledger = DraftLedger()
+    /// The sent lines, mirrored from the session core, which owns the ledger and decides
+    /// what becomes of a message's text. The composer only draws it.
+    var ledger = DraftLedger()
+    /// The images of messages in flight, by text, so a refusal can put them back too.
+    @ObservationIgnored private var imagesInFlight: [String: [ImageAttachment]] = [:]
     private(set) var notice: Notice?
     @ObservationIgnored private var catalogueRequested = false
 
@@ -166,36 +171,36 @@ final class ComposerModel {
             return
         }
         let sentImages = images
-        let id = ledger.sent(text, delivery: delivery)
         draft = ""
         images = []
         notice = nil
         let strand = controller.focusedStrand
-        Task {
-            do {
-                #if DEBUG
-                if let delay = Self.debugSendDelay { try await Task.sleep(for: delay) }
-                #endif
-                let reply: EventEnvelope
-                if delivery == .steer {
-                    reply = try await controller.request("steer", body: ["strand": .string(strand), "text": .string(text)])
-                } else if sentImages.isEmpty {
-                    reply = try await controller.request("prompt", body: ["strand": .string(strand), "text": .string(text)])
-                } else {
-                    reply = try await controller.request("prompt_content", body: PromptContent.body(strand: strand, text: text, images: sentImages))
-                }
-                if let id { ledger.taken(id) }
-                if delivery == .queue, reply.body["status"]?.string == "queued" {
-                    notice = Notice(text: "Queued. It runs after this turn.", tone: .info)
-                }
-            } catch {
-                if let id, let restored = ledger.refused(id) {
-                    draft = DraftLedger.restoring(restored, into: draft)
-                }
-                images = sentImages + images
-                notice = Notice(text: Self.words(error), tone: .warning)
-            }
+        let command: Lane.Command
+        if delivery == .steer {
+            command = Lane.Command("steer", body: ["strand": .string(strand), "text": .string(text)], kind: .mutation)
+        } else if sentImages.isEmpty {
+            command = Lane.Command("prompt", body: ["strand": .string(strand), "text": .string(text)], kind: .mutation)
+        } else {
+            imagesInFlight[text] = sentImages
+            command = Lane.Command("prompt_content", body: PromptContent.body(strand: strand, text: text, images: sentImages), kind: .mutation)
         }
+
+        // The core keeps the line until the daemon answers. A refusal, or a command that
+        // never reached the wire, comes back as `restore`. A lost reply does not: the text
+        // stays out of the editor and the next transcript read settles it.
+        controller.send(message: text, delivery: delivery, command: command)
+    }
+
+    /// Puts a message's text back in the editor, with the images it carried, because the
+    /// daemon refused it or it never left. The notice that explains why follows.
+    func restore(_ text: String) {
+        draft = DraftLedger.restoring(text, into: draft)
+        if let sent = imagesInFlight.removeValue(forKey: text) { images = sent + images }
+    }
+
+    /// Shows a line above the composer.
+    func say(_ text: String, _ tone: Notice.Tone = .info) {
+        notice = Notice(text: text, tone: tone)
     }
 
     /// A refusal in the daemon's own words, without the code.
@@ -246,15 +251,10 @@ final class ComposerModel {
                     _ = try await controller.request("steer", body: ["strand": .string(strand), "text": .string(text)])
                     say("Sent as a steer.")
                 case .queue(let text):
-                    let id = ledger.sent(text, delivery: .queue)
-                    do {
-                        _ = try await controller.request("follow_up", body: ["strand": .string(strand), "text": .string(text)])
-                        if let id { ledger.taken(id) }
-                        say("Queued. It runs after this turn.")
-                    } catch {
-                        if let id, let restored = ledger.refused(id) { draft = DraftLedger.restoring(restored, into: draft) }
-                        throw error
-                    }
+                    controller.send(
+                        message: text, delivery: .queue,
+                        command: Lane.Command("follow_up", body: ["strand": .string(strand), "text": .string(text)], kind: .mutation)
+                    )
                 case .fork(let fork):
                     _ = try await controller.request("fork", body: ["strand": .string(strand), "scope": "branch", "name": .string(fork)])
                     say("Forked \(name) as \(fork). Choose it in the agent picker.")

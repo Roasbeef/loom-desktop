@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LoomCore
 import LoomKit
 import LoomShell
 import SwiftUI
@@ -1115,12 +1116,18 @@ final class AppModel {
     }
 }
 
-/// One attached session: a lane and the projection of what it reports.
+/// One attached session: the host of a `LoomCore.Session`.
 ///
-/// The value `Conversation` stays out of observation. Each fact a view draws is
-/// its own observed property, set only when it actually changes, so a streamed
-/// token invalidates the stream view and leaves a 5,000-row transcript alone. The
-/// idle refresh's identical cut costs one comparison and redraws nothing.
+/// The core decides: which command is in flight, when the lane refreshes, when the stream
+/// is projected, and what becomes of a message whose reply is lost. This class is the
+/// shell that carries those decisions out. It owns the socket, one ordered writer and one
+/// timer armed for the core's `nextDue`, feeds each received frame to the core with a clock
+/// reading, and performs the effects it returns in order.
+///
+/// The value `Conversation` stays out of observation. Each fact a view draws is its own
+/// observed property, set only when it actually changes, so a streamed token invalidates
+/// the stream view and leaves a 5,000-row transcript alone. The core asks for the stream
+/// to be written once per flush window, and a push that is not a token never writes it.
 @MainActor
 @Observable
 final class SessionController {
@@ -1169,9 +1176,6 @@ final class SessionController {
     private(set) var summaries: [String: String] = [:]
     /// The newest request on the focused strand, which the cache outlook counts from.
     private(set) var cacheStamp: CacheStamp?
-    /// The highest record sequence `/clear` hid on each strand, so a cleared window
-    /// stays cleared while the session goes on.
-    private(set) var clearedThrough: [String: Int] = [:]
     private(set) var trace = TraceBoard(programs: [], omitted: 0)
     /// Why the connection ended, in words, once a lane has closed.
     private(set) var ended: EndingWords?
@@ -1186,7 +1190,7 @@ final class SessionController {
 
     var focusedStrand = "main" {
         didSet {
-            if focusedStrand != oldValue { syncAll(force: true) }
+            if focusedStrand != oldValue { perform(core?.apply(.focus(focusedStrand), now: now()) ?? []) }
         }
     }
 
@@ -1194,21 +1198,32 @@ final class SessionController {
     /// How many pushes of each kind arrived, so a scenario can tell a missing event from a missing reading.
     @ObservationIgnored private(set) var pushedEvents: [String: Int] = [:]
     #endif
-    @ObservationIgnored private var conversation: Conversation
+    @ObservationIgnored private var core: Session?
     @ObservationIgnored private var projectedRevision = -1
     @ObservationIgnored private var olderCursor: Int?
     @ObservationIgnored private var hasReadDecisions = false
-    @ObservationIgnored private var streamFlush: Task<Void, Never>?
     @ObservationIgnored private let endpoint: DaemonEndpoint
-    @ObservationIgnored private var lane: SessionLane?
-    @ObservationIgnored private var pump: Task<Void, Never>?
+    @ObservationIgnored private var socket: WebSocket?
+    @ObservationIgnored private var writes: AsyncStream<String>.Continuation?
+    @ObservationIgnored private var reader: Task<Void, Never>?
+    @ObservationIgnored private var writer: Task<Void, Never>?
+    @ObservationIgnored private var timer: Task<Void, Never>?
+    @ObservationIgnored private var waiters: [Int: CheckedContinuation<Session.Settlement, Never>] = [:]
+    @ObservationIgnored private var nextTag = 1
     @ObservationIgnored private var notesAsked: Set<String> = []
+    @ObservationIgnored private let origin = ContinuousClock.now
+    @ObservationIgnored private var inheriting: Session?
 
     init(sessionID: String, endpoint: DaemonEndpoint) {
         self.sessionID = sessionID
         self.endpoint = endpoint
-        conversation = Conversation(sessionID: sessionID)
     }
+
+    /// What the core folded so far, or an empty conversation before the lane starts.
+    private var conversation: Conversation { core?.conversation ?? Conversation(sessionID: sessionID) }
+
+    /// The highest record sequence `/clear` hid on each strand.
+    var clearedThrough: [String: Int] { core?.clearedThrough ?? [:] }
 
     /// Whether this attachment may only watch: it sends nothing and answers nothing.
     var isObserver: Bool {
@@ -1223,8 +1238,60 @@ final class SessionController {
     var totalCost: Double? { usage["cost"]?["total"]?.double }
     var totalTokens: Int? { usage["totalTokens"]?.int }
 
+    /// Milliseconds since this controller was made: the monotonic reading the core takes.
+    private func now() -> Int {
+        let elapsed = ContinuousClock.now - origin
+        return Int(elapsed.components.seconds) * 1000 + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
+    }
+
     func connect() {
-        pump = Task { await self.run() }
+        guard core == nil else { return }
+        let url: URL
+        do {
+            url = try endpoint.url(path: "/v2/sessions/\(sessionID)/ws")
+        } catch {
+            isLive = false
+            lastError = error.localizedDescription
+            return
+        }
+        let socket = WebSocket(url: url, bearer: endpoint.token)
+        self.socket = socket
+        let (queue, writes) = AsyncStream.makeStream(of: String.self, bufferingPolicy: .unbounded)
+        self.writes = writes
+        let started = Session.start(sessionID: sessionID, inheriting: inheriting, now: now())
+        core = started.session
+        inheriting = nil
+        perform(started.effects)
+        writer = Task { [weak self] in
+            for await text in queue {
+                #if DEBUG
+                if let delay = ComposerModel.debugSendDelay { try? await Task.sleep(for: delay) }
+                #endif
+                do {
+                    try await socket.send(text)
+                } catch {
+                    self?.fail(error)
+                }
+            }
+        }
+        reader = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    let text = try await socket.receive()
+                    guard let self else { return }
+                    self.perform(self.core?.receive(text, now: self.now()) ?? [])
+                } catch {
+                    self?.fail(error)
+                    return
+                }
+            }
+        }
+    }
+
+    /// Reports a transport failure to the core, which ends the lane and settles its callers.
+    private func fail(_ error: Error) {
+        let failure = (error as? LoomError) ?? .closed(error.localizedDescription)
+        perform(core?.receive(failed: failure, now: now()) ?? [])
     }
 
     /// Takes over what the previous attachment to this session was showing, for a
@@ -1233,6 +1300,9 @@ final class SessionController {
     /// the transcript, the panels and the draft it had, so the reopen does not
     /// blank the page, move the scroll or lose what was being typed. The first cut
     /// replaces all of it with what the daemon reports.
+    ///
+    /// The core also inherits the sent drafts. One whose reply was lost stays out of the
+    /// editor until the first cut settles it.
     func inherit(from previous: SessionController) {
         // The strand is set first because choosing one rebuilds the transcript.
         focusedStrand = previous.focusedStrand
@@ -1251,85 +1321,136 @@ final class SessionController {
         role = previous.role
         showsSideQuestion = previous.showsSideQuestion
         composer.draft = previous.composer.draft
+        if let previousCore = previous.core {
+            if core != nil {
+                core?.inherit(from: previousCore)
+                mirrorLedger()
+            } else {
+                inheriting = previousCore
+            }
+        }
     }
 
     func detach() {
-        pump?.cancel()
+        reader?.cancel()
         isLive = false
-        let lane = self.lane
-        Task { await lane?.close() }
+        perform(core?.close(now: now()) ?? [])
     }
 
-    private func run() async {
-        do {
-            let lane = try SessionLane(endpoint: endpoint, sessionID: sessionID)
-            self.lane = lane
-            let starter = Task { try await lane.start() }
-            for await event in lane.events {
-                switch event {
-                case .cut(let cut):
-                    if conversation.apply(cut: cut) { syncAll() }
-                case .push(let frame):
-                    #if DEBUG
-                    pushedEvents[frame.event, default: 0] += 1
-                    #endif
-                    conversation.apply(push: frame)
-                    if frame.event == "stream_delta" {
-                        scheduleStreamFlush()
-                    } else {
-                        syncPushed()
-                    }
-                    if frame.event == "held_input_returned" { restoreReturnedDrafts() }
-                case .closed(let error):
-                    isLive = false
-                    ended = EndingWords.notice(for: error)
-                    if let error { lastError = error.localizedDescription }
+    // MARK: Carrying out the core's effects
+
+    private func perform(_ effects: [Session.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .transmit(let text):
+                writes?.yield(text)
+            case .shut:
+                writes?.finish()
+                socket?.close()
+            case .project(let projection):
+                switch projection {
+                case .all(let forced): syncAll(force: forced == .always)
+                case .pushed: syncPushed()
+                case .stream: setStream()
                 }
+            case .settled(let tag, let settlement):
+                waiters.removeValue(forKey: tag)?.resume(returning: settlement)
+            case .restoreDraft(let text):
+                composer.restore(text)
+            case .notice(let words, let tone):
+                composer.say(words, tone == .warning ? .warning : .info)
+            case .restoreReturned(let text, let strand, let attachments):
+                composer.restoreReturned(text, strand: strand, attachments: attachments)
+            case .ended(let error):
+                isLive = false
+                reader?.cancel()
+                timer?.cancel()
+                ended = EndingWords.notice(for: error)
+                if let error { lastError = error.localizedDescription }
+            case .pushedEvent(let event):
+                #if DEBUG
+                pushedEvents[event, default: 0] += 1
+                #endif
+                _ = event
             }
-            starter.cancel()
-        } catch {
-            isLive = false
-            lastError = error.localizedDescription
+        }
+        mirrorLedger()
+        arm()
+    }
+
+    private func mirrorLedger() {
+        guard let ledger = core?.ledger, composer.ledger != ledger else { return }
+        composer.ledger = ledger
+    }
+
+    /// Arms the one wake-up the core asks for. Nothing ticks on a fixed cadence.
+    private func arm() {
+        timer?.cancel()
+        timer = nil
+        guard let due = core?.nextDue else { return }
+        let wait = max(1, due - now())
+        timer = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(wait))
+            guard !Task.isCancelled, let self else { return }
+            self.perform(self.core?.tick(now: self.now()) ?? [])
         }
     }
 
-    /// Puts prompts a draining daemon handed back into the editor. An empty editor
-    /// takes the text outright, and an occupied one keeps what the person is typing
-    /// with the return below it, since both are theirs.
-    private func restoreReturnedDrafts() {
-        for draft in conversation.takeReturnedDrafts() {
-            composer.restoreReturned(draft.text, strand: draft.strand, attachments: draft.attachmentCount)
+    // MARK: Commands
+
+    /// Submits a command and waits for the core to say how it ended.
+    private func submit(_ command: Lane.Command) async -> Session.Settlement {
+        guard core != nil else { return .failed(.closed("this session is not attached")) }
+        let tag = nextTag
+        nextTag += 1
+        return await withCheckedContinuation { resume in
+            waiters[tag] = resume
+            perform(core?.apply(.submit(command, tag: tag), now: now()) ?? [])
         }
+    }
+
+    /// The reply of a command, or the error that ended it. A lost reply is `outcomeUnknown`.
+    private func call(_ command: Lane.Command) async throws -> EventEnvelope {
+        switch await submit(command) {
+        case .reply(let reply): return reply
+        case .cut: throw LoomError.protocolViolation("\(command.name) answered with a transfer")
+        case .refused(let code, let message, let details): throw LoomError.server(code: code, message: message, details: details)
+        case .unknown(let name): throw LoomError.outcomeUnknown(command: name)
+        case .failed(let error): throw error
+        }
+    }
+
+    private func transfer(_ command: Lane.Command) async throws -> Cut {
+        switch await submit(command) {
+        case .cut(let cut): return cut
+        case .reply: throw LoomError.protocolViolation("\(command.name) did not begin a transfer")
+        case .refused(let code, let message, let details): throw LoomError.server(code: code, message: message, details: details)
+        case .unknown(let name): throw LoomError.outcomeUnknown(command: name)
+        case .failed(let error): throw error
+        }
+    }
+
+    /// Sends a message from the composer. The core keeps it in the ledger until the daemon
+    /// answers, and decides what becomes of the text if the answer is a refusal or is lost.
+    func send(message text: String, delivery: Delivery, command: Lane.Command) {
+        guard core != nil else {
+            composer.restore(text)
+            composer.say("The session is not attached.", .warning)
+            return
+        }
+        perform(core?.apply(.send(text: text, delivery: delivery, command: command), now: now()) ?? [])
     }
 
     /// Hides everything this window has drawn on the focused strand. The records stay
     /// in the session, and a reopened window or another client shows them again.
     func clearTranscript() {
-        guard let newest = conversation.newestSeq(strand: focusedStrand) else { return }
-        clearedThrough[focusedStrand] = newest
-        syncAll(force: true)
+        perform(core?.apply(.clear, now: now()) ?? [])
     }
 
     /// The answered approvals, read again first so one just given is included.
     func decidedApprovals() async -> [Decision] {
-        if let lane, let cut = try? await lane.decided(), conversation.apply(cut: cut) { syncAll(force: true) }
+        _ = try? await transfer(Lane.Command("escalations_decided", kind: .transfer))
         return Array(conversation.decisions.values)
-    }
-
-    /// Coalesces tokens to the display's pace. A provider can deliver hundreds a
-    /// second, and laying out text for each one would drop frames for no gain.
-    private func scheduleStreamFlush() {
-        guard streamFlush == nil else { return }
-        // Layout grows with the reply, so a very long reply updates less often
-        // rather than dropping frames. Nobody reads at thirty updates a second.
-        let length = conversation.streams[focusedStrand]?.text.utf8.count ?? 0
-        let pace = length > 16_000 ? 100 : length > 4_000 ? 60 : 33
-        streamFlush = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(pace))
-            guard let self else { return }
-            self.streamFlush = nil
-            self.setStream()
-        }
     }
 
     private func setStream() {
@@ -1337,6 +1458,9 @@ final class SessionController {
         if stream != next { stream = next }
     }
 
+    /// Writes what a push can change. It never writes the stream: that is the flush's job,
+    /// so a turn that streams while tool output and usage arrive changes `stream` once per
+    /// flush window and not once per push.
     private func syncPushed() {
         assign(\.peers, conversation.peers)
         assign(\.surfaces, conversation.surfaces)
@@ -1353,7 +1477,6 @@ final class SessionController {
         assign(\.summaries, conversation.summaries)
         assign(\.outputRate, conversation.generation.rate(strand: focusedStrand))
         if todo == nil, let seeded = notesTodo() { todo = seeded }
-        setStream()
     }
 
     private func syncAll(force: Bool = false) {
@@ -1388,6 +1511,7 @@ final class SessionController {
         assign(\.usage, conversation.usage)
         assign(\.isAdopted, conversation.hasAdoptedCut)
         syncPushed()
+        setStream()
 
         // The elapsed time is this client's own observation of the run.
         if isBusy {
@@ -1400,8 +1524,7 @@ final class SessionController {
     /// Asks the daemon for the stored labels of long reasoning blocks this window holds.
     /// A daemon with no summarizer answers with none, and that claims nothing.
     private func askForSummaries(_ rows: [TranscriptRow]) {
-        let wanted = conversation.takeWantedSummaries(in: rows)
-        guard !wanted.isEmpty else { return }
+        guard let wanted = core?.takeWantedSummaries(in: rows), !wanted.isEmpty else { return }
         read("block_summaries", body: ["blocks": .array(wanted.map { ["entry": .string($0.entry), "block": .int(Int64($0.block))] })])
     }
 
@@ -1418,12 +1541,8 @@ final class SessionController {
     /// Sends input to the focused strand: a prompt when idle, a steer when busy.
     func send(text: String) {
         let strand = focusedStrand
-        let busy = isBusy
-        perform { lane in
-            _ = busy
-                ? try await lane.steer(strand: strand, text: text)
-                : try await lane.prompt(strand: strand, text: text)
-        }
+        let steer = isBusy
+        fire { try await self.call(Lane.Command(steer ? "steer" : "prompt", body: ["strand": .string(strand), "text": .string(text)], kind: .mutation)) }
     }
 
     /// Why an observer's command is not sent. The daemon would refuse it too.
@@ -1432,7 +1551,7 @@ final class SessionController {
     func abort() {
         guard !isObserver else { lastError = Self.observerWords; return }
         let strand = focusedStrand
-        perform { lane in _ = try await lane.abort(strand: strand) }
+        fire { try await self.call(Lane.Command("abort", body: ["strand": .string(strand)], kind: .mutation)) }
     }
 
     /// Answers with the record the person is looking at, captured by the view.
@@ -1440,13 +1559,25 @@ final class SessionController {
     func approve(_ record: Escalation, remember: Bool = false) {
         guard !isObserver else { lastError = Self.observerWords; return }
         guard isCurrent(record) else { return }
-        perform { lane in _ = try await lane.approve(record, remember: remember) }
+        var body: [String: JSONValue] = [
+            "escalation_id": .string(record.id),
+            "grants": .array(record.grants),
+            "action": .string(record.action),
+            "expected_seq": .int(Int64(record.seq)),
+        ]
+        if remember { body["scope"] = "session" }
+        fire { try await self.call(Lane.Command("approve", body: .object(body), kind: .mutation)) }
     }
 
     func deny(_ record: Escalation) {
         guard !isObserver else { lastError = Self.observerWords; return }
         guard isCurrent(record) else { return }
-        perform { lane in _ = try await lane.deny(record) }
+        fire {
+            try await self.call(Lane.Command("deny", body: [
+                "escalation_id": .string(record.id),
+                "expected_seq": .int(Int64(record.seq)),
+            ], kind: .mutation))
+        }
     }
 
     /// Whether the record a person answered is the one the session holds now. A
@@ -1458,20 +1589,14 @@ final class SessionController {
         return false
     }
 
-    /// Asks for a fresh board. A refusal because a read is already running is not
-    /// worth saying: that read's answer is on its way.
     /// Runs any session command. A snapshot reply lands in `surfaces` by its mode,
     /// and a refusal lands in `lastError`.
     func run(_ command: String, body: JSONValue = .object([:])) {
-        guard let lane else { return }
+        guard core != nil else { return }
         lastError = nil
         Task {
             do {
-                let reply = try await lane.request(command, body: body)
-                if reply.event == "snapshot" {
-                    conversation.apply(push: reply)
-                    syncPushed()
-                }
+                _ = try await call(Lane.Command(command, body: body, kind: .mutation))
             } catch {
                 lastError = error.localizedDescription
             }
@@ -1482,14 +1607,10 @@ final class SessionController {
     /// refusal is kept per command in `readFailures`, so the panel can say why it
     /// has nothing to show, and a later success clears it.
     func read(_ command: String, body: JSONValue = .object([:])) {
-        guard let lane else { return }
+        guard core != nil else { return }
         Task {
             do {
-                let reply = try await lane.read(command, body: body)
-                if reply.event == "snapshot" {
-                    conversation.apply(push: reply)
-                    syncPushed()
-                }
+                _ = try await call(Lane.Command(command, body: body, kind: .read))
                 if readFailures[command] != nil { readFailures[command] = nil }
             } catch {
                 readFailures[command] = error.localizedDescription
@@ -1499,10 +1620,10 @@ final class SessionController {
 
     /// Sends a command and returns its reply, for a surface that keeps its own state
     /// beside the controller's. The credit's order is kept, because it goes through
-    /// the lane's request path.
+    /// the core's lane.
     func exchange(_ command: String, body: JSONValue = .object([:])) async throws -> EventEnvelope {
-        guard let lane else { throw LoomError.closed("the session is not attached") }
-        return try await lane.request(command, body: body)
+        guard core != nil else { throw LoomError.closed("the session is not attached") }
+        return try await call(Lane.Command(command, body: body, kind: .mutation))
     }
 
     /// A strand whose chain holds no `todo` result may still have a board in its
@@ -1518,10 +1639,10 @@ final class SessionController {
     }
 
     func requestDiff() {
-        guard let lane else { return }
+        guard core != nil else { return }
         Task {
             do {
-                try await lane.requestWorktreeDiff()
+                _ = try await call(Lane.Command("worktree_diff", kind: .mutation))
             } catch LoomError.server(code: "busy", _, _) {
                 return
             } catch {
@@ -1535,7 +1656,7 @@ final class SessionController {
     /// hundred of this strand's records however many another strand wrote between
     /// them. It stops once a whole earlier turn has arrived.
     func loadOlder() {
-        guard !isLoadingOlder, let lane else { return }
+        guard !isLoadingOlder, core != nil else { return }
         isLoadingOlder = true
         let strand = focusedStrand
         Task {
@@ -1549,12 +1670,11 @@ final class SessionController {
                         // A record too large to decode hides its parent, so the
                         // lineage walk cannot continue past it; page by sequence.
                         if let before = olderCursor ?? conversation.oldestSeq {
-                            olderCursor = try await lane.loadOlder(beforeSeq: before)
+                            olderCursor = try await pageBySequence(before: before)
                         }
                         break
                     }
-                    let cut = try await lane.lineage(from: anchor)
-                    if conversation.apply(cut: cut) { syncAll(force: true) }
+                    let cut = try await lineage(from: anchor)
                     if cut.entries.isEmpty { break }
                 }
                 syncAll(force: true)
@@ -1564,25 +1684,42 @@ final class SessionController {
         }
     }
 
-    private func readDecisions() {
-        guard let lane else { return }
-        hasReadDecisions = true
-        Task {
-            guard let cut = try? await lane.decided() else { return }
-            if conversation.apply(cut: cut) { syncAll(force: true) }
+    /// Reads one page of a strand's records ending at `from`. A page whose newest record is
+    /// another entry is refused, because it is not the path that was asked for.
+    private func lineage(from: String) async throws -> Cut {
+        let cut = try await transfer(Lane.Command("history_lineage", body: ["from": .string(from)], kind: .transfer))
+        if let newest = cut.entries.last, newest["id"]?.string != from {
+            throw LoomError.protocolViolation("history_lineage ended at another entry")
         }
+        return cut
+    }
+
+    /// Loads the entries just below `before`, following `more_after` until the span is
+    /// exhausted, and returns the lower bound it reached.
+    private func pageBySequence(before: Int, span: Int = 400) async throws -> Int {
+        let floor = max(0, before - span)
+        var after = floor
+        while true {
+            let cut = try await transfer(Lane.Command("history", body: [
+                "after_seq": .int(Int64(after)),
+                "before_seq": .int(Int64(before)),
+            ], kind: .transfer))
+            guard let more = cut.moreAfter else { return floor }
+            after = more
+        }
+    }
+
+    private func readDecisions() {
+        guard core != nil else { return }
+        hasReadDecisions = true
+        Task { _ = try? await transfer(Lane.Command("escalations_decided", kind: .transfer)) }
     }
 
     /// Sends any session command and returns its reply, applying a snapshot reply
     /// the way a push is. A refusal throws, and the caller words it.
     func request(_ command: String, body: JSONValue = .object([:])) async throws -> EventEnvelope {
-        guard let lane else { throw LoomError.closed("this session is not attached") }
-        let reply = try await lane.request(command, body: body)
-        if reply.event == "snapshot" {
-            conversation.apply(push: reply)
-            syncPushed()
-        }
-        return reply
+        guard core != nil else { throw LoomError.closed("this session is not attached") }
+        return try await call(Lane.Command(command, body: body, kind: .mutation))
     }
 
     /// The names the daemon has offered for `/model` and `/profile` completion.
@@ -1595,23 +1732,22 @@ final class SessionController {
 
     /// Reads a page of a subagent running on another orchestrator.
     func peek(child: RemoteChild) {
-        conversation.beginPeek(child: child.id)
-        syncPushed()
+        perform(core?.apply(.beginPeek(child: child.id), now: now()) ?? [])
         let id = child.id
-        perform { lane in try await lane.requestChildHistory(child: id) }
+        fire { try await self.call(Lane.Command("child_history", body: ["child": .string(id), "before": .int(0)], kind: .mutation)) }
     }
 
     func endPeek() {
-        conversation.endPeek()
-        syncPushed()
+        perform(core?.apply(.endPeek, now: now()) ?? [])
     }
 
-    private func perform(_ action: @escaping @Sendable (SessionLane) async throws -> Void) {
-        guard let lane else { return }
+    /// Runs one command and records a failure in `lastError`.
+    private func fire(_ action: @escaping @MainActor () async throws -> EventEnvelope) {
+        guard core != nil else { return }
         lastError = nil
         Task {
             do {
-                try await action(lane)
+                _ = try await action()
             } catch {
                 lastError = error.localizedDescription
             }
