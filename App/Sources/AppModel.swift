@@ -509,44 +509,95 @@ final class DaemonConnection: Identifiable {
         options: CreationOptions = CreationOptions()
     ) async throws -> String {
         guard let control else { throw LoomError.closed("\(label) is not connected.") }
-        let record: SessionRecord
-        do {
-            record = try await control.createSession(
-                requestKey: requestKey,
-                workspace: workspace,
-                name: name.isEmpty ? (workspace as NSString).lastPathComponent : name,
-                configuration: configuration,
-                placement: placement,
-                options: options
-            )
-        } catch let ignored as WorktreeNotHonoured {
-            // The daemon made the session without a worktree and may already be
-            // opening it, so it is stopped before it is deleted: the daemon refuses
-            // to delete a session that is opening or running, and the stop settles
-            // within a few reads. A failed removal leaves it listed, which the
-            // error does not hide.
-            try? await control.stopSession(sessionID: ignored.sessionID)
-            for _ in 0..<20 {
-                if (try? await control.deleteSession(sessionID: ignored.sessionID)) != nil { break }
-                try? await Task.sleep(for: .milliseconds(250))
-            }
-            try? await refresh(control)
-            throw ignored
-        }
-        lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") vision=\(options.pins["vision"] ?? "") shareable=\(options.isShareable)" + (record.worktree.map { " worktree=\($0.base) \($0.branch)" } ?? "")
 
-        // From here the session exists, so a failure must say so and name it.
-        do {
-            _ = try await control.openUntilResident(sessionID: record.id)
-            try await refresh(control)
-        } catch {
-            try? await refresh(control)
-            throw CreatedButUnsent(sessionID: record.id, reason: error.localizedDescription)
+        // The saga decides what follows each step. This function performs one effect at a
+        // time and reports what it saw, so a failure at any step ends in an outcome the
+        // sheet can word. The original error is kept so a caller still gets its own type.
+        var saga = Dispatch(requestKey: requestKey, prompt: prompt)
+        var queue = saga.start()
+        var failure: Error?
+        var outcome: Dispatch.Outcome?
+        var controller: SessionController?
+        var sessionID = ""
+        while !queue.isEmpty {
+            let effect = queue.removeFirst()
+            var event: Dispatch.Event?
+            switch effect {
+            case .create:
+                do {
+                    let record = try await control.createSession(
+                        requestKey: requestKey,
+                        workspace: workspace,
+                        name: name.isEmpty ? (workspace as NSString).lastPathComponent : name,
+                        configuration: configuration,
+                        placement: placement,
+                        options: options
+                    )
+                    sessionID = record.id
+                    lastCreation = "profile=\(options.profile ?? "") model=\(options.model ?? "") vision=\(options.pins["vision"] ?? "") shareable=\(options.isShareable)" + (record.worktree.map { " worktree=\($0.base) \($0.branch)" } ?? "")
+                    event = .created(session: record.id)
+                } catch let ignored as WorktreeNotHonoured {
+                    failure = ignored
+                    event = .createFailed(.worktreeNotHonoured(session: ignored.sessionID))
+                } catch LoomError.outcomeUnknown(let command) {
+                    failure = LoomError.outcomeUnknown(command: command)
+                    event = .createFailed(.unknown)
+                } catch {
+                    failure = error
+                    event = .createFailed(.refused(error.localizedDescription))
+                }
+            case .open(let id):
+                do {
+                    _ = try await control.openUntilResident(sessionID: id)
+                    event = .opened
+                } catch {
+                    event = .openFailed(error.localizedDescription)
+                }
+            case .refresh:
+                try? await refresh(control)
+                event = .refreshed
+            case .attach(let id):
+                controller = attach(id)
+                await controller?.waitUntilAdopted()
+                event = .attached
+            case .send(let text):
+                if let controller {
+                    do {
+                        _ = try await controller.request("prompt", body: ["strand": .string(controller.focusedStrand), "text": .string(text)])
+                        event = .sendSettled(.acknowledged)
+                    } catch LoomError.outcomeUnknown {
+                        event = .sendSettled(.unknown)
+                    } catch {
+                        event = .sendSettled(.refused(error.localizedDescription))
+                    }
+                } else {
+                    event = .sendSettled(.refused("The session is not running."))
+                }
+            case .cleanUp(let id):
+                // The daemon made the session without a worktree and may already be
+                // opening it, so it is stopped before it is deleted: the daemon refuses
+                // to delete a session that is opening or running, and the stop settles
+                // within a few reads. A failed removal leaves it listed, which the
+                // error does not hide.
+                try? await control.stopSession(sessionID: id)
+                for _ in 0..<20 {
+                    if (try? await control.deleteSession(sessionID: id)) != nil { break }
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                try? await refresh(control)
+                event = .cleanedUp
+            case .finish(let result):
+                outcome = result
+            }
+            if let event { queue += saga.apply(event) }
         }
-        guard let controller = attach(record.id) else { return record.id }
-        await controller.waitUntilAdopted()
-        controller.send(text: prompt)
-        return record.id
+
+        switch outcome {
+        case .sent(let id)?: return id
+        case .createdButUnsent(let id, let reason)?: throw CreatedButUnsent(sessionID: id, reason: reason)
+        case .unknownCreate?, .failed?, nil:
+            throw failure ?? LoomError.closed("The session could not be created.")
+        }
     }
 }
 
