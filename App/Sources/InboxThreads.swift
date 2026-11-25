@@ -119,8 +119,6 @@ final class ThreadReader {
             do {
                 review = try await control.review(sessionID: session)
                 return
-            } catch is CancellationError {
-                return
             } catch {
                 let words = ComposerModel.words(error)
                 var code: String?
@@ -146,9 +144,6 @@ final class ThreadReader {
                 var mayClose = false
                 if case .find(let find) = record.detail { mayClose = find.mayClose }
                 findReads[id] = .read(revision: record.revision, mayClose: mayClose)
-            } catch is CancellationError {
-                findReads[id] = nil
-                return
             } catch {
                 findReads[id] = .unread(ComposerModel.words(error))
             }
