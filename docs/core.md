@@ -17,7 +17,7 @@ seed, and checks rules after every step. Loom's own pure state machines are the 
 | `Daemon` | `LoomCore/Daemon.swift` | the poll saga, the catalogue, epochs, which sessions need a lane, the periodic reads, the reconnect | `LoomShell/DaemonHost`, beneath `DaemonConnection` and the app's `ControlClient` |
 | `Dispatch` | `LoomCore/Dispatch.swift` | create, open, attach, first prompt | `DaemonConnection.dispatch` |
 | `AppCore` | `LoomCore/AppCore.swift` | the board, the open thread, the folder, the project selection, notices, what is persisted | `AppModel` |
-| `Readers` | `LoomCore/Readers.swift` | which background reads are due, within the daemon's budgets | `App/ReadHost`; the thread pane, the update cards, the rail, an ask's record, the jobs tab and the side question hold surfaces there |
+| `Readers` | `LoomCore/Readers.swift` | which background reads are due, within the daemon's budgets | `LoomShell/ReadHost`; the thread pane, the update cards, the rail, an ask's record, the jobs tab and the side question hold surfaces there |
 | `DispatchForm` | `LoomCore/DispatchForm.swift` | the new-session form's rules and its idempotency key | `DispatchSheet` |
 
 A core value has no `async`, no clock, no timer and no OS call. `scripts/core-purity.sh` fails
@@ -62,10 +62,10 @@ and clearing fault bits while the same rule keeps failing.
 | --- | --- |
 | `LaneModel` | refuse, stale reply, garbage, disconnect, close, old notice |
 | `SessionModel` | lost reply after apply, duplicate push, reordered pushes, disconnect (inside a transfer too) |
-| `DaemonModel` | lost reply, socket closed mid-poll, daemon restart (new epoch), a lane ending |
+| `DaemonModel` | lost reply, socket closed mid-poll, daemon restart (new epoch), a lane ending, a refused poll, the daemon down, a replaced controller reporting its end late |
 | `DispatchModel` | create reply lost, create refused, open fails, first prompt refused or lost, worktree ignored |
 | `AppCoreModel` | session vanishes, feed row gone, app restart from persisted digests, reply changes |
-| `ReadersModel` | read fails, slow read, command unknown, epoch change |
+| `ReadersModel` | read fails, slow read |
 | `DispatchFormModel` | create reply lost, worktree ignored, first prompt lost, create refused |
 
 ## Rules
@@ -76,11 +76,21 @@ a token changes nothing a view reads, one stream write per flush window, an iden
 nothing), O1, O2 and O4 (a sent message is in exactly one place, one write per message, one key names one
 request; O3 and O5, about approvals and observers, are not checked yet), B2, B3, B6 and B7 (board, open
 thread, lanes per epoch, unseen marks; B1, B4 and B5 are not checked yet), N2 (a notice once), P1 and P2 (persisted values decode; nothing but reply digests is
-persisted), H2 and H6 (first prompt, owner before background), R0 to R4 (reads), and liveness
+persisted), H2 and H6 (first prompt, owner before background), R0 to R3 and R5 (reads; a surface that becomes shown is read at once), and liveness
 after the heal. Each is a named check in the model's file, with the reason it holds.
 
 One excuse is counted and not failed: a stream replaced by a newer generation on its strand before its
 entry is held. Loom replaces it too, so this is a policy question, tracked in the PR that introduced it.
+
+## The hosts are tested too
+
+The simulation drives the core values. The shell that carries them out has its own tests, which run the
+real `DaemonHost` and `ReadHost` over a `HostClock` that a test replaces with a virtual clock, and `DaemonHost`
+over a fake control socket backed by the simulated control daemon (`DaemonHostTests`, `ReadHostTests`,
+`HostTestSupport`). They cover what a core simulation cannot see: holders and tasks, parked callers, the timer,
+a call after `stop`, a refresh that must wait for a poll that starts after the change, and a late report about
+an old lane. `SessionController` and `AppModel.handle` are in the executable target and have no test of their
+own; the simulation drives the `Session` and `Daemon` they host.
 
 ## Commands
 
@@ -108,6 +118,10 @@ change that makes the harness miss a patch is a regression.
 - `AppCore`'s inputs are gathered from observed models, so a change is reported one main-actor turn later,
   as the old observation reported it.
 - `SessionController.inherit` drops images in flight.
+- `stop` detaches a session's lane before the daemon has answered, so a refused stop leaves a running session
+  detached. It predates the core.
+- A refused steer from an inbox card returns its text to the session's own composer, which the inbox does not draw.
+- `SessionController` and `AppModel.handle` have no test of their own (see above).
 - A stream whose turn is interrupted or fails before its entry is published stays drawn until the strand's next
   generation. Loom also stops waiting when the operation is over, but a cut's metadata can be older than a push
   that reached the client first, so an idle strand in a cut is not proof that the entry will never land.
