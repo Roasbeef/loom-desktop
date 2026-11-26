@@ -15,6 +15,10 @@ coverage: ## Line coverage of the core under the simulations alone
 recall: ## Blind recall: make recall WT=<scratch worktree outside /tmp>
 	sh scripts/recall.sh $(WT)
 
+record: ## Record traces from a real loomd: make record LOOMD_BIN=<loomd> [OUT=Tests/LoomCoreTests/Traces]
+	swift build --product loom-probe
+	sh scripts/record-traces.sh $(or $(OUT),Tests/LoomCoreTests/Traces)
+
 core-purity: ## Fail if Sources/LoomCore can block, wait or read a clock
 	sh scripts/core-purity.sh
 
