@@ -768,6 +768,10 @@ final class AppModel {
         facts.saved = inboxSaved
         facts.projects = projectStates
         facts.machines = inboxMachines
+
+        // The catalogue is judged once some daemon has answered, so a session named before any did
+        // (a window restored at launch) is not taken for a gone one.
+        if daemons.contains(where: { $0.status != nil }) { facts.catalogue = .listing(Set(sessions.map(\.id))) }
         for (id, row) in activity { if let reply = row.lastMessage { facts.replies[id] = Self.replyDigest(reply) } }
         return facts
     }
@@ -791,6 +795,9 @@ final class AppModel {
                 break
             case .navigate:
                 destination = .inbox
+            case .left(let session):
+                // The session was removed from every daemon while it was shown.
+                if case .session(session) = destination { destination = .inbox }
             }
         }
     }

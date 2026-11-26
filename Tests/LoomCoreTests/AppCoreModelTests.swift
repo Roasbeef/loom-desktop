@@ -1,4 +1,5 @@
 import XCTest
+@testable import LoomKit
 import LoomKit
 import MissionKit
 @testable import LoomCore
@@ -37,6 +38,14 @@ struct AppCoreModel: SimSpec {
         var census: [String: Int] = [:]
         /// An ask just added to a session the app had already read the feed of: N3 expects one notice for it.
         var expectedAsk: (session: String, id: String, wasChecked: Bool)?
+        /// The sessions the daemon lists, which the facts report once any has been read.
+        var listed: Set<String> = []
+        var isListed = false
+        /// The last Dock label the core told the shell to show.
+        var dock: String?
+        /// The place the shell last reported, and whether the core's last step moved it with `left`.
+        var shellPlace: AppCore.Place = .other
+        var movedWithReason = false
 
         mutating func count(_ key: String) { census[key, default: 0] += 1 }
     }
@@ -48,6 +57,7 @@ struct AppCoreModel: SimSpec {
             world.facts.threads = [thread("s1", approvals: 1)]
             world.facts.replies["s1"] = "digest-0"
         }
+        if mode == 1 { world.listed = ["s1"]; world.isListed = true; world.facts.catalogue = .listing(world.listed) }
         _ = try? apply(&world, .facts(world.facts, now: world.now))
         return world
     }
@@ -60,13 +70,22 @@ struct AppCoreModel: SimSpec {
         switch kind {
         case 0: setThread(&world, id, approvals: arg % 3)
         case 1:
-            if faulty(.vanish) { world.facts.threads.removeAll { $0.id == id }; world.count("vanish") } else { setThread(&world, id, approvals: 0) }
+            if faulty(.vanish) { world.facts.threads.removeAll { $0.id == id }; list(&world, id, present: false); world.count("vanish") } else { setThread(&world, id, approvals: 0) }
         case 2: addAsk(&world, id)
         case 3:
             if faulty(.feedGone) { world.facts.feed[id] = nil; world.count("feedGone") } else { addAsk(&world, id) }
-        case 4: try apply(&world, .place(.inbox))
-        case 5: try apply(&world, .place(.other))
-        case 6: try apply(&world, .place(.session(id)))
+        case 4:
+            world.shellPlace = .inbox
+            world.movedWithReason = false
+            try apply(&world, .place(.inbox))
+        case 5:
+            world.shellPlace = .other
+            world.movedWithReason = false
+            try apply(&world, .place(.other))
+        case 6:
+            world.shellPlace = .session(id)
+            world.movedWithReason = false
+            try apply(&world, .place(.session(id)))
         case 7: try apply(&world, .chooseInbox(world.core.board.rows.isEmpty ? nil : .thread(world.core.board.rows[arg % world.core.board.rows.count].subject)))
         case 8: try apply(&world, .chooseFolder(InboxFolder.allCases[arg % InboxFolder.allCases.count]))
         case 9:
@@ -80,6 +99,7 @@ struct AppCoreModel: SimSpec {
         case 13: break
         case 14:
             if faulty(.restart) { restart(&world) }
+        case 15: projectChurn(&world, arg: arg)
         default: break
         }
         if [0, 1, 2, 3, 12, 13, 15].contains(kind) { try apply(&world, .facts(world.facts, now: world.now)) }
@@ -119,7 +139,30 @@ struct AppCoreModel: SimSpec {
         return InboxThread(id: id, name: id, activity: activity)
     }
 
+    /// A project appears or goes, and the person selects one that may not be there.
+    private func projectChurn(_ world: inout World, arg: Int) {
+        let project = "p\(arg % 2)"
+        switch arg % 3 {
+        case 0:
+            if !world.facts.projects.contains(where: { $0.id == project }), let summary = ProjectSummary(.object(["id": .string(project)])) {
+                world.facts.projects.append(ProjectState(summary: summary, page: nil))
+            }
+        case 1: world.facts.projects.removeAll { $0.id == project }
+        default:
+            _ = world.core.apply(.selectProject(arg % 6 < 3 ? .project(project) : .ticket(project: project, ticket: "t\(arg)")))
+        }
+        world.count("projectChurn")
+    }
+
+    /// A session is listed by a daemon, or was removed from every one.
+    private func list(_ world: inout World, _ id: String, present: Bool) {
+        if present { world.listed.insert(id) } else { world.listed.remove(id) }
+        world.isListed = true
+        world.facts.catalogue = .listing(world.listed)
+    }
+
     private func setThread(_ world: inout World, _ id: String, approvals: Int) {
+        list(&world, id, present: true)
         world.facts.threads.removeAll { $0.id == id }
         world.facts.threads.append(thread(id, approvals: approvals))
         world.facts.threads.sort { $0.id < $1.id }
@@ -143,6 +186,8 @@ struct AppCoreModel: SimSpec {
             for (key, value) in fields { if let text = value.string { digests[key] = text } }
         }
         world.core = AppCore(seenReplies: digests)
+        world.dock = nil
+        world.shellPlace = .other
         world.posted = []
         world.count("restart")
     }
@@ -170,7 +215,18 @@ struct AppCoreModel: SimSpec {
                 }
                 for identifier in plan.remove { world.posted.remove(identifier) }
                 world.count("notify")
-            case .sweep, .dockBadge, .navigate:
+            case .dockBadge(let label):
+                world.dock = label
+            case .left(let session):
+                world.movedWithReason = true
+                world.count("left")
+                guard case .listing(let listed) = world.facts.catalogue, !listed.contains(session) else {
+                    throw Sim.Violation("B4", "the core moved the window off \(session), which is still listed")
+                }
+            case .navigate:
+                // A move the core asks for by name, as opening an inbox thread does, is said by the effect.
+                world.movedWithReason = true
+            case .sweep:
                 break
             }
         }
@@ -184,6 +240,24 @@ struct AppCoreModel: SimSpec {
     }
 
     private func check(_ world: World) throws(Sim.Violation) {
+        // B1: every surface reads the board, so the Dock label the shell was told equals the board's.
+        guard world.dock == world.core.board.dockLabel else {
+            throw Sim.Violation("B1", "the Dock shows \(String(describing: world.dock)) and the board says \(String(describing: world.core.board.dockLabel))")
+        }
+
+        // B4: the place shown is listed, or the core said why it moved the window.
+        if case .session(let id) = world.core.place, case .listing(let listed) = world.facts.catalogue, world.core.facts == world.facts, !listed.contains(id) {
+            throw Sim.Violation("B4", "the place shown is \(id), which no daemon lists")
+        }
+        if world.core.place != world.shellPlace, world.shellPlace != .other || world.core.place != .other, !world.movedWithReason, world.core.facts == world.facts {
+            if case .session = world.shellPlace { throw Sim.Violation("B4", "the core moved the place from \(world.shellPlace) to \(world.core.place) without saying why") }
+        }
+
+        // B5: the project selection names a project the core holds.
+        if let selection = world.core.selection, !world.core.facts.projects.contains(where: { $0.id == selection.project }) {
+            throw Sim.Violation("B5", "the selection \(selection) names a project that is not held")
+        }
+
         // B2: the board is the rule applied to the facts.
         let expected = InboxRule.board(
             threads: world.facts.threads, feed: world.facts.feed, raised: world.facts.raised, reviewing: world.facts.reviewing,

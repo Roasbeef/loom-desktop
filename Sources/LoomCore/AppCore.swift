@@ -24,6 +24,10 @@ import MissionKit
 /// - B2 the board equals `InboxRule.board` recomputed from the facts.
 /// - B3 the open thread is a row the board lists, or is marked resolved, or is none, and a
 ///   refresh never moves it.
+/// - B1 the Dock label the shell was last told equals the board's.
+/// - B4 the place shown is a session some daemon lists, or the core moved it to the inbox and
+///   said so with `left(session:)`.
+/// - B5 the project selection names a project the core holds.
 /// - B7 the unseen-reply mark of a session is clear while it is the place shown.
 /// - N2 a notice is planned at most once per row and kind, and removed when its row leaves
 ///   the board.
@@ -37,6 +41,13 @@ public struct AppCore: Sendable, Equatable {
         case other
     }
 
+    /// Which sessions the daemons list, once any daemon has answered. Before that a session the
+    /// shell names (at launch, from a saved window) is not judged to be gone.
+    public enum Catalogue: Sendable, Equatable {
+        case unread
+        case listing(Set<String>)
+    }
+
     /// What the shell holds that the board and the marks are computed from.
     public struct Facts: Sendable, Equatable {
         public var threads: [InboxThread] = []
@@ -46,6 +57,7 @@ public struct AppCore: Sendable, Equatable {
         public var saved: InboxSaved = .unchecked
         public var projects: [ProjectState] = []
         public var machines: [String] = []
+        public var catalogue: Catalogue = .unread
         /// A digest of each session's latest reply.
         public var replies: [String: String] = [:]
 
@@ -74,6 +86,9 @@ public struct AppCore: Sendable, Equatable {
         case sweep(keeping: Set<String>)
         case dockBadge(String?)
         case navigate(Place)
+        /// The session that was shown is no longer listed by any daemon, so the place is now the
+        /// inbox. The shell moves the window there and may say why.
+        case left(session: String)
     }
 
     /// The preferences key the reply digests are kept under.
@@ -170,6 +185,12 @@ public struct AppCore: Sendable, Equatable {
             ticketsLeftOut: facts.projects.reduce(0) { $0 + ProjectRule.leftOutWaiting($1) },
             now: now
         )
+
+        // A session that no daemon lists any more is not left on screen. This comes first, so the thread that opens on arriving at the inbox is settled in this same step.
+        if case .session(let id) = place, case .listing(let listed) = facts.catalogue, !listed.contains(id) {
+            place = .inbox
+            effects.append(.left(session: id))
+        }
 
         // The open thread is settled against the board it reads. Arriving on the inbox opens
         // the first thread then, and leaving drops a resolved opening.
