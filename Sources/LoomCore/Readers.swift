@@ -10,15 +10,13 @@
 ///
 /// - A read is started only for a surface that is shown.
 /// - A surface has at most one read in flight.
-/// - A surface is read again after its own period, never sooner, even if it was hidden and
-///   shown again meanwhile: hiding a surface does not forget when it was last read, or a
-///   surface that flickers would be read at every flicker.
+/// - A surface is read again after its own period, never sooner, while it stays shown. A surface
+///   that becomes shown is read at once, because its view is new and empty, and a budgeted class is
+///   still held to its allowance.
 /// - The reads of one class never exceed the daemon's budget for a credential in any window
 ///   of `windowMs`: six `session.brief` reads in four seconds, and two review reads in four
 ///   seconds. A read that would pass the budget waits for the oldest start in the window to
 ///   leave it, so the app never meets the daemon's refusal by asking too often.
-/// - A surface whose command the daemon does not know is not asked again until the epoch
-///   changes, because a restarted daemon may be a newer one.
 ///
 /// The shell performs each `read` effect and reports how it ended.
 public struct Readers: Sendable, Equatable {
@@ -65,8 +63,6 @@ public struct Readers: Sendable, Equatable {
     public enum Outcome: Sendable, Equatable {
         case read
         case failed
-        /// The daemon does not know the command.
-        case unsupported
     }
 
     public enum Effect: Sendable, Equatable {
@@ -76,7 +72,6 @@ public struct Readers: Sendable, Equatable {
     private struct State: Sendable, Equatable {
         var lastStart: Int?
         var inFlight = false
-        var unsupported = false
     }
 
     /// What is known of every surface that has been shown, including those hidden since.
@@ -88,7 +83,13 @@ public struct Readers: Sendable, Equatable {
 
     /// The shell reports which surfaces are shown. A read in flight for a surface that was
     /// hidden still ends normally, and a surface that returns while it runs is not read again.
+    ///
+    /// A surface that becomes shown is read at once, whatever it was last read: what draws it is a
+    /// new view with a model that starts empty, so waiting out the period of a read made for the
+    /// previous view would leave it blank for up to a whole period. The budget still applies, so a
+    /// surface that comes and goes is limited by the daemon's allowance and not by this rule.
     public mutating func show(_ surfaces: Set<Surface>, now: Int) -> [Effect] {
+        for surface in surfaces.subtracting(shown) { states[surface]?.lastStart = nil }
         shown = surfaces
         return due(now: now)
     }
@@ -97,14 +98,7 @@ public struct Readers: Sendable, Equatable {
     public mutating func finished(_ surface: Surface, _ outcome: Outcome, now: Int) -> [Effect] {
         guard var state = states[surface] else { return due(now: now) }
         state.inFlight = false
-        if outcome == .unsupported { state.unsupported = true }
         states[surface] = state
-        return due(now: now)
-    }
-
-    /// A new daemon epoch: whatever it did not know, it may know now.
-    public mutating func epochChanged(now: Int) -> [Effect] {
-        for surface in states.keys { states[surface]?.unsupported = false }
         return due(now: now)
     }
 
@@ -117,7 +111,7 @@ public struct Readers: Sendable, Equatable {
         var soonest: Int?
         for surface in shown {
             let state = states[surface] ?? State()
-            guard !state.inFlight, !state.unsupported else { continue }
+            guard !state.inFlight else { continue }
             let ready = max(state.lastStart.map { $0 + surface.periodMs } ?? 0, roomAt(surface.budget) ?? 0)
             soonest = min(soonest ?? ready, ready)
         }
@@ -145,7 +139,7 @@ public struct Readers: Sendable, Equatable {
         }
         for surface in order {
             var state = states[surface] ?? State()
-            guard !state.inFlight, !state.unsupported else { continue }
+            guard !state.inFlight else { continue }
             if let last = state.lastStart, now < last + surface.periodMs { continue }
             if (starts[surface.budget] ?? []).count >= surface.budget.limit { continue }
             state.lastStart = now

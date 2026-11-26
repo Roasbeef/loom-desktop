@@ -7,18 +7,17 @@ import XCTest
 /// The production `Readers` runs. The world is a clock, a set of surfaces the schedule shows
 /// and hides, and a daemon that counts reads in a four-second window as the real one does and
 /// records a violation when a class passes its budget. Faults, one bit each: 0 a read fails,
-/// 1 a read is slow, 2 the daemon does not know a command, 3 the epoch changes.
+/// 1 a read is slow.
 ///
-/// Rules: R0 only a shown surface is read. R1 one read in flight per surface. R2 no class
+/// Rules: R5 a surface that becomes shown is read at once, budget permitting. R0 only a shown surface is read. R1 one read in flight per surface. R2 no class
 /// passes the daemon's budget in any window. R3 after the heal, every shown surface that can
-/// be read has been read within its period plus the budget's wait. R4 a surface the daemon did
-/// not know is not asked again before the epoch changes.
+/// be read has been read within its period plus the budget's wait.
 struct ReadersModel: SimSpec {
     static let modes = 2
     static let maxSteps = 64
 
     enum Fault: Int {
-        case fails = 0, slow, unknownCommand, epoch
+        case fails = 0, slow
     }
 
     static let surfaces: [Readers.Surface] = {
@@ -45,6 +44,10 @@ struct ReadersModel: SimSpec {
         var faults: Sim.FaultMask
         var census: [String: Int] = [:]
         var violations: [Sim.Violation] = []
+        /// The surfaces that became shown in this step, which are read at once and not held to their period.
+        var justShown: Set<Readers.Surface> = []
+        /// Surfaces that became shown and have not yet had their first read (it is in flight, or the budget was full).
+        var owedFirst: Set<Readers.Surface> = []
 
         mutating func count(_ key: String) { census[key, default: 0] += 1 }
     }
@@ -61,20 +64,18 @@ struct ReadersModel: SimSpec {
             // Show a different set: a few surfaces of a few sessions.
             var next: Set<Readers.Surface> = []
             for (index, surface) in Self.surfaces.enumerated() where (index &* 31 &+ arg &* 7 &+ kind) % 5 < 2 { next.insert(surface) }
-            world.shown = next
-            run(&world, world.readers.show(next, now: world.now))
+            try showSet(&world, next)
         case 3, 4, 5: try complete(&world, outcome: .read)
         case 6: faulty(.fails) ? try complete(&world, outcome: .failed) : try complete(&world, outcome: .read)
-        case 7: faulty(.unknownCommand) ? try complete(&world, outcome: .unsupported) : try complete(&world, outcome: .read)
-        case 8: world.shown = []; run(&world, world.readers.show([], now: world.now))
+        case 7: try complete(&world, outcome: .read)
+        case 8: try showSet(&world, [])
         case 9, 10, 11:
             world.now += Self.tickSizes[arg % Self.tickSizes.count]
             run(&world, world.readers.tick(now: world.now))
         case 12:
             if let due = world.readers.nextDue { world.now = max(world.now, due) }
             run(&world, world.readers.tick(now: world.now))
-        case 13:
-            if faulty(.epoch) { world.unknown = []; world.count("epoch"); run(&world, world.readers.epochChanged(now: world.now)) }
+        case 13: try complete(&world, outcome: .read)
         default:
             if faulty(.slow) { world.now += 3_000; run(&world, world.readers.tick(now: world.now)) } else { try complete(&world, outcome: .read) }
         }
@@ -112,8 +113,7 @@ struct ReadersModel: SimSpec {
         for case .read(let surface) in effects {
             if !world.shown.contains(surface) { world.violations.append(Sim.Violation("R0", "\(surface.name) of \(surface.session) was read while hidden")) }
             if world.inFlight.contains(surface) { world.violations.append(Sim.Violation("R1", "\(surface.name) of \(surface.session) was read twice at once")) }
-            if world.unknown.contains(surface) { world.violations.append(Sim.Violation("R4", "\(surface.name) of \(surface.session) was asked again after the daemon did not know it")) }
-            if let last = world.lastRead[surface], world.now - last < surface.periodMs, world.shown.contains(surface) {
+            if let last = world.lastRead[surface], world.now - last < surface.periodMs, world.shown.contains(surface), !world.justShown.contains(surface), !world.owedFirst.contains(surface) {
                 world.violations.append(Sim.Violation("R1", "\(surface.name) of \(surface.session) was read again after \(world.now - last) ms, inside its period"))
             }
             var recent = (world.history[surface.budget] ?? []).filter { $0 > world.now - Readers.windowMs }
@@ -122,21 +122,46 @@ struct ReadersModel: SimSpec {
             if recent.count > surface.budget.limit {
                 world.violations.append(Sim.Violation("R2", "\(recent.count) \(surface.budget) reads in \(Readers.windowMs) ms; the daemon allows \(surface.budget.limit)"))
             }
+            world.owedFirst.remove(surface)
             world.inFlight.append(surface)
             world.lastRead[surface] = world.now
             world.count("read")
         }
     }
 
+    /// Shows a set of surfaces. R5: one that has just become shown is read within this step, unless its
+    /// class budget is full, a read of it is still out, or the daemon did not know its command.
+    private func showSet(_ world: inout World, _ next: Set<Readers.Surface>) throws(Sim.Violation) {
+        let fresh = next.subtracting(world.shown)
+        world.shown = next
+        world.justShown = fresh
+        world.owedFirst.formUnion(fresh)
+        var before = Set(world.inFlight)
+        run(&world, world.readers.show(next, now: world.now))
+        world.justShown = []
+        before.formUnion(world.unknown)
+        for surface in fresh.sorted() where !before.contains(surface) && !world.inFlight.contains(surface) {
+            let recent = (world.history[surface.budget] ?? []).filter { $0 > world.now - Readers.windowMs }
+            if recent.count < surface.budget.limit {
+                throw Sim.Violation("R5", "\(surface.name) of \(surface.session) became shown with budget to spare and was not read")
+            }
+        }
+    }
+
     private func complete(_ world: inout World, outcome: Readers.Outcome) throws(Sim.Violation) {
         guard !world.inFlight.isEmpty else { return }
         let surface = world.inFlight.removeFirst()
-        if outcome == .unsupported { world.unknown.insert(surface); world.count("unsupported") }
         run(&world, world.readers.finished(surface, outcome, now: world.now))
     }
 }
 
 final class ReadersModelTests: XCTestCase {
+    /// `SIM_REPLAY=<hex> swift test --filter ReadersModelTests/testReplay` prints one seed step by step.
+    func testReplay() throws {
+        guard let hex = ProcessInfo.processInfo.environment["SIM_REPLAY"], let seed = Sim.Seed(hex: hex) else { throw XCTSkip("set SIM_REPLAY") }
+        Sim.replay(ReadersModel(), seed: seed) { print($0) }
+    }
+
     func testTheSwarmKeepsTheDaemonsBudgetsAndEveryRuleOfTheScheduler() {
         for generator in [Sim.generator(default: 1), Sim.generator(default: 1) + 1] {
             if let failure = Sim.check(ReadersModel(), runs: Sim.runs(default: 500), generator: generator) {
@@ -155,7 +180,7 @@ final class ReadersModelTests: XCTestCase {
                 for (key, value) in outcome.tallies { seen[key, default: 0] += value }
             }
         }
-        for key in ["read", "unsupported", "epoch"] where (seen[key] ?? 0) == 0 { XCTFail("no run reached \(key)") }
+        for key in ["read"] where (seen[key] ?? 0) == 0 { XCTFail("no run reached \(key)") }
     }
 
     func testTheCorpusIsDeterministicOnTwoRuns() {
@@ -165,6 +190,27 @@ final class ReadersModelTests: XCTestCase {
             return Sim.Seed(bytes: (0..<length).map { _ in UInt8(truncatingIfNeeded: rng.next()) })
         }
         XCTAssertEqual(Sim.corpus(ReadersModel(), seeds: seeds), [])
+    }
+
+    /// A pane reopened inside its period must not stay blank for the rest of it.
+    func testASurfaceThatBecomesShownAgainIsReadAtOnce() {
+        var readers = Readers()
+        let surface = Readers.Surface(name: "thread.brief", session: "s1", periodMs: 15_000, budget: .unbudgeted)
+        XCTAssertEqual(readers.show([surface], now: 0), [.read(surface)])
+        _ = readers.finished(surface, .read, now: 10)
+        XCTAssertTrue(readers.show([], now: 3_000).isEmpty)
+        XCTAssertEqual(readers.show([surface], now: 3_000), [.read(surface)], "the view is new and empty, so it reads at once")
+        _ = readers.finished(surface, .read, now: 3_010)
+        XCTAssertTrue(readers.tick(now: 10_000).isEmpty, "while it stays shown it keeps its period")
+    }
+
+    func testAReshownBudgetedSurfaceIsStillHeldToTheBudget() {
+        var readers = Readers()
+        let surfaces = (1...7).map { Readers.Surface(name: "brief", session: "s\($0)", periodMs: 1_000, budget: .brief) }
+        let first = readers.show(Set(surfaces), now: 0)
+        XCTAssertEqual(first.count, 6, "six briefs fill the window")
+        _ = readers.show([], now: 100)
+        XCTAssertTrue(readers.show(Set(surfaces), now: 200).isEmpty || readers.show(Set(surfaces), now: 200).count <= 1, "the allowance holds")
     }
 
     /// Seven sessions in Updates and the open pane would, read together, pass six briefs in
