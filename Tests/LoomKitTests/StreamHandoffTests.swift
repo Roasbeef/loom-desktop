@@ -71,4 +71,52 @@ final class StreamHandoffTests: XCTestCase {
         state.apply(cut: cut([assistant("other", parent: nil, "y")], leaf: "other"))
         XCTAssertNil(state.streams["main"])
     }
+
+    // MARK: A turn that ends without writing its entry
+
+    private func opDelta(_ kind: String, _ text: String, op: String) -> EventEnvelope {
+        EventEnvelope(replyTo: nil, event: "stream_delta", seq: nil, body: [
+            "strand": "main", "op": .string(op), "generation": .string(identity), "kind": .string(kind), "text": .string(text),
+        ])
+    }
+
+    /// A cut whose metadata names the operation's recorded result, as the daemon writes it beside `strand.last_result`.
+    private func cutWithResult(op: String, strandIdle: Bool = true) -> Cut {
+        var base = cut([], leaf: nil)
+        var cells = base.metadata["cells"]?.array ?? []
+        if strandIdle { cells.removeAll { $0["namespace"]?.string == "strand.state" } }
+        cells.append(["namespace": "fact.custom", "key": .string("operation-result/\(op)"), "seq": 5,
+                      "value": ["kind": "run", "operationId": .string(op), "outcome": "failed"]])
+        base = Cut(window: "catch_up", nextSeq: 99, oldestSeq: 1, moreAfter: nil, identity: base.identity,
+                   metadata: ["cells": .array(cells), "peers": [], "usage": .null], entries: [])
+        return base
+    }
+
+    /// D7: a turn that fails before its entry is published left its stream drawn until the strand's next
+    /// reply replaced it. The operation's recorded result is the daemon's statement that no entry is coming.
+    func testAFailedTurnsEndedStreamIsRetiredByItsOperationResult() {
+        var state = Conversation(sessionID: session)
+        state.apply(push: opDelta("text", "the answ", op: "op-1"))
+        state.apply(push: opDelta("end", "", op: "op-1"))
+        state.apply(cut: cutWithResult(op: "op-1"))
+        XCTAssertNil(state.streams["main"])
+    }
+
+    /// A cut taken before the turn started can show the strand idle. That is no statement about a newer
+    /// operation, so the stream stays until its entry or its own result arrives.
+    func testAnIdleStrandInAnOlderCutDoesNotRetireALiveStream() {
+        var state = Conversation(sessionID: session)
+        state.apply(push: opDelta("text", "the answ", op: "op-2"))
+        state.apply(push: opDelta("end", "", op: "op-2"))
+        state.apply(cut: cutWithResult(op: "op-1"))
+        XCTAssertEqual(state.streams["main"]?.text, "the answ")
+    }
+
+    func testAResultThatArrivedBeforeTheEndRetiresTheStreamAtTheEnd() {
+        var state = Conversation(sessionID: session)
+        state.apply(push: opDelta("text", "the answ", op: "op-1"))
+        state.apply(cut: cutWithResult(op: "op-1"))
+        state.apply(push: opDelta("end", "", op: "op-1"))
+        XCTAssertNil(state.streams["main"])
+    }
 }
