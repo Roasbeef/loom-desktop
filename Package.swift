@@ -35,6 +35,8 @@ let package = Package(
         ),
         .testTarget(name: "LoomKitTests", dependencies: ["LoomKit", "MissionKit", "Markup", "LoomShell"]),
         // The deterministic simulation: a seeded swarm over the production core.
+        // The app's hosts: the executable target's controllers, built without a window.
+        .testTarget(name: "LoomAppTests", dependencies: ["Loom", "LoomKit", "LoomShell"]),
         .testTarget(name: "LoomCoreTests", dependencies: ["LoomCore", "LoomKit", "MissionKit", "LoomShell"]),
     ]
 )

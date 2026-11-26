@@ -1427,11 +1427,15 @@ final class SessionController {
 
     func detach() {
 
-        // A detach the app asked for needs no new lane, so the host is not told it ended.
+        // Whoever closes a lane, the host is told it ended, so the core's table of lanes never holds
+        // one that is gone. A caller that wants no new lane says so with `forget`, which follows the
+        // end in the host's ordered channel and removes the session from the table.
+        let ended = onEnded
         onEnded = nil
         reader?.cancel()
         isLive = false
         perform(core?.close(now: now()) ?? [])
+        ended?()
     }
 
     // MARK: Carrying out the core's effects
