@@ -63,6 +63,12 @@ def main():
     try:
         for scenario in selected:
             started = time.monotonic()
+            # A scenario that reads only state and the accessibility tree runs with the window parked off
+            # the screen. One that reads pixels, a frame, keys or focus has it where a screen shows it.
+            try:
+                app.cmd("offscreen" if scenario.headless else "onscreen")
+            except Exception:
+                pass
             # A pixel check on a locked screen says nothing either way, so it is
             # counted as unproven, and the run does not report green.
             if scenario.needs_display and screen_locked():

@@ -51,9 +51,16 @@ public struct EventEnvelope: Sendable, Equatable {
 }
 
 /// Encodes one command envelope as the text of a frame.
-func encodeCommand(id: Int, cmd: String, body: JSONValue) throws -> String {
+///
+/// Keys are sorted so that the same command always encodes to the same bytes.
+/// The pure lane in `LoomCore` records the frames it writes, and a simulation
+/// compares those records across runs, which a dictionary's per-process key
+/// order would break.
+public func encodeCommand(id: Int, cmd: String, body: JSONValue) throws -> String {
     let envelope: JSONValue = .object(["v": 2, "id": .int(Int64(id)), "cmd": .string(cmd), "body": body])
-    return String(decoding: try JSONEncoder().encode(envelope), as: UTF8.self)
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    return String(decoding: try encoder.encode(envelope), as: UTF8.self)
 }
 
 /// A first-in, first-out lock for use across suspension points.

@@ -1,0 +1,14 @@
+# test: LaneModelTests
+diff --git a/Sources/LoomCore/Lane.swift b/Sources/LoomCore/Lane.swift
+index 4e0d813..d00ac9c 100644
+--- a/Sources/LoomCore/Lane.swift
++++ b/Sources/LoomCore/Lane.swift
+@@ -324,7 +324,7 @@ public struct Lane: Sendable, Equatable {
+         case .closed:
+             return []
+         case .awaitingBegin, .receiving, .awaitingReply:
+-            guard now >= deadline, let pending = inflight else { return [] }
++            guard now > deadline, let pending = inflight else { return [] }
+             return fail(.outcomeUnknown(command: pending.command))
+         case .ready:
+             guard holdsCut, refreshAt <= now else { return [] }

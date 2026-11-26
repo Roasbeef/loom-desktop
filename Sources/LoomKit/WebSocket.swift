@@ -2,18 +2,18 @@ import Foundation
 
 /// The frames a control connection exchanges: what `ControlClient` needs of a socket,
 /// so a test can stand in for the daemon.
-protocol ControlTransport: Sendable {
+public protocol ControlTransport: Sendable {
     func send(_ text: String) async throws
     func receive() async throws -> String
     func close()
 }
 
 /// One authenticated text-frame WebSocket to the daemon.
-final class WebSocket: ControlTransport, Sendable {
+public final class WebSocket: ControlTransport, Sendable {
     private let task: URLSessionWebSocketTask
     private let session: URLSession
 
-    init(url: URL, bearer: String, maximumMessageSize: Int = 4 * 1024 * 1024) {
+    public init(url: URL, bearer: String, maximumMessageSize: Int = 4 * 1024 * 1024) {
         var request = URLRequest(url: url)
         request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         let configuration = URLSessionConfiguration.ephemeral
@@ -24,7 +24,7 @@ final class WebSocket: ControlTransport, Sendable {
         task.resume()
     }
 
-    func send(_ text: String) async throws {
+    public func send(_ text: String) async throws {
         do {
             try await task.send(.string(text))
         } catch {
@@ -33,7 +33,7 @@ final class WebSocket: ControlTransport, Sendable {
     }
 
     /// Returns the next text frame. Binary frames are not part of the protocol.
-    func receive() async throws -> String {
+    public func receive() async throws -> String {
         let message: URLSessionWebSocketTask.Message
         do {
             message = try await task.receive()
@@ -46,7 +46,7 @@ final class WebSocket: ControlTransport, Sendable {
         return text
     }
 
-    func close() {
+    public func close() {
         task.cancel(with: .normalClosure, reason: nil)
         session.invalidateAndCancel()
     }

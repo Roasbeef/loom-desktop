@@ -7,9 +7,27 @@ The test tools exist to answer one question: does the app a person runs do what 
 | Layer | Command | What it proves | Judge |
 | --- | --- | --- | --- |
 | Pure rules | `make test` | Protocol assembly, projection, turn folding, the composer's parse, panel boards, sidebar rows, markdown, diffs, merge rules | XCTest, in `Tests/LoomKitTests/` |
+| Simulation | `make test` (`make sim` for a long campaign) | The pure core, `Sources/LoomCore`, under generated schedules of frames, ticks, faults and user intents, with invariants checked after every step | `Tests/LoomCoreTests/`, see `docs/core.md` |
 | Scenarios | `make uitest` | Features work end to end against a real cluster | Accessibility tree and app state |
 | Foreground | `make uitest-foreground` | Real key equivalents with a key window. Takes focus briefly | App state |
 | Parity | `make parity` | No row claims `yes` without a scenario, and no scenario covers a row that is not `yes` | `tests/ui/parity_check.py` |
+
+## What gates a pull request
+
+`make test` gates every pull request. It runs the unit tests and the simulation, which together
+cover everything in `Sources/` that decides something: the lane, the session, the daemon
+connection, the dispatch saga, the board and the form rules.
+
+`make uitest` gates a pull request only if it touches the shell or the views: anything under
+`App/Sources/`, the `Loom` target in `Package.swift`, `scripts/bundle.sh`, or `Tests/ui/`.
+A pull request that changes only `Sources/`, `Tests/LoomCoreTests/` or `Tests/LoomKitTests/` is
+covered by the simulation, which runs the production core with only the world replaced, and
+needs no screen. The owner runs the UI scenarios before a release, and when a pull request
+that does touch the shell or the views is ready, since five of the smoke scenarios need an
+unlocked screen.
+
+A scenario leaves the UI suite only after a simulation or unit test covers what it checked and has
+failed on a deliberately reintroduced bug (`scripts/recall.sh`). No scenario has been removed yet.
 
 ## The app under test
 
@@ -85,3 +103,55 @@ Then change the row in `docs/parity.md` to `yes`. Every scenario starts with all
 - `scrollup` scrolls the transcript to its top through its own `ScrollPosition` and marks the reader as no longer following, as a person scrolling up does. An earlier version moved AppKit's clip view directly, which SwiftUI undid on its next layout and made `older_turns_page_in` fail intermittently. The scenarios therefore test the app's own scroll logic, not AppKit's trackpad handling, and whether a real trackpad reaches the first line has not been checked.
 - A press works on a control the window has cut off, so a passing scenario says nothing about whether a person can reach it. `fully_on_screen` checks the frame, and the approval scenario uses it at three window sizes.
 - `tests/ui/readme_shots.py` retakes `docs/images`. Look at the images: the suite does not read them.
+
+
+## Running the display scenarios in a macOS VM (plan, not working)
+
+Nothing in this section is installed or downloaded. It lists what to ask the owner to approve.
+
+The scenarios that read pixels (`needs_display`) or need a key window (`foreground`) cannot run on the owner's screen
+without taking it over, and they prove nothing on a locked one. A macOS guest has a screen of its own that is never
+locked, so both kinds can run there at any hour with the owner's desktop untouched. The scenarios that read only the
+driver's state and the accessibility tree (`Scenario.headless` in `tests/ui/scenarios.py`) already run on the host with
+the app as an accessory app and its window parked off the screen, so the VM is for the pixel and foreground scenarios.
+
+**What runs it.** Apple's Virtualization framework, driven by Tart (`brew install cirruslabs/cli/tart`), which keeps a
+macOS image as a copy-on-write disk and starts it with no window. It needs an Apple Silicon host and a guest of the
+same macOS major version or older. macOS licensing allows two guests on one host.
+
+**What is installed.**
+
+- On the host: Tart (about 50 MB) and an SSH key for the guest user.
+- In the guest image, once: Python 3 for `tests/ui/run.py`, auto-login for the guest user, and settings that never
+  sleep or lock the screen. `ditto`, `plutil`, `codesign` and `screencapture` ship with macOS. The release build is made
+  on the host and copied, so the guest needs no Swift toolchain. Accessibility and screen-recording permission are not
+  needed, because the debug driver reads the app's own windows.
+
+**Cost.** A macOS base image is about 20 GB to download and 40 to 50 GB on disk. Each clone shares blocks with it and
+grows by what a run writes, a few hundred MB, and is deleted afterwards. Give the guest 4 CPUs and 8 GB of RAM, which
+the host loses for the length of a run (about 25 minutes).
+
+**How the build and the daemon get in.** The host builds `build/Loom.app` with the bundle step of `make uitest`
+(`CONFIG=release SWIFT_FLAGS="-Xswiftc -DDEBUG" scripts/bundle.sh`) and takes the harness loomd from a loom checkout
+(`LOOMD_BIN`, which needs its sibling `build/erlang-shipment`). Both are copied into the guest with `rsync` over SSH,
+together with `tests/ui`, `scripts` and the committed baselines. The guest runs `python3 tests/ui/run.py --foreground`
+against that loomd on its own loopback, so no port is shared with the host. Results and screenshots are copied back
+into `build/uitest-vm/`.
+
+**Target sketch. It does not work until Tart and an image are installed.**
+
+```make
+uitest-vm: ## UI scenarios in a macOS VM: make uitest-vm LOOM_CHECKOUT=<loom> VM_IMAGE=<tart image>
+	CONFIG=release SWIFT_FLAGS="-Xswiftc -DDEBUG" scripts/bundle.sh
+	tart clone $(VM_IMAGE) loom-uitest
+	tart run --no-graphics loom-uitest &
+	scripts/vm-wait-ssh.sh loom-uitest
+	rsync -a build/Loom.app tests scripts $(LOOM_CHECKOUT)/bin $(LOOM_CHECKOUT)/build/erlang-shipment admin@$$(tart ip loom-uitest):uitest/
+	ssh admin@$$(tart ip loom-uitest) 'cd uitest && LOOMD_BIN=$$PWD/bin/loomd python3 tests/ui/run.py --foreground $(ARGS)'
+	rsync -a admin@$$(tart ip loom-uitest):uitest/build/uitest/ build/uitest-vm/
+	tart stop loom-uitest
+	tart delete loom-uitest
+```
+
+`scripts/vm-wait-ssh.sh` does not exist yet. The visual baselines were taken on the host's display, and fonts and colour
+management differ by hardware, so the first VM run needs `uitest-update` there to accept the guest's own baselines.

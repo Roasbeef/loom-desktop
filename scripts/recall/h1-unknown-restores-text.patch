@@ -1,0 +1,15 @@
+# test: SessionModelTests
+diff --git a/Sources/LoomCore/Session.swift b/Sources/LoomCore/Session.swift
+index 0942703..a030586 100644
+--- a/Sources/LoomCore/Session.swift
++++ b/Sources/LoomCore/Session.swift
+@@ -346,8 +346,7 @@ public struct Session: Sendable, Equatable {
+                 // An image alone has no words to match against the transcript, so nothing later can
+                 // settle it. Its images go back, with a warning that it may have been sent.
+                 guard let id else { return [.restoreDraft(text), .notice(Self.maybeSentImagesWords, .warning)] }
+-                ledger.lost(id, afterSeq: conversation.newestSeq(strand: strand) ?? 0)
+-                return [.notice(Self.maybeSentWords, .warning)]
++                return refused(id, text: text, words: Self.maybeSentWords)
+             case .refused(_, let message, _):
+                 return refused(id, text: text, words: message.isEmpty ? "The daemon refused the message." : message)
+             case .failed(let error):

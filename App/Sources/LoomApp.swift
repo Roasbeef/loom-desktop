@@ -206,13 +206,13 @@ private struct MenuBarContent: View {
     private func show(_ subject: InboxSubject) {
         model.openInbox(subject)
         raiseMainWindow { openWindow(id: "main") }
-        NSApplication.shared.activate()
+        NSApplication.shared.activateUnlessDriven()
     }
 
     private func show(_ destination: Destination) {
         model.destination = destination
         raiseMainWindow { openWindow(id: "main") }
-        NSApplication.shared.activate()
+        NSApplication.shared.activateUnlessDriven()
     }
 }
 
@@ -223,9 +223,7 @@ private struct MenuBarContent: View {
 @MainActor
 final class Announcer {
     static let shared = Announcer()
-    private var previous = InboxBoard.empty
     private var isWatching = false
-    private var hasSwept = false
 
     #if DEBUG
     /// The identifiers of every notice the plan listed. A real run posts those while
@@ -267,16 +265,13 @@ final class Announcer {
         let board = model.board
         NSApp.dockTile.badgeLabel = board.dockLabel
 
-        // The first board that holds a session is the baseline. Notices a previous run
-        // delivered for items that resolved while the app was quit are cleared against it.
-        if !hasSwept, board.reported > 0 {
-            hasSwept = true
-            sweep(keeping: Set(board.rows.compactMap(Notices.notice(of:)).map(\.identifier)))
-        }
-        let plan = Notices.plan(previous: previous, next: board)
-        previous = board
-        guard !plan.isEmpty else { return }
+        // The core decided what to post, remove and sweep when it settled the board.
+        let pending = model.takePendingNotices()
+        for keeping in pending.sweeps { sweep(keeping: keeping) }
+        for plan in pending.plans where !plan.isEmpty { deliver(plan) }
+    }
 
+    private func deliver(_ plan: NoticePlan) {
         // A resolved item's notice goes whether or not notifications are on or the
         // app is in front, so nothing stale is left in the center.
         #if DEBUG
@@ -356,7 +351,7 @@ final class NoticeClicks: NSObject, UNUserNotificationCenterDelegate, @unchecked
         let rows = model.board.rows
         let subject = rows.first { $0.id == row }?.subject ?? session.map { InboxSubject.session($0) }
         showWindow()
-        NSApplication.shared.activate()
+        NSApplication.shared.activateUnlessDriven()
         if let subject { model.openInbox(subject) } else { model.destination = .inbox }
     }
 }
@@ -401,5 +396,17 @@ struct SettingsView: View {
         case .connecting: return "Connecting"
         case .unavailable: return "Unavailable"
         }
+    }
+}
+
+extension NSApplication {
+    /// Brings the app forward, except under the test driver, which must never take the owner's focus.
+    /// The driver's own `activate` command is the one way a foreground scenario asks for it.
+    func activateUnlessDriven() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] != nil,
+           ProcessInfo.processInfo.environment["LOOM_FORCE_ACTIVE"] == nil { return }
+        #endif
+        activate()
     }
 }

@@ -19,14 +19,14 @@ extension ControlClient {
     /// or that is not resident, has no entry, which a caller must treat as "not
     /// checked" and never as "nothing waits".
     public func attention(sessions: [String]) async throws -> [String: AttentionRow] {
-        let epoch = try currentEpoch()
+        let epoch = try await currentEpoch()
         var rows: [String: AttentionRow] = [:]
         for start in stride(from: 0, to: sessions.count, by: Self.activityBatch) {
             let batch = sessions[start..<min(start + Self.activityBatch, sessions.count)]
             let body = try await request("sessions.attention", body: [
                 "sessions": .array(batch.map { .string($0) }),
                 "epoch": .string(epoch),
-            ])
+            ], priority: .background)
             for row in (body["attention"]?.array ?? []).compactMap(AttentionRow.init) {
                 rows[row.sessionID] = row
             }
@@ -39,8 +39,8 @@ extension ControlClient {
         let body = try await request("attention.read", body: [
             "session": .string(sessionID),
             "id": .string(id),
-            "epoch": .string(try currentEpoch()),
-        ])
+            "epoch": .string(try await currentEpoch()),
+        ], priority: .background)
         guard let record = AttentionRecord(body) else {
             throw LoomError.protocolViolation("attention.read returned no record")
         }
@@ -59,7 +59,7 @@ extension ControlClient {
     /// `LoomError.isUnknownCommand`.
     public func answerAsk(sessionID: String, ask: String, revision: Int, answer: AttentionAnswerBody) async throws -> AnswerReceipt {
         let body = try await request("attention.answer", body: AttentionWire.answerBody(
-            session: sessionID, ask: ask, revision: revision, answer: answer, epoch: try currentEpoch()
+            session: sessionID, ask: ask, revision: revision, answer: answer, epoch: try await currentEpoch()
         ))
         guard let receipt = AnswerReceipt(body) else {
             throw LoomError.protocolViolation("attention.answer returned no receipt")
@@ -73,11 +73,11 @@ extension ControlClient {
     /// treats it as "not checked" and never as "nothing waits". The rows are a cache
     /// that can lag the session's own records.
     public func savedAttention(sessions: [String]) async throws -> [String: SavedAttention] {
-        let epoch = try currentEpoch()
+        let epoch = try await currentEpoch()
         var rows: [String: SavedAttention] = [:]
         for start in stride(from: 0, to: sessions.count, by: AttentionWire.savedBatch) {
             let batch = Array(sessions[start..<min(start + AttentionWire.savedBatch, sessions.count)])
-            let body = try await request("sessions.saved_attention", body: AttentionWire.savedBody(sessions: batch, epoch: epoch))
+            let body = try await request("sessions.saved_attention", body: AttentionWire.savedBody(sessions: batch, epoch: epoch), priority: .background)
             rows.merge(AttentionWire.savedRows(body)) { _, new in new }
         }
         return rows
@@ -93,7 +93,7 @@ extension ControlClient {
             "find": .string(find),
             "revision": .int(Int64(revision)),
             "outcome": .string(outcome.rawValue),
-            "epoch": .string(try currentEpoch()),
+            "epoch": .string(try await currentEpoch()),
         ])
         guard let settled = body["revision"]?.natural else {
             throw LoomError.protocolViolation("attention.close_find returned no revision")
@@ -106,8 +106,8 @@ extension ControlClient {
     public func approvalEvidence(sessionID: String) async throws -> ApprovalEvidence {
         let body = try await request("approval.read", body: [
             "session": .string(sessionID),
-            "epoch": .string(try currentEpoch()),
-        ])
+            "epoch": .string(try await currentEpoch()),
+        ], priority: .background)
         guard let evidence = ApprovalEvidence(body) else {
             throw LoomError.protocolViolation("approval.read returned no approvals")
         }
@@ -121,8 +121,8 @@ extension ControlClient {
         let body = try await request("session.brief", body: [
             "session": .string(sessionID),
             "since": .int(Int64(since)),
-            "epoch": .string(try currentEpoch()),
-        ])
+            "epoch": .string(try await currentEpoch()),
+        ], priority: .background)
         guard let brief = SessionBrief(body) else {
             throw LoomError.protocolViolation("session.brief returned no brief")
         }
@@ -134,8 +134,8 @@ extension ControlClient {
     public func review(sessionID: String) async throws -> ReviewRead {
         let body = try await request("sessions.review", body: [
             "session": .string(sessionID),
-            "epoch": .string(try currentEpoch()),
-        ])
+            "epoch": .string(try await currentEpoch()),
+        ], priority: .background)
         guard let review = ReviewRead(body) else {
             throw LoomError.protocolViolation("sessions.review returned no review")
         }

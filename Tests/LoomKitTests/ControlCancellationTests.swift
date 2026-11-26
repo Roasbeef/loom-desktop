@@ -23,7 +23,13 @@ final class ControlCancellationTests: XCTestCase {
             lock.withLock { ids.append(id) }
         }
 
+        private var greeted = false
+
         func receive() async throws -> String {
+            // A control socket opens with hello, and the client sends nothing before it.
+            if lock.withLock({ defer { greeted = true }; return !greeted }) {
+                return #"{"v":2,"event":"hello","body":{"epoch":"e1"}}"#
+            }
             try await Task.sleep(for: delay)
             let id = lock.withLock { ids.isEmpty ? -1 : ids.removeFirst() }
             return #"{"v":2,"reply_to":\#(id),"event":"projects.list","body":{"projects":[]}}"#

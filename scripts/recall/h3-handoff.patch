@@ -1,0 +1,18 @@
+# test: SessionModelTests
+diff --git a/Sources/LoomKit/Conversation.swift b/Sources/LoomKit/Conversation.swift
+index 6d4ee32..e7f1caf 100644
+--- a/Sources/LoomKit/Conversation.swift
++++ b/Sources/LoomKit/Conversation.swift
+@@ -422,11 +422,7 @@ public struct Conversation: Sendable, Equatable {
+         // entry is still not held has no entry coming.
+         pruneConcluded()
+         if landed {
+-            streams = streams.filter { stream in
+-                guard stream.value.ended else { return true }
+-                guard let reserved = stream.value.reserved else { return false }
+-                return entries[reserved] == nil
+-            }
++            streams = streams.filter { !$0.value.ended }
+         }
+         return landed || metadataChanged || !wasAdopted
+     }

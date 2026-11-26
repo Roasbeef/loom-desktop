@@ -165,6 +165,8 @@ private struct AgentStrip: View {
     @State private var isHovering = false
     @State private var isSteering = false
     @State private var steer = ""
+    /// Why the last message was not sent, shown under the box that still holds it.
+    @State private var steerWords: String?
 
     private var digest: String {
         let line = InboxRule.oneLine(Markdown.plainPreview(card.lines.first?.text.isEmpty == false ? card.lines[0].text : card.digest))
@@ -219,12 +221,20 @@ private struct AgentStrip: View {
             .help("Message this agent")
             .accessibilityLabel("Message \(card.name)")
             .popover(isPresented: $isSteering, arrowEdge: .bottom) {
-                TextField("Message \(card.name)…", text: $steer)
-                    .textFieldStyle(.plain)
-                    .font(Theme.body)
-                    .frame(width: 340)
-                    .padding(12)
-                    .onSubmit(send)
+                VStack(alignment: .leading, spacing: 6) {
+                    TextField("Message \(card.name)…", text: $steer)
+                        .textFieldStyle(.plain)
+                        .font(Theme.body)
+                        .onSubmit(send)
+                    if let steerWords {
+                        Text(steerWords)
+                            .font(Theme.meta)
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .frame(width: 340, alignment: .leading)
+                .padding(12)
             }
         }
         .padding(.horizontal, 12)
@@ -239,16 +249,24 @@ private struct AgentStrip: View {
         .accessibilityLabel("\(card.name), \(card.liveness.label)")
     }
 
+    /// Sends the message through the daemon and waits for its answer. The text leaves the box only
+    /// when the daemon takes it, so a refusal leaves it where the person can read it with the reason.
     private func send() {
         let text = steer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        steer = ""
-        isSteering = false
         let id = card.sessionID
+        let choice: ThreadSend.Choice = card.liveness == .working ? .steer : .send
+        steerWords = nil
         Task {
-            guard let controller = model.daemon(holding: id)?.attach(id) else { return }
-            await controller.waitUntilAdopted()
-            controller.send(text: text)
+            do {
+                _ = try await model.sendMessage(sessionID: id, strand: "main", text: text, choice: choice)
+                steer = ""
+                isSteering = false
+            } catch LoomError.outcomeUnknown {
+                steerWords = ThreadSend.unansweredWords
+            } catch {
+                steerWords = ThreadSend.refusedWords(ComposerModel.words(error))
+            }
         }
     }
 }
@@ -371,7 +389,9 @@ struct InboxView: View {
         }
         // One loop reads the cards' briefs while the inbox is drawn, for the sessions in
         // Updates only, and re-derives which on each lap.
-        .task { await watcher.run(model: model) }
+        .task(id: UpdateWatch.targets(rows: model.board.rows, excluding: watcher.paneSession)) {
+            await watcher.run(model: model, targets: UpdateWatch.targets(rows: model.board.rows, excluding: watcher.paneSession))
+        }
         #if DEBUG
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
         #endif

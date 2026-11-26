@@ -1,0 +1,14 @@
+# test: DispatchModelTests
+diff --git a/Sources/LoomCore/Dispatch.swift b/Sources/LoomCore/Dispatch.swift
+index 061f78a..874291d 100644
+--- a/Sources/LoomCore/Dispatch.swift
++++ b/Sources/LoomCore/Dispatch.swift
+@@ -129,7 +129,7 @@ public struct Dispatch: Sendable, Equatable {
+             switch result {
+             case .acknowledged: return end(.sent(session: session))
+             case .refused(let words): return end(.createdButUnsent(session: session, reason: words))
+-            case .unknown: return end(.createdButUnsent(session: session, reason: "No reply came to the first message, so it may not have arrived."))
++            case .unknown: return end(.sent(session: session))
+             }
+         default:
+             return []

@@ -18,6 +18,28 @@ public struct PendingDraft: Sendable, Equatable, Identifiable {
     public let id: Int
     public let text: String
     public let delivery: Delivery
+    /// The strand the text was sent to, which is where the transcript will show it.
+    public let strand: String
+    /// Where the draft stands with the daemon.
+    public var outcome: Outcome = .waiting
+
+    /// What is known about a sent draft.
+    public enum Outcome: Sendable, Equatable {
+        /// The command is on the wire or waiting for it, and the reply may still come.
+        case waiting
+        /// No reply arrived, so the daemon may or may not have admitted the text. The
+        /// transcript decides: `afterSeq` is the newest record the sender held when the
+        /// reply was lost, so a user row with this text above it settles the line as
+        /// delivered, and no such row in a window that reaches back to it settles it as
+        /// not delivered. A count of equal texts would mistake old history for a new row.
+        case unknown(afterSeq: Int)
+    }
+
+    /// Whether the person is told the text may have been sent.
+    public var isUnknown: Bool {
+        if case .unknown = outcome { return true }
+        return false
+    }
 }
 
 /// The sent drafts awaiting an answer.
@@ -33,11 +55,11 @@ public struct DraftLedger: Sendable, Equatable {
     /// Records a sent draft. A draft with no words shows no line, since an image
     /// alone has nothing to show.
     @discardableResult
-    public mutating func sent(_ text: String, delivery: Delivery) -> Int? {
+    public mutating func sent(_ text: String, delivery: Delivery, strand: String = "main") -> Int? {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         let id = next
         next += 1
-        lines.append(PendingDraft(id: id, text: text, delivery: delivery))
+        lines.append(PendingDraft(id: id, text: text, delivery: delivery, strand: strand))
         return id
     }
 
@@ -46,11 +68,55 @@ public struct DraftLedger: Sendable, Equatable {
         lines.removeAll { $0.id == id }
     }
 
-    /// The daemon refused the draft. Returns the text to put back.
+    /// The daemon refused the draft, or the command never reached the wire. Returns the
+    /// text to put back. A refusal is definite, so the text is the person's again.
     public mutating func refused(_ id: Int) -> String? {
         guard let line = lines.first(where: { $0.id == id }) else { return nil }
         lines.removeAll { $0.id == id }
         return line.text
+    }
+
+    /// No reply arrived, so the outcome is unknown. The line stays, now marked, and the
+    /// text is kept out of the editor: the daemon may have admitted it, and putting it
+    /// back would leave it both in the transcript and one Return from a second send.
+    public mutating func lost(_ id: Int, afterSeq: Int) {
+        guard let index = lines.firstIndex(where: { $0.id == id }) else { return }
+        lines[index].outcome = .unknown(afterSeq: afterSeq)
+    }
+
+    /// Marks every line still waiting as unknown, for a session that replaced the one
+    /// that sent them. Their replies can no longer arrive.
+    public mutating func loseWaiting(afterSeq: (PendingDraft) -> Int) {
+        for index in lines.indices where lines[index].outcome == .waiting {
+            lines[index].outcome = .unknown(afterSeq: afterSeq(lines[index]))
+        }
+    }
+
+    /// What the transcript just read says of one unknown line.
+    public enum Verdict: Sendable, Equatable {
+        /// A row with the text sits above the line's `afterSeq`: it arrived.
+        case delivered
+        /// The window reaches back to `afterSeq` and holds no such row: it did not arrive.
+        case absent
+        /// The window does not reach back far enough to say, so the line stays unknown.
+        case undecided
+    }
+
+    /// Settles the unknown lines against the transcript that has just been read. A delivered
+    /// line is dropped, an absent one is dropped and its text returned to be offered back, and
+    /// an undecided one stays.
+    public mutating func settleUnknown(_ verdict: (PendingDraft) -> Verdict) -> [String] {
+        var offered: [String] = []
+        for line in lines where line.isUnknown {
+            switch verdict(line) {
+            case .delivered: lines.removeAll { $0.id == line.id }
+            case .absent:
+                offered.append(line.text)
+                lines.removeAll { $0.id == line.id }
+            case .undecided: break
+            }
+        }
+        return offered
     }
 
     /// Merges restored text into an editor that may have been typed into since.

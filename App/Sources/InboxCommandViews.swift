@@ -89,7 +89,7 @@ struct InboxCommandRunner {
             // comes to the front so the result and any refusal are seen.
             if context.isInOwnWindow {
                 openWindow(id: "main")
-                NSApplication.shared.activate()
+                NSApplication.shared.activateUnlessDriven()
             }
         case .openInWindow:
             if let row { openWindow(id: "thread", value: row.subject) }

@@ -1,0 +1,14 @@
+# test: SessionModelTests
+diff --git a/Sources/LoomCore/Session.swift b/Sources/LoomCore/Session.swift
+index fdacae5..18dc8a6 100644
+--- a/Sources/LoomCore/Session.swift
++++ b/Sources/LoomCore/Session.swift
+@@ -163,7 +163,7 @@ public struct Session: Sendable, Equatable {
+     /// Opens a session by subscribing, writing the lane's first frame.
+     public static func start(sessionID: String, inheriting previous: Session? = nil, now: Int) -> (session: Session, effects: [Effect]) {
+         var session = Session(
+-            lane: Lane.start(sessionID: sessionID, admission: .daemonDecides, guarded: Self.observerBlocked, now: now),
++            lane: Lane.start(sessionID: sessionID, admission: .daemonDecides, now: now),
+             conversation: Conversation(sessionID: sessionID)
+         )
+         if let previous { session.inherit(from: previous) }

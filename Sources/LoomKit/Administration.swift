@@ -444,47 +444,47 @@ public struct MoveCandidate: Sendable, Equatable, Identifiable {
 // MARK: Commands
 
 extension ControlClient {
-    private func sessionBody(_ sessionID: String, _ extra: [String: JSONValue] = [:]) throws -> JSONValue {
+    private func sessionBody(_ sessionID: String, _ extra: [String: JSONValue] = [:]) async throws -> JSONValue {
         var fields = extra
         fields["session_id"] = .string(sessionID)
-        fields["epoch"] = .string(try currentEpoch())
+        fields["epoch"] = .string(try await currentEpoch())
         return .object(fields)
     }
 
     /// Gives a session a name a person chose. The reply is the catalogue record.
     public func renameSession(sessionID: String, name: String) async throws {
-        _ = try await request("sessions.rename", body: try sessionBody(sessionID, ["name": .string(name)]))
+        _ = try await request("sessions.rename", body: try await sessionBody(sessionID, ["name": .string(name)]))
     }
 
     /// Hides a saved session from the list. The daemon refuses a resident one.
     public func archiveSession(sessionID: String) async throws {
-        _ = try await request("sessions.archive", body: try sessionBody(sessionID))
+        _ = try await request("sessions.archive", body: try await sessionBody(sessionID))
     }
 
     public func restoreSession(sessionID: String) async throws {
-        _ = try await request("sessions.restore", body: try sessionBody(sessionID))
+        _ = try await request("sessions.restore", body: try await sessionBody(sessionID))
     }
 
     /// Removes a saved session and its conversation for good. The daemon refuses
     /// anything but a saved session with `busy`.
     public func deleteSession(sessionID: String) async throws {
-        _ = try await request("sessions.delete", body: try sessionBody(sessionID))
+        _ = try await request("sessions.delete", body: try await sessionBody(sessionID))
     }
 
     /// Asks for a session on an executor to move to another orchestrator.
     public func moveSession(sessionID: String, to orchestrator: String) async throws {
-        _ = try await request("sessions.move", body: try sessionBody(sessionID, ["to": .string(orchestrator)]))
+        _ = try await request("sessions.move", body: try await sessionBody(sessionID, ["to": .string(orchestrator)]))
     }
 
     public func abandonMove(sessionID: String) async throws {
-        _ = try await request("sessions.move", body: try sessionBody(sessionID, ["abandon": .bool(true)]))
+        _ = try await request("sessions.move", body: try await sessionBody(sessionID, ["abandon": .bool(true)]))
     }
 
     /// Lets a private session be shared by giving it a memory of its own. The
     /// daemon stops, isolates and resumes it, and requires the acknowledgement
     /// that the existing transcript becomes visible to whoever is invited.
     public func makeShareable(sessionID: String) async throws {
-        _ = try await request("sessions.isolate", body: try sessionBody(sessionID, ["transcript": .string("share_existing")]))
+        _ = try await request("sessions.isolate", body: try await sessionBody(sessionID, ["transcript": .string("share_existing")]))
     }
 
     /// Reads who may use a session and whether it can take more people.
@@ -509,7 +509,7 @@ extension ControlClient {
     /// daemon and must be new. The reply carries a claim token, shown once.
     public func invite(sessionID: String, principalID: String, name: String, role: MemberRole, claimLifetime: Duration = .seconds(3600)) async throws -> Invitation {
         let milliseconds = Int64(claimLifetime.components.seconds * 1000)
-        let body = try await request("sessions.invite", body: try sessionBody(sessionID, [
+        let body = try await request("sessions.invite", body: try await sessionBody(sessionID, [
             "principal_id": .string(principalID),
             "name": .string(name),
             "role": .string(role.rawValue),
@@ -522,14 +522,14 @@ extension ControlClient {
     }
 
     public func setRole(sessionID: String, principalID: String, role: MemberRole) async throws {
-        _ = try await request("sessions.set_role", body: try sessionBody(sessionID, [
+        _ = try await request("sessions.set_role", body: try await sessionBody(sessionID, [
             "principal_id": .string(principalID),
             "role": .string(role.rawValue),
         ]))
     }
 
     public func revokeMembership(sessionID: String, principalID: String) async throws {
-        _ = try await request("sessions.revoke", body: try sessionBody(sessionID, ["principal_id": .string(principalID)]))
+        _ = try await request("sessions.revoke", body: try await sessionBody(sessionID, ["principal_id": .string(principalID)]))
     }
 
     public func principals() async throws -> [Principal] {
@@ -550,7 +550,7 @@ extension ControlClient {
 
     /// Names a principal. Omitting the principal renames the caller itself.
     public func renamePrincipal(principalID: String?, name: String) async throws {
-        var fields: [String: JSONValue] = ["name": .string(name), "epoch": .string(try currentEpoch())]
+        var fields: [String: JSONValue] = ["name": .string(name), "epoch": .string(try await currentEpoch())]
         if let principalID { fields["principal_id"] = .string(principalID) }
         _ = try await request("principals.rename", body: .object(fields))
     }
@@ -560,7 +560,7 @@ extension ControlClient {
         let body = try await request("credentials.rotate", body: .object([
             "principal_id": .string(principalID),
             "claim_ttl_ms": .int(Int64(claimLifetime.components.seconds * 1000)),
-            "epoch": .string(try currentEpoch()),
+            "epoch": .string(try await currentEpoch()),
         ]))
         guard let invitation = Invitation(body) else {
             throw LoomError.protocolViolation("credentials.rotate returned no claim")
@@ -571,7 +571,7 @@ extension ControlClient {
     public func revokeCredentials(principalID: String) async throws {
         _ = try await request("credentials.revoke", body: .object([
             "principal_id": .string(principalID),
-            "epoch": .string(try currentEpoch()),
+            "epoch": .string(try await currentEpoch()),
         ]))
     }
 
@@ -582,7 +582,7 @@ extension ControlClient {
     }
 
     public func revokeLogin(principalID: String?, fingerprint: String) async throws {
-        var fields: [String: JSONValue] = ["fingerprint": .string(fingerprint), "epoch": .string(try currentEpoch())]
+        var fields: [String: JSONValue] = ["fingerprint": .string(fingerprint), "epoch": .string(try await currentEpoch())]
         if let principalID { fields["principal_id"] = .string(principalID) }
         _ = try await request("credentials.revoke_login", body: .object(fields))
     }
@@ -592,7 +592,7 @@ extension ControlClient {
         let page = try await request("peers.inspect", body: .object([
             "source_session": .string(sessionID),
             "source_strand": .string(strand),
-            "epoch": .string(try currentEpoch()),
+            "epoch": .string(try await currentEpoch()),
         ]))
         return (page["outgoing"]?.array ?? []).compactMap { PeerLink($0, direction: .outgoing) }
             + (page["incoming"]?.array ?? []).compactMap { PeerLink($0, direction: .incoming) }
@@ -605,7 +605,7 @@ extension ControlClient {
             "target_session": .string(targetSession),
             "target_strand": .string(targetStrand),
             "wake": .string(wakes ? "may_wake" : "busy_only"),
-            "epoch": .string(try currentEpoch()),
+            "epoch": .string(try await currentEpoch()),
         ]))
     }
 
@@ -615,7 +615,7 @@ extension ControlClient {
             "source_strand": .string(strand),
             "target_session": .string(targetSession),
             "target_strand": .string(targetStrand),
-            "epoch": .string(try currentEpoch()),
+            "epoch": .string(try await currentEpoch()),
         ]))
     }
 }

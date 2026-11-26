@@ -1,0 +1,14 @@
+# test: DaemonModelTests
+diff --git a/Sources/LoomCore/Daemon.swift b/Sources/LoomCore/Daemon.swift
+index dbd62ff..e3698ee 100644
+--- a/Sources/LoomCore/Daemon.swift
++++ b/Sources/LoomCore/Daemon.swift
+@@ -173,7 +173,7 @@ public struct Daemon: Sendable, Equatable {
+ 
+     /// A lane this daemon asked for has ended. The generation names which lane: the host numbers each lane it makes.
+     public mutating func laneEnded(_ session: String, generation: Int) {
+-        guard generations[session] == generation, lanes[session] != nil else { return }
++        guard lanes[session] != nil else { return }
+         lanes[session] = .ended
+     }
+ 

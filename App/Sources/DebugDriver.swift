@@ -18,6 +18,7 @@ import SwiftUI
 ///     type <text>          real key events
 ///     key <name> [mods]    return, escape, up, down, tab, or a letter; cmd,shift,opt
 ///     resize <w> <h>       the main window's size
+///     onscreen | offscreen    where the windows are; they start off the screen
 ///     activate | deactivate   take and return focus, for a check of clicks
 ///     menu <title>         invokes a menu item
 ///     menus                every key equivalent the menu bar claims
@@ -56,17 +57,30 @@ enum DebugDriver {
     static func start(model: AppModel) {
         guard let directory = ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] else { return }
         let commands = URL(fileURLWithPath: directory).appendingPathComponent("commands")
-        // SwiftUI fills its accessibility tree only after the app has been active
-        // once. A copy launched in the background stays hollow (a handful of
-        // unnamed nodes), so every scenario that reads text fails, and that
-        // depends on what else the machine was doing at launch. Activating for a
-        // moment and handing focus back makes the tree the same everywhere, and it
-        // stays filled after the app goes inactive.
-        let previous = NSWorkspace.shared.frontmostApplication
-        NSApp.activate(ignoringOtherApps: true)
-        Task {
-            try? await Task.sleep(for: .milliseconds(600))
-            if let previous, previous != NSRunningApplication.current { previous.activate() }
+        // Under the driver the app never takes focus: a test run must not pull the owner's keyboard
+        // or cover their work. It runs as an accessory app, which has no Dock tile and is never made
+        // active by launching, and its windows start off the screen (`onscreen` brings them back for
+        // a scenario that reads pixels or a frame). `LOOM_FORCE_ACTIVE` keeps the older behaviour for
+        // a run that wants the app active.
+        //
+        // SwiftUI built its accessibility tree only after the app had been active once, which is why
+        // the driver used to activate for a moment at launch. The tree is asked for here instead:
+        // every window is ordered in without activating, and the app is told an assistive client is
+        // present, which is what makes AppKit build the tree eagerly. If a run shows an empty tree
+        // again, `tests/ui/run.py` reports it by name, and the fix belongs here and not in a
+        // return to activating.
+        if ProcessInfo.processInfo.environment["LOOM_FORCE_ACTIVE"] == nil {
+            NSApp.setActivationPolicy(.accessory)
+            NSApp.accessibilitySetValue(true, forAttribute: NSAccessibility.Attribute(rawValue: "AXEnhancedUserInterface"))
+            NSApp.accessibilitySetValue(true, forAttribute: NSAccessibility.Attribute(rawValue: "AXManualAccessibility"))
+            keepWindowsOffScreen()
+        } else {
+            let previous = NSWorkspace.shared.frontmostApplication
+            NSApp.activate(ignoringOtherApps: true)
+            Task {
+                try? await Task.sleep(for: .milliseconds(600))
+                if let previous, previous != NSRunningApplication.current { previous.activate() }
+            }
         }
         Task {
             while true {
@@ -90,6 +104,33 @@ enum DebugDriver {
                     }
                 }
                 try? "done".write(to: root.appendingPathComponent("ack"), atomically: true, encoding: .utf8)
+            }
+        }
+    }
+
+    /// Whether the windows are where a screen shows them. They start parked off the screen.
+    private static var isOnScreen = false
+
+    /// An ordinary window of the app. A sheet, a popover or a menu stays with what it belongs to.
+    private static func isParkable(_ window: NSWindow) -> Bool {
+        window.canBecomeMain && window.sheetParent == nil && window.parent == nil
+    }
+
+    /// Moves every window to a place no display shows, without hiding it, so its accessibility tree and its
+    /// state stay live.
+    private static func parkWindows() {
+        for window in NSApp.windows where isParkable(window) && window.frame.origin.x > -5_000 {
+            window.setFrameOrigin(NSPoint(x: -30_000, y: -30_000))
+            window.orderFrontRegardless()
+        }
+    }
+
+    /// Parks windows as they appear, until a scenario asks for them on screen.
+    private static func keepWindowsOffScreen() {
+        Task { @MainActor in
+            while true {
+                try? await Task.sleep(for: .milliseconds(200))
+                if !isOnScreen { parkWindows() }
             }
         }
     }
@@ -195,6 +236,16 @@ enum DebugDriver {
             // cannot be opened from here without blocking the app.
             model.debugPlacement = rest
             reply = "ok"
+        case "onscreen":
+            // A scenario that reads pixels or a window's frame needs the window where a screen shows it.
+            isOnScreen = true
+            for window in NSApp.windows where isParkable(window) && window.frame.origin.x < -5_000 {
+                window.setFrameOrigin(NSPoint(x: 80, y: 120))
+                window.orderFrontRegardless()
+            }
+        case "offscreen":
+            isOnScreen = false
+            parkWindows()
         case "activate":
             NSApp.activate()
             window?.makeKeyAndOrderFront(nil)
@@ -588,6 +639,9 @@ enum Snapshot {
             "actionError": model.actions.error ?? "",
             "isPaletteOpen": model.isPaletteOpen,
             "showsInspector": model.showsInspector,
+            // Whether any window is drawn. SwiftUI draws nothing in a window no display shows, and a view that
+            // changes its own state then changes nothing a test can read.
+            "windowDrawn": NSApp.windows.contains { $0.occlusionState.contains(.visible) },
             "transcriptGeometry": TranscriptDebug.geometry,
             "windowFrame": NSApp.windows.first { $0.isVisible && $0.frame.width > 400 && $0.canBecomeMain }.map { w in
                 let frame = w.accessibilityFrame()
@@ -626,6 +680,8 @@ enum Snapshot {
         if let session = model.currentSession {
             body["session"] = [
                 "isLive": session.isLive,
+                // Names the attachment, so a test can tell a lane that ended and was replaced from one that never ended.
+                "lane": "\(ObjectIdentifier(session).hashValue)",
                 "thinkingLevel": session.strand?.thinkingLevel ?? "",
                 "profile": session.surfaces["profile"]?["profile"]?.string ?? "",
                 "isBusy": session.isBusy,

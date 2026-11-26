@@ -1,0 +1,13 @@
+# test: ReadersModelTests
+diff --git a/Sources/LoomCore/Readers.swift b/Sources/LoomCore/Readers.swift
+index 723787a..b216a80 100644
+--- a/Sources/LoomCore/Readers.swift
++++ b/Sources/LoomCore/Readers.swift
+@@ -110,7 +110,6 @@ public struct Readers: Sendable, Equatable {
+     public mutating func show(_ surfaces: Set<Surface>, now: Int) -> [Effect] {
+         for surface in surfaces.subtracting(shown) {
+             var state = states[surface] ?? State()
+-            state.lastStart = nil
+             state.shownAt = now
+             states[surface] = state
+         }

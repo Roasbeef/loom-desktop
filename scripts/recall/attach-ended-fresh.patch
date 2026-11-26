@@ -1,0 +1,14 @@
+# test: DaemonModelTests
+diff --git a/Sources/LoomCore/Daemon.swift b/Sources/LoomCore/Daemon.swift
+index 9cdb873..91fc443 100644
+--- a/Sources/LoomCore/Daemon.swift
++++ b/Sources/LoomCore/Daemon.swift
+@@ -354,7 +354,7 @@ public struct Daemon: Sendable, Equatable {
+             case nil:
+                 if (approvals[id] ?? 0) > 0 { plan.append(Attach(session: id, inheriting: .fresh)) }
+             case .ended?:
+-                plan.append(Attach(session: id, inheriting: .previous))
++                plan.append(Attach(session: id, inheriting: .fresh))
+             case .up?:
+                 break
+             }

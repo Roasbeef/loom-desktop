@@ -1,4 +1,5 @@
 import LoomKit
+import LoomShell
 import MissionKit
 import SwiftUI
 
@@ -46,25 +47,45 @@ final class ThreadReader {
     var onBrief: ((SessionBrief) -> Void)?
 
     /// How long a pane waits before its first read.
-    private static let settle: Duration = .milliseconds(350)
+    private static let settleMs = 350
 
-    func run(reads: ThreadReads, session: String, control: ControlClient?) async {
+    /// Reads what opening this thread asks, then keeps it fresh for as long as the pane is on screen.
+    /// The schedule is the read host's: each read is a surface with the pane's period, the brief
+    /// draws on the daemon's brief budget it shares with the cards, and none runs inside its period.
+    func run(reads: ThreadReads, session: String, control: ControlClient?, host: ReadHost) async {
         guard let control, reads.approval || reads.brief || reads.record != nil else { return }
-        try? await Task.sleep(for: Self.settle)
-        var last: BriefRead?
+        // Every entry settles before its first read, so a pane the person walks past starts none.
+        var entries: [ReadHost.Entry] = []
 
-        // The worktree is read once: it runs Git on the session's helper pool, which the
-        // agent's own tools share, and the refresh below would repeat it every fifteen
-        // seconds.
-        if reads.review { await readReview(control, session) }
-
-        repeat {
-            if Task.isCancelled { return }
-            if reads.approval { await readEvidence(control, session) }
-            if reads.brief { await readBrief(control, session, last: &last) }
-            if let id = reads.record { await readRecord(control, session, id) }
-            try? await Task.sleep(for: .milliseconds(ThreadRule.refreshMs))
-        } while !Task.isCancelled
+        // The worktree is read once: it runs Git on the session's helper pool, which the agent's own
+        // tools share, and a refresh would repeat it every fifteen seconds. The host draws it on the
+        // daemon's two reviews in four seconds and stops holding the surface when the read is made.
+        if reads.review {
+            entries.append(ReadHost.Entry(.init(name: "thread.review", session: session, periodMs: ThreadRule.refreshMs, budget: .review, settleMs: Self.settleMs), repeats: .untilRead) {
+                await self.readReview(control, session)
+                return .read
+            })
+        }
+        if reads.approval {
+            entries.append(ReadHost.Entry(.init(name: "thread.evidence", session: session, periodMs: ThreadRule.refreshMs, budget: .unbudgeted, settleMs: Self.settleMs)) {
+                await self.readEvidence(control, session)
+                return .read
+            })
+        }
+        if reads.brief {
+            var last: BriefRead?
+            entries.append(ReadHost.Entry(.init(name: "thread.brief", session: session, periodMs: ThreadRule.refreshMs, budget: .brief, settleMs: Self.settleMs)) {
+                await self.readBrief(control, session, last: &last)
+                return .read
+            })
+        }
+        if let id = reads.record {
+            entries.append(ReadHost.Entry(.init(name: "thread.record.\(id)", session: session, periodMs: ThreadRule.refreshMs, budget: .unbudgeted, settleMs: Self.settleMs)) {
+                await self.readRecord(control, session, id)
+                return .read
+            })
+        }
+        await host.hold(entries)
     }
 
     private func readEvidence(_ control: ControlClient, _ session: String) async {
@@ -283,7 +304,7 @@ struct InboxPane: View {
                 reader.onBrief = { watcher.offer($0, session: shared) }
             }
             defer { if watcher.paneSession == shared { watcher.paneSession = nil } }
-            await reader.run(reads: reads, session: sessionID, control: model.daemon(holding: sessionID)?.control)
+            await reader.run(reads: reads, session: sessionID, control: model.daemon(holding: sessionID)?.control, host: model.reads)
         }
         .task(id: findIDs) {
             await reader.readFinds(findIDs, control: model.daemon(holding: sessionID)?.control, session: sessionID)

@@ -1,0 +1,14 @@
+# test: DaemonModelTests
+diff --git a/Sources/LoomCore/Daemon.swift b/Sources/LoomCore/Daemon.swift
+index f40783d..a500076 100644
+--- a/Sources/LoomCore/Daemon.swift
++++ b/Sources/LoomCore/Daemon.swift
+@@ -379,7 +379,7 @@ public struct Daemon: Sendable, Equatable {
+         // A session that stopped being resident loses its feed row, so it counts as new if it returns.
+         fed.formIntersection(Set(resident))
+         let uncovered = !Set(resident).isSubset(of: fed)
+-        if ticks % Self.attentionEvery == 0 || (uncovered && pollsSinceFeed >= Self.coverageFloor) {
++        if ticks % Self.attentionEvery == 0 {
+             effects.append(.due(.attention))
+             fed = Set(resident)
+             pollsSinceFeed = 0

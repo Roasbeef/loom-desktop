@@ -38,6 +38,13 @@ public struct PendingInput: Sendable, Equatable, Identifiable {
 /// part of durable history, so this is display state only.
 public struct LiveStream: Sendable, Equatable {
     public var generation: String?
+    /// The durable entry this response is reserved for, read from the generation's
+    /// identity. A stream that names one is removed only when that entry is held.
+    public var reserved: String?
+    /// The operation that produced this stream, from the delta's `op` field. The daemon's
+    /// operation-keyed result names the same id, which is how a stream whose turn ended without
+    /// writing its entry is recognized.
+    public var operation: String?
     public var text = ""
     public var thinking = ""
     public var tools: [LiveTool] = []
@@ -326,6 +333,10 @@ public struct Conversation: Sendable, Equatable {
     private var entries: [String: JSONValue] = [:]
     private var lastMetadata: JSONValue?
 
+    /// Operations whose terminal result the daemon has recorded, read from the operation-keyed
+    /// `fact.custom/operation-result/` cells of the latest cut.
+    private var concluded: Set<String> = []
+
     /// Where each strand sits in `strands`, so a strand is found without a scan.
     private var strandIndex: [String: Int] = [:]
 
@@ -337,6 +348,9 @@ public struct Conversation: Sendable, Equatable {
     }
 
     public var entryCount: Int { entries.count }
+
+    /// Whether the durable entry with this id is held, which is what hands a stream to it.
+    public func holds(entry id: String) -> Bool { entries[id] != nil }
 
     /// Total spend reported for the session, when the provider priced it.
     public var totalCost: Double? { usage["cost"]?["total"]?.double }
@@ -362,6 +376,12 @@ public struct Conversation: Sendable, Equatable {
         }
         if let oldest = cut.oldestSeq {
             oldestSeq = min(oldestSeq ?? oldest, oldest)
+        } else if cut.window == "recent", cut.entries.isEmpty {
+            // The daemon sends `oldest_seq` null "when there is none" (client-protocol.md), and a recent
+            // window that holds no entry has none older to hide: it reaches back to the start. A
+            // catch-up window carries null whatever it holds, so it says nothing about how far back
+            // the held history goes.
+            oldestSeq = 0
         }
 
         // The ledger of decided approvals is a metadata-only read of other cells.
@@ -386,11 +406,41 @@ public struct Conversation: Sendable, Equatable {
         if !wasAdopted { generation.attached(busy: strands.filter(\.isBusy).map(\.id)) }
 
         // An ended stream stays drawn until its durable entry lands, or the
-        // reply would vanish for the moment between `end` and this cut.
+        // reply would vanish for the moment between `end` and this cut. A stream
+        // that names its reserved entry waits for that entry and no other, as in
+        // Loom's stream_identity: an unrelated entry landing on any strand says
+        // nothing about this reply. A stream with no reservation, from an older
+        // daemon, keeps the old rule of any landed entry.
+        //
+        // A stream whose turn failed or was interrupted before its entry was published is retired by
+        // the daemon's operation-keyed result, `fact.custom/operation-result/{op}`. That record is
+        // written once, in the transaction that ends the operation, and is never overwritten, so a
+        // cut that carries it cannot be stale about that operation the way an idle strand in the
+        // latest-wins `strand.last_result` can be: a cut older than a push says nothing about an
+        // operation it predates, and one that carries the record is later than the operation's end.
+        // The entry itself lands before or with that record, so an ended stream whose reserved
+        // entry is still not held has no entry coming.
+        pruneConcluded()
         if landed {
-            streams = streams.filter { !$0.value.ended }
+            streams = streams.filter { stream in
+                guard stream.value.ended else { return true }
+                guard let reserved = stream.value.reserved else { return false }
+                return entries[reserved] == nil
+            }
         }
         return landed || metadataChanged || !wasAdopted
+    }
+
+    /// Drops each stream whose operation has a recorded result and whose reserved entry is not
+    /// held. A stream that never ended is dropped too: a lane that attached while the reply was
+    /// streaming saw some of its fragments and not the `end`, and the operation's result says no
+    /// more will come.
+    private mutating func pruneConcluded() {
+        guard !concluded.isEmpty else { return }
+        streams = streams.filter { _, stream in
+            guard let operation = stream.operation else { return true }
+            return !concluded.contains(operation)
+        }
     }
 
     /// Reads the decided escalations out of a `decided` transfer.
@@ -552,7 +602,7 @@ public struct Conversation: Sendable, Equatable {
 
         // A new generation replaces every old fragment on the strand.
         if stream.generation != generation {
-            stream = LiveStream(generation: generation)
+            stream = LiveStream(generation: generation, reserved: StreamIdentity.responseEntry(generation), operation: body["op"]?.string)
         }
         switch body["kind"]?.string {
         case "text":
@@ -569,6 +619,19 @@ public struct Conversation: Sendable, Equatable {
             }
         case "end":
             stream.ended = true
+
+            // The reserved entry may already be held, when the cut that carries it
+            // beat the end of the stream to this client.
+            if let reserved = stream.reserved, entries[reserved] != nil {
+                streams[strand] = nil
+                return
+            }
+
+            // Likewise when the cut already recorded this operation's result without the entry.
+            if let operation = stream.operation, concluded.contains(operation) {
+                streams[strand] = nil
+                return
+            }
         default:
             break
         }
@@ -591,6 +654,12 @@ public struct Conversation: Sendable, Equatable {
         func value(_ namespace: String, _ key: String) -> JSONValue? {
             index[CellKey(namespace: namespace, key: key)]
         }
+
+        concluded = Set(cells.compactMap { cell -> String? in
+            guard cell["namespace"]?.string == "fact.custom", let key = cell["key"]?.string,
+                  key.hasPrefix("operation-result/") else { return nil }
+            return cell["value"]?["operationId"]?.string ?? String(key.dropFirst("operation-result/".count))
+        })
 
         strands = cells
             .filter { $0["namespace"]?.string == "strand.config" }

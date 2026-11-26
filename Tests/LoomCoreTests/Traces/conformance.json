@@ -1,0 +1,202 @@
+{
+ "escalate": {
+  "lines": [
+   {
+    "speaker": "user",
+    "text": "escalate"
+   },
+   {
+    "speaker": "other",
+    "text": "tools · 1 call · 1 failed · Ctrl+g expands details"
+   },
+   {
+    "speaker": "other",
+    "text": "fs_write · /Users/Shared/loom-desktop-escalation-test"
+   },
+   {
+    "speaker": "other",
+    "text": "path `/Users/Shared/loom-desktop-escalation-test` resolves outside the workspace root"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "assistant",
+    "text": "That write was refused, so I am waiting on your approval."
+   }
+  ]
+ },
+ "explode": {
+  "lines": [
+   {
+    "speaker": "user",
+    "text": "explode"
+   },
+   {
+    "speaker": "other",
+    "text": "provider returned http 400: scripted provider failure"
+   }
+  ]
+ },
+ "plain": {
+  "lines": [
+   {
+    "speaker": "user",
+    "text": "say something short"
+   },
+   {
+    "speaker": "assistant",
+    "text": "Here is a **scripted** reply with `inline code`.\n\n```swift\nprint(\"hello from the fake provider\")\n```\n\nDone. "
+   }
+  ]
+ },
+ "stopmid": {
+  "lines": [
+   {
+    "speaker": "user",
+    "text": "stopmid"
+   },
+   {
+    "speaker": "other",
+    "text": "tools · 1 call · Ctrl+g expands details"
+   },
+   {
+    "speaker": "other",
+    "text": "✓ Bash(echo first-step)"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "other",
+    "text": "Stopped"
+   }
+  ]
+ },
+ "think": {
+  "lines": [
+   {
+    "speaker": "user",
+    "text": "think about it"
+   },
+   {
+    "speaker": "other",
+    "text": "First, consider the retry budget.  [Ctrl+G to expand]"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "assistant",
+    "text": "After thinking it through, the answer is **forty-two**. "
+   }
+  ]
+ },
+ "tour": {
+  "lines": [
+   {
+    "speaker": "user",
+    "text": "tour"
+   },
+   {
+    "speaker": "assistant",
+    "text": "I will write a note, run a command, then read a file."
+   },
+   {
+    "speaker": "other",
+    "text": "✓ fs_write · tour-notes.txt"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "other",
+    "text": "tools · 2 calls · 1 failed · Ctrl+g expands details"
+   },
+   {
+    "speaker": "other",
+    "text": "✓ Bash(echo tour-command-output)"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "other",
+    "text": "fs_read · no-such-file-for-the-tour.txt"
+   },
+   {
+    "speaker": "other",
+    "text": "file not found: /Users/roasbeef/gocode/src/github.com/roasbeef/loom-desktop-wide/build/trace-run/ws/no-such-file-for-the-tour.txt"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "assistant",
+    "text": "The tour is done. "
+   }
+  ]
+ },
+ "two": {
+  "lines": [
+   {
+    "speaker": "user",
+    "text": "slow"
+   },
+   {
+    "speaker": "assistant",
+    "text": "Here is a **scripted** reply with `inline code`.\n\n```swift\nprint(\"hello from the fake provider\")\n```\n\nDone. "
+   },
+   {
+    "speaker": "user",
+    "text": "demo"
+   },
+   {
+    "speaker": "assistant",
+    "text": "I'll look at how the fetcher handles failures, then add a bounded retry."
+   },
+   {
+    "speaker": "other",
+    "text": "✓ Bash(ls -la)"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "other",
+    "text": "tools · 1 call · Ctrl+g expands details"
+   },
+   {
+    "speaker": "other",
+    "text": "✓ fs_write · fetch.py"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "assistant",
+    "text": "Now the tests."
+   },
+   {
+    "speaker": "other",
+    "text": "✓ Bash(python3 -c \"print('12 passed in 0.31s')\")"
+   },
+   {
+    "speaker": "other",
+    "text": ""
+   },
+   {
+    "speaker": "assistant",
+    "text": "## Retry budget is now per host\n\nThe fetcher retried without any bound, so one slow host could hold every worker. I added a **per-host budget** and a jittered backoff.\n\n### What changed\n\n- `fetch.py` wraps each request in a bounded retry loop.\n- `BUDGET` caps attempts at three per host, per minute.\n- A host over budget fails fast instead of queueing.\n\n| Case | Before | After |\n|---|---|---|\n| Healthy host | 1 attempt | 1 attempt |\n| Flaky host | unbounded | at most 3 |\n| Dead host | blocks workers | fails in 40 ms |\n\n### The core of it\n\n```python\ndef fetch(url, budget=BUDGET):\n    for attempt in range(budget):\n        try:\n            return get(url, timeout=2.0)\n        except Timeout:\n            time.sleep(backoff(attempt))\n    raise BudgetExceeded(url)\n```\n\n> The budget resets on a timer rather than on success, so a host that recovers cannot immediately stampede.\n\nAll 12 tests pass. Want me to wire the budget into the metrics dashboard next? "
+   }
+  ]
+ }
+}

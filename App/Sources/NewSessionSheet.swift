@@ -1,3 +1,4 @@
+import LoomCore
 import LoomKit
 import SwiftUI
 
@@ -63,14 +64,46 @@ struct DispatchSheet: View {
     @State private var worktreeChoice = WorktreeChoice.folder
     @State private var worktreeBase = ""
     @State private var projects: [ProjectRef] = []
-    @State private var error: String?
-    @State private var createdID: String?
-    @State private var isSending = false
     @FocusState private var isPromptFocused: Bool
 
-    // Held across attempts so a retry after a lost reply recovers the session
-    // the first attempt made rather than creating a second one.
-    @State private var requestKey = UUID().uuidString
+    // The form's rules live in `DispatchForm`: when Dispatch is allowed, what the hint says,
+    // and the key a retry after a lost reply carries so that it recovers the session the first
+    // attempt made rather than creating a second one. The key names every create parameter,
+    // the folder and the name included.
+    @State private var form = DispatchForm(seed: UUID().uuidString)
+
+    private var requestKey: String { form.requestKey }
+
+    // What the form says of the attempt in flight and of one that ended without sending its prompt.
+    private var error: String? { form.error }
+    private var createdID: String? { form.createdID }
+    private var isSending: Bool { form.isSending }
+
+    /// Everything the form's rules read, as one value, so a change to any field reaches it.
+    private var signature: [String] {
+        [daemonID, "\(placement)", workspace, configuration, profile, modelKey, visionKey, "\(isShareable)", "\(worktreeChoice)", worktreeBase, name, prompt]
+    }
+
+    /// Tells the form what the sheet now holds, with the judgements only this Mac's disk can make.
+    private func syncForm() {
+        let disk: DispatchForm.Disk = isLocalDisk ? .thisMac : .elsewhere
+        _ = form.apply(.edit(.daemon(daemonID, disk: daemon?.isRemote == true ? .elsewhere : .thisMac)))
+        _ = form.apply(.edit(.placement(placement)))
+        let path = (workspace as NSString).expandingTildeInPath
+        let judged: FolderCheck = isLocalDisk ? FolderCheck.judge(workspace) : (workspace.isEmpty ? .empty : .ok(workspace))
+        let problem: String? = isLocalDisk && !workspace.isEmpty ? WorktreeWords.judge(folder: path) : nil
+        _ = form.apply(.edit(.workspace(workspace, folder: judged, worktreeProblem: problem)))
+        _ = form.apply(.edit(.configuration(configurationPath)))
+        _ = form.apply(.edit(.prompt(prompt)))
+        _ = form.apply(.edit(.name(name)))
+        _ = form.apply(.edit(.profile(profile)))
+        _ = form.apply(.edit(.model(modelKey)))
+        _ = form.apply(.edit(.vision(visionKey)))
+        _ = form.apply(.edit(.shareable(isShareable)))
+        _ = form.apply(.edit(.worktree(worktreeChoice == .ownTree ? .ownTree : .folder)))
+        _ = form.apply(.edit(.worktreeBase(worktreeBase, problem: WorktreeWords.problem(withBase: worktreeBase))))
+        _ = disk
+    }
 
     private var daemon: DaemonConnection? {
         model.daemons.first { $0.id == daemonID } ?? model.daemons.first
@@ -208,12 +241,14 @@ struct DispatchSheet: View {
                 Button(isSending ? "Dispatching…" : "Dispatch", action: send)
                     .keyboardShortcut(.return, modifiers: .command)
                     .buttonStyle(.borderedProminent)
-                    .disabled(isSending || createdID != nil || workspace.isEmpty || prompt.isEmpty || worktreeJudgement.problem != nil || (!folderJudgement.isUsable && placement == .local && daemon?.isRemote != true))
+                    .disabled(isSending || createdID != nil || !form.canDispatch)
             }
             .padding(14)
         }
         .frame(width: 580)
+        .onChange(of: signature) { syncForm() }
         .onAppear {
+            syncForm()
             isPromptFocused = true
             // A remembered folder that has since gone away is a mistake to avoid
             // offering, so it is dropped rather than shown with an error.
@@ -226,12 +261,10 @@ struct DispatchSheet: View {
             profile = ""
             modelKey = ""
             visionKey = ""
-            requestKey = UUID().uuidString
         }
         .onChange(of: placement) {
             // Changing where it runs changes what the workspace field means.
             workspace = ""
-            requestKey = UUID().uuidString
         }
         #if DEBUG
         .onChange(of: model.debugPlacement) {
@@ -240,9 +273,6 @@ struct DispatchSheet: View {
             }
         }
         #endif
-        .onChange(of: profile) { requestKey = UUID().uuidString }
-        .onChange(of: modelKey) { requestKey = UUID().uuidString }
-        .onChange(of: visionKey) { requestKey = UUID().uuidString }
         .task(id: "\(daemonID)|\(configurationPath)") {
             guard let daemon else { return }
             catalogue = await daemon.modelCatalogue(configuration: configurationPath)
@@ -251,9 +281,6 @@ struct DispatchSheet: View {
             if !catalogue.models.contains(where: { $0.key == modelKey }) { modelKey = "" }
             if !catalogue.imageReaders.contains(where: { $0.key == visionKey }) { visionKey = "" }
         }
-        .onChange(of: isShareable) { requestKey = UUID().uuidString }
-        .onChange(of: worktreeChoice) { requestKey = UUID().uuidString }
-        .onChange(of: worktreeBase) { requestKey = UUID().uuidString }
         .task(id: daemonID) {
             // Projects fill the picker while the form is being read, so the popover
             // has them by the time it opens. A daemon slow to answer leaves the
@@ -339,13 +366,7 @@ struct DispatchSheet: View {
     }
 
     /// Says why the button is disabled, rather than leaving a person to guess.
-    private var dispatchHint: String {
-        if prompt.isEmpty { return "Describe the work to dispatch." }
-        if workspace.isEmpty { return "Choose a folder to dispatch (⌘O)." }
-        if let words = folderJudgement.words { return words }
-        if let words = worktreeJudgement.problem { return words }
-        return "⌘↩ to dispatch"
-    }
+    private var dispatchHint: String { form.hint }
 
     /// A daemon's name with its state when it cannot take work yet, so the choice
     /// says so before a request fails.
@@ -366,49 +387,48 @@ struct DispatchSheet: View {
         return parts.joined(separator: " · ")
     }
 
+    /// Sends what the form decided to send, and tells the form how it ended. The form holds the key,
+    /// the gate and the outcome, so a second press while one is out, or after a session was made
+    /// without its prompt, sends nothing.
     private func send() {
-        guard let daemon, !workspace.isEmpty, !prompt.isEmpty else { return }
-        isSending = true
-        error = nil
-        let firstLine = prompt.split(separator: "\n").first.map { String($0.prefix(60)) } ?? ""
-        let chosenName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // The same configuration the terminal falls back to with no --config.
-        let path = daemon.localRoot?.appendingPathComponent("loom.toml").path ?? configuration
-        let creation = CreationOptions(
-            profile: profile.isEmpty ? nil : profile,
-            model: modelKey.isEmpty ? nil : modelKey,
-            isShareable: isShareable,
-            pins: visionKey.isEmpty ? [:] : ["vision": visionKey],
-            worktree: worktreeJudgement.request
-        )
-        let typed = (workspace as NSString).expandingTildeInPath
-        Task {
-            defer { isSending = false }
-            do {
-                let id = try await daemon.dispatch(
-                    workspace: placement == .local && !daemon.isRemote ? typed : workspace,
-                    name: chosenName.isEmpty ? firstLine : chosenName,
-                    prompt: prompt,
-                    placement: placement,
-                    configuration: path,
-                    requestKey: requestKey,
-                    options: creation
-                )
-                if placement == .local { lastWorkspace = workspace }
-                model.destination = .session(id)
-                dismiss()
-            } catch let partial as CreatedButUnsent {
-                // Sending again would create a second session, so the form offers
-                // the one that exists instead.
-                self.createdID = partial.sessionID
-                self.error = partial.localizedDescription
-            } catch let refused as WorktreeNotHonoured {
-                // That session was removed, so the same key must not recover it.
-                requestKey = UUID().uuidString
-                self.error = refused.localizedDescription
-            } catch {
-                self.error = error.localizedDescription
+        guard let daemon else { return }
+        for case .dispatch(let request) in form.apply(.submit) {
+            let creation = CreationOptions(
+                profile: request.profile,
+                model: request.model,
+                isShareable: request.isShareable,
+                pins: request.vision.map { ["vision": $0] } ?? [:],
+                worktree: request.wantsWorktree ? WorktreeRequest(base: request.worktreeBase) : nil
+            )
+            Task {
+                let result: DispatchForm.Result
+                do {
+                    let id = try await daemon.dispatch(
+                        workspace: request.workspace,
+                        name: request.name,
+                        prompt: request.prompt,
+                        placement: request.placement,
+                        configuration: request.configuration,
+                        requestKey: request.requestKey,
+                        options: creation
+                    )
+                    result = .sent(session: id)
+                } catch let partial as CreatedButUnsent {
+                    result = .createdButUnsent(session: partial.sessionID, words: partial.localizedDescription)
+                } catch let refused as WorktreeNotHonoured {
+                    result = .worktreeIgnored(words: refused.localizedDescription)
+                } catch {
+                    result = .failed(words: error.localizedDescription)
+                }
+                for effect in form.apply(.finished(result)) {
+                    switch effect {
+                    case .rememberWorkspace(let folder): if placement == .local { lastWorkspace = folder }
+                    case .close(let id):
+                        model.destination = .session(id)
+                        dismiss()
+                    case .dispatch: break
+                    }
+                }
             }
         }
     }

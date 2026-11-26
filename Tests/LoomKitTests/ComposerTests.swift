@@ -178,3 +178,34 @@ final class ProgramCardTests: XCTestCase {
         XCTAssertEqual(card.failure, "line 1: bad")
     }
 }
+
+/// A lost reply is not a refusal: the text stays out of the editor until the transcript says.
+final class DraftLedgerUnknownTests: XCTestCase {
+    func testALostReplyKeepsTheLineAndNeverReturnsTheTextByItself() {
+        var ledger = DraftLedger()
+        let id = ledger.sent("hello", delivery: .send, strand: "main")!
+        ledger.lost(id, afterSeq: 0)
+        XCTAssertEqual(ledger.lines.map(\.isUnknown), [true])
+        XCTAssertNil(ledger.refused(999))
+    }
+
+    func testTheTranscriptSettlesAnUnknownLineAsDeliveredAbsentOrUndecided() {
+        for (verdict, offered, remaining) in [(DraftLedger.Verdict.delivered, [], 0), (.absent, ["hello"], 0), (.undecided, [], 1)] {
+            var ledger = DraftLedger()
+            let id = ledger.sent("hello", delivery: .send)!
+            ledger.lost(id, afterSeq: 7)
+            XCTAssertEqual(ledger.settleUnknown { _ in verdict }, offered)
+            XCTAssertEqual(ledger.lines.count, remaining, "an undecided line waits for a window that reaches back to it")
+        }
+    }
+
+    func testAReplacedSessionLosesWhatWasStillWaiting() {
+        var ledger = DraftLedger()
+        _ = ledger.sent("a", delivery: .send)
+        let taken = ledger.sent("b", delivery: .send)!
+        ledger.taken(taken)
+        ledger.loseWaiting { _ in 3 }
+        XCTAssertEqual(ledger.lines.map(\.text), ["a"])
+        XCTAssertEqual(ledger.lines.first?.outcome, .unknown(afterSeq: 3))
+    }
+}
