@@ -376,6 +376,8 @@ public struct Daemon: Sendable, Equatable {
 
         // The attention feed is read on a schedule, and also soon after a session first appears that
         // the last read did not cover, so a new session is not "not checked" for a whole period.
+        // A session that stopped being resident loses its feed row, so it counts as new if it returns.
+        fed.formIntersection(Set(resident))
         let uncovered = !Set(resident).isSubset(of: fed)
         if ticks % Self.attentionEvery == 0 || (uncovered && pollsSinceFeed >= Self.coverageFloor) {
             effects.append(.due(.attention))

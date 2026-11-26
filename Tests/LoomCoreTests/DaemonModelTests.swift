@@ -377,6 +377,15 @@ final class DaemonModelTests: XCTestCase {
         }
     }
 
+    /// The corpus: seeds that once failed, kept so they keep passing. The first is the campaign failure
+    /// on generator 102: a session that stopped being resident and returned was not read again, because
+    /// the core still remembered it as covered.
+    func testTheRegressionSeedsPass() {
+        for hex in ["f1000095e605d6a597898c"] {
+            guard let seed = Sim.Seed(hex: hex), case .success = Sim.run(DaemonModel(), seed: seed) else { return XCTFail("seed \(hex) fails") }
+        }
+    }
+
     func testTheCorpusIsDeterministicOnTwoRuns() {
         var rng = SimRandom(seed: 21)
         let seeds = (0..<300).map { _ -> Sim.Seed in
