@@ -41,7 +41,7 @@ public actor DaemonHost: ControlExchange {
 
     private let outputSink: AsyncStream<Output>.Continuation
     private let open: @Sendable () throws -> (endpoint: DaemonEndpoint, transport: any ControlTransport)
-    private let origin = ContinuousClock.now
+    private let clock: HostClock
 
     private var core = Daemon()
     private var transport: (any ControlTransport)?
@@ -52,13 +52,16 @@ public actor DaemonHost: ControlExchange {
     private var connection = 0
     private var waiters: [Int: CheckedContinuation<JSONValue, Error>] = [:]
     private var refreshWaiters: [CheckedContinuation<Void, Error>] = []
-    private var helloWaiters: [CheckedContinuation<DaemonHello, Error>] = []
+    /// Callers who asked while a poll was already out: that poll may have read the catalogue before
+    /// their change, so they wait for the next one.
+    private var laterWaiters: [CheckedContinuation<Void, Error>] = []
     private var nextTag = 1
     private var stopped = false
 
     /// `open` resolves the daemon's address and opens a socket to it, and runs again at every
     /// reconnect, so a daemon that moved is found again from discovery.
-    public init(open: @escaping @Sendable () throws -> (endpoint: DaemonEndpoint, transport: any ControlTransport)) {
+    public init(clock: HostClock = .real(), open: @escaping @Sendable () throws -> (endpoint: DaemonEndpoint, transport: any ControlTransport)) {
+        self.clock = clock
         self.open = open
         (outputs, outputSink) = AsyncStream.makeStream(of: Output.self, bufferingPolicy: .unbounded)
     }
@@ -83,10 +86,7 @@ public actor DaemonHost: ControlExchange {
         let failure = LoomError.closed("the daemon connection was closed")
         for (_, waiter) in waiters { waiter.resume(throwing: failure) }
         waiters = [:]
-        for waiter in refreshWaiters { waiter.resume(throwing: failure) }
-        refreshWaiters = []
-        for waiter in helloWaiters { waiter.resume(throwing: failure) }
-        helloWaiters = []
+        failRefreshes(failure)
     }
 
     /// A lane for this session ended, so the next poll attaches it again if it is still resident.
@@ -108,21 +108,23 @@ public actor DaemonHost: ControlExchange {
     /// changed something the catalogue shows. A poll already out is waited for.
     public func refreshNow() async throws {
         try await withCheckedThrowingContinuation { (resume: CheckedContinuation<Void, Error>) in
-            guard core.isConnected else {
+            guard !stopped, core.isConnected else {
                 resume.resume(throwing: LoomError.closed("the daemon is not connected"))
                 return
             }
-            refreshWaiters.append(resume)
-            perform(core.pollSoon(now: now()))
+
+            // A poll already out may have listed the sessions before the change this caller made, and
+            // an owner command jumps the queue, so that is the usual order. It waits for the next one.
+            if core.isPolling {
+                laterWaiters.append(resume)
+            } else {
+                refreshWaiters.append(resume)
+                perform(core.pollSoon(now: now()))
+            }
         }
     }
 
     // MARK: ControlExchange
-
-    public func connect() async throws -> DaemonHello {
-        if core.isConnected, let body = core.hello { return Self.greeting(body, epoch: core.epoch) }
-        return try await withCheckedThrowingContinuation { helloWaiters.append($0) }
-    }
 
     public func close() {
         stop()
@@ -132,6 +134,10 @@ public actor DaemonHost: ControlExchange {
 
     public func request(_ cmd: String, body: JSONValue, priority: ControlLane.Priority) async throws -> JSONValue {
         try await withCheckedThrowingContinuation { resume in
+            guard !stopped else {
+                resume.resume(throwing: LoomError.closed("the daemon connection was closed"))
+                return
+            }
             let tag = nextTag
             nextTag += 1
             waiters[tag] = resume
@@ -153,15 +159,14 @@ public actor DaemonHost: ControlExchange {
             case .state(let state):
                 outputSink.yield(.state(state))
                 if case .unavailable = state { failRefreshes(LoomError.closed("the daemon is not connected")) }
-                if case .connected = state, let body = core.hello {
-                    let greeting = Self.greeting(body, epoch: core.epoch)
-                    for waiter in helloWaiters { waiter.resume(returning: greeting) }
-                    helloWaiters = []
-                }
             case .catalogue:
                 outputSink.yield(.catalogue(Snapshot(status: core.status, hello: core.hello, sessions: core.sessions, activity: core.activity)))
                 for waiter in refreshWaiters { waiter.resume() }
-                refreshWaiters = []
+                refreshWaiters = laterWaiters
+                laterWaiters = []
+
+                // Whoever asked during this poll reads again, so their change is in what they see.
+                if !refreshWaiters.isEmpty { perform(core.pollSoon(now: now())) }
             case .attach(let session, let inheriting):
                 outputSink.yield(.attach(session: session, inheriting: inheriting))
             case .detachAll:
@@ -182,8 +187,9 @@ public actor DaemonHost: ControlExchange {
     }
 
     private func failRefreshes(_ error: LoomError) {
-        for waiter in refreshWaiters { waiter.resume(throwing: error) }
+        for waiter in refreshWaiters + laterWaiters { waiter.resume(throwing: error) }
         refreshWaiters = []
+        laterWaiters = []
     }
 
     /// Opens a socket when the core asks. A socket that cannot be opened is reported as the end of
@@ -252,8 +258,9 @@ public actor DaemonHost: ControlExchange {
         timer = nil
         guard !stopped, let due = core.nextDue else { return }
         let wait = max(1, due - now())
+        let clock = self.clock
         timer = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(wait))
+            await clock.sleep(wait)
             guard !Task.isCancelled else { return }
             await self?.wake()
         }
@@ -264,17 +271,5 @@ public actor DaemonHost: ControlExchange {
         perform(core.tick(now: now()))
     }
 
-    private func now() -> Int {
-        let elapsed = ContinuousClock.now - origin
-        return Int(elapsed.components.seconds) * 1000 + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
-    }
-
-    private static func greeting(_ body: JSONValue, epoch: String?) -> DaemonHello {
-        DaemonHello(
-            epoch: epoch ?? body["epoch"]?.string ?? "",
-            principal: body["principal"]?.string ?? "",
-            buildVersion: body["build_version"]?.string ?? "",
-            buildCommit: body["build_commit"]?.string ?? ""
-        )
-    }
+    private func now() -> Int { clock.now() }
 }

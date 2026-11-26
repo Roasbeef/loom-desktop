@@ -6,8 +6,6 @@ import Foundation
 /// A probe or a test uses `ControlLaneExchange`, which owns the commands alone. Both settle a
 /// command the same way, so every method below is written once.
 public protocol ControlExchange: Sendable {
-    /// Waits for the daemon's `hello` and returns it.
-    func connect() async throws -> DaemonHello
     func close() async
     /// One command, one reply body. A lost reply is `outcomeUnknown`, and nothing is resent.
     func request(_ cmd: String, body: JSONValue, priority: ControlLane.Priority) async throws -> JSONValue
@@ -52,7 +50,10 @@ public final class ControlClient: Sendable {
     /// Waits for the `hello` every other command depends on for the epoch.
     @discardableResult
     public func connect() async throws -> DaemonHello {
-        try await exchange.connect()
+        guard let own = exchange as? ControlLaneExchange else {
+            throw LoomError.protocolViolation("a hosted connection says hello to its host, not to a client")
+        }
+        return try await own.connect()
     }
 
     public func close() async {

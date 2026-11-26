@@ -45,7 +45,7 @@ public struct Daemon: Sendable, Equatable {
     public static let reviewEvery = 3
 
     /// A read the host performs beside the catalogue.
-    public enum Periodic: Sendable, Equatable {
+    public enum Periodic: Sendable, Equatable, Hashable {
         case deployment, attention, review, projects
     }
 
@@ -120,6 +120,9 @@ public struct Daemon: Sendable, Equatable {
     public var nextDue: Int? {
         [control?.nextDue, poll == nil && connection == .connected ? pollAt : nil, retryAt].compactMap { $0 }.min()
     }
+
+    /// Whether a poll is out, which a caller who has just changed something must not count as reading the change.
+    public var isPolling: Bool { poll != nil }
 
     /// Whether the control socket is up and has said hello.
     public var isConnected: Bool { connection == .connected }
