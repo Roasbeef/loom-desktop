@@ -61,7 +61,7 @@ and clearing fault bits while the same rule keeps failing.
 | Model | Faults (one bit each) |
 | --- | --- |
 | `LaneModel` | refuse, stale reply, garbage, disconnect, close, old notice |
-| `SessionModel` | lost reply after apply, duplicate push, reordered pushes, disconnect (inside a transfer too) |
+| `SessionModel` | lost reply after apply, duplicate push, reordered pushes, disconnect (inside a transfer too), a lost request, attaching as an observer |
 | `DaemonModel` | lost reply, socket closed mid-poll, daemon restart (new epoch), a lane ending, a refused poll, the daemon down, a replaced controller reporting its end late |
 | `DispatchModel` | create reply lost, create refused, open fails, first prompt refused or lost, worktree ignored |
 | `AppCoreModel` | session vanishes, feed row gone, app restart from persisted digests, reply changes |
@@ -71,16 +71,48 @@ and clearing fault bits while the same rule keeps failing.
 ## Rules
 
 The lane's tags are Loom's own, from `session_channel_property_test.gleam`: I1 to I8, L1 to L5 and N1.
-The rest are this app's: T1 to T6 (transcript only grows, a stream is handed to its reserved entry,
-a token changes nothing a view reads, one stream write per flush window, an identical cut changes
-nothing), O1, O2 and O4 (a sent message is in exactly one place, one write per message, one key names one
-request; O3 and O5, about approvals and observers, are not checked yet), B2, B3, B6 and B7 (board, open
-thread, lanes per epoch, unseen marks; B1, B4 and B5 are not checked yet), N2 (a notice once), P1 and P2 (persisted values decode; nothing but reply digests is
-persisted), H2 and H6 (first prompt, owner before background), R0 to R3 and R5 (reads; a surface that becomes shown is read at once), and liveness
-after the heal. Each is a named check in the model's file, with the reason it holds.
+The rest are this app's:
+
+- T1 to T7: the transcript only grows, a stream is handed to its reserved entry, a token changes nothing a
+  view reads, one stream write per flush window, an identical cut changes nothing, and the held stream equals
+  what the daemon streamed when no fault lost a fragment (T7).
+- X1 to X4: a block appears once, nothing is still drawn as live once every turn has settled (X2), an approval
+  appears once and only if the daemon raised it (X3), and none stays drawn as pending after it was decided (X4).
+- O1 to O5: a sent message is in exactly one place, one write per message, an answer to an approval carries
+  the sequence of a record the session held when it was given (O3), one key names one request, an observer
+  sends no mutation (O5).
+- B1 to B7: the Dock label equals the board's (B1), the board equals the rule over the facts (B2), the open
+  thread (B3), the place shown is a listed session or the core moved it and said why (B4), the project
+  selection names a project the core holds (B5), lanes per epoch (B6), unseen marks (B7). F1: a resident session
+  goes at most three polls with no attention read covering it.
+- N2 (a notice once), P1 and P2 (persisted values decode; nothing but reply digests is persisted), H2 and H6
+  (first prompt, owner before background), R0 to R3, R5 and R6 (reads; a surface that becomes shown is read at
+  once unless it settles first, and never before its settle time), and liveness after the heal.
+
+Each is a named check in the model's file, with the reason it holds.
 
 One excuse is counted and not failed: a stream replaced by a newer generation on its strand before its
 entry is held. Loom replaces it too, so this is a policy question, tracked in the PR that introduced it.
+
+## The fake daemon streams what the real one does
+
+`FakeDaemon` streams thinking, text and tool-call fragments with the real field set (`strand`, `op`,
+`generation`, `ephemeral`, `kind`, and `call_id`, `tool_name` and `arguments_fragment` for a tool call), splits
+realistic text (markdown with code fences, CJK, ZWJ emoji, combining accents, long replies) at scalar
+boundaries, runs several strands at once, and ends a turn four ways: its entry lands, it is aborted, it fails
+with an entry, or it fails with none. It raises approvals mid-turn, writes the operation-keyed result
+(`fact.custom/operation-result/{op}`) beside `strand.last_result`, decides approvals by sequence, and sends
+`oldest_seq` as the real daemon does (null on every catch-up cut and on a recent window with no entry).
+
+Three sources keep the fake honest. `make record LOOMD_BIN=<loomd>` records real sessions against a daemon it
+starts itself, with its own state directory and port (17741, never 7440 or `~/.loom`) and the scripted model
+`scripts/fake_provider.py`, so it needs no provider key. The recorded traces (`Tests/LoomCoreTests/Traces`: a
+plain reply, reasoning, tool calls, an aborted turn, a failed turn, an approval, two prompts) are replayed through the
+production lane and conversation by `TraceReplayTests`, clean and under each push fault, and the clean replay is
+the reference. `make conformance LOOM_CHECKOUT=<loom checkout>` runs the same frames through Loom's own
+`session_view` in a scratch Gleam project and writes what it draws; a Swift test requires the core to say the
+same things in the same order. The two agree on all seven traces. `make contract LOOMD_BIN=<loomd>` runs the
+shell's real sockets against a real daemon.
 
 ## The hosts are tested too
 
@@ -89,8 +121,10 @@ real `DaemonHost` and `ReadHost` over a `HostClock` that a test replaces with a 
 over a fake control socket backed by the simulated control daemon (`DaemonHostTests`, `ReadHostTests`,
 `HostTestSupport`). They cover what a core simulation cannot see: holders and tasks, parked callers, the timer,
 a call after `stop`, a refresh that must wait for a poll that starts after the change, and a late report about
-an old lane. `SessionController` and `AppModel.handle` are in the executable target and have no test of their
-own; the simulation drives the `Session` and `Daemon` they host.
+an old lane. The app's own hosts are tested in `Tests/LoomAppTests`, over the executable target:
+`SessionController` (a closed lane is always reported to the daemon core) and `DaemonConnection` (a refused
+stop leaves the lane attached). Two UI scenarios found bugs the simulation could not see, because both were in
+what the app host reports to the core and not in what the core decides; each now has a test at that seam.
 
 ## Commands
 
@@ -101,6 +135,11 @@ make sim-replay MODEL=SessionModelTests SEED=<hex>   # one seed, step by step
 SIM_BENCH=1 swift test --filter SimBenchTests         # schedules per second
 make coverage                                # line coverage of the core under the simulations alone
 make recall WT=<scratch worktree>            # blind recall; see scripts/recall.sh
+make record LOOMD_BIN=<loomd>                # record traces from a real loomd (own state dir and port)
+make conformance LOOM_CHECKOUT=<loom>        # regenerate Loom's projection of the traces
+make contract LOOMD_BIN=<loomd>              # the shell's real sockets against a real loomd
+scripts/cross-process.sh                     # the same seeds in two processes with different hash seeds
+make sim-nightly WT=<scratch worktree>       # long campaign, cross-process run and recall, for a schedule
 ```
 
 ## Blind recall
@@ -112,18 +151,28 @@ change that makes the harness miss a patch is a regression.
 
 ## Known gaps
 
-- `ControlLaneExchange` (a client that owns its own control socket, used by `loom-probe` and the tests) still exists beside
-  `DaemonHost`; the app uses only the host. The thread reader's first-read settle delay and the worktree read, which is
-  made once, are not scheduled by `Readers`.
 - `AppCore`'s inputs are gathered from observed models, so a change is reported one main-actor turn later,
-  as the old observation reported it.
+  as the old observation reported it. Feeding each input to the core where it changes would touch every
+  setter of `AppModel`'s observed properties (the catalogue, the feed rows, the reviews, the project boards,
+  the machines, the sessions' replies) and would make the core's input order depend on view code. The core's
+  own rules do not depend on the delay (B2 recomputes the board from the facts it holds), and the UI scenarios
+  read the surfaces after the turn.
 - `SessionController.inherit` drops images in flight.
-- `stop` detaches a session's lane before the daemon has answered, so a refused stop leaves a running session
-  detached. It predates the core.
-- A refused steer from an inbox card returns its text to the session's own composer, which the inbox does not draw.
-- `SessionController` and `AppModel.handle` have no test of their own (see above).
-- A stream whose turn is interrupted or fails before its entry is published stays drawn until the strand's next
-  generation. Loom also stops waiting when the operation is over, but a cut's metadata can be older than a push
-  that reached the client first, so an idle strand in a cut is not proof that the entry will never land.
-- The lost-message settlement needs the window's `oldest_seq`; a daemon that omits it leaves a lost message unknown.
-- Layout, focus, the accessibility tree, real WebSocket framing and the real daemon are not simulated.
+- Layout, focus, the accessibility tree, real WebSocket framing and the real daemon are not simulated beyond
+  the recorded traces and the opt-in contract test.
+- The recorded traces do not reproduce a turn that fails before its entry lands (the scripted failing model
+  writes the failure as an entry), so the failed-turn stream rule rests on the simulation and its unit tests.
+- A message sent before the first cut says who the session talks to can be written by an observer's lane
+  until that cut arrives; the lane refuses the named mutations from then on, and the daemon refuses by code
+  before it. Nothing earlier can know the role.
+
+## What the widened simulation found
+
+By itself, with no reading of the code to point it there: a stream whose turn failed before its entry landed
+stayed drawn (X2, fixed from the daemon's operation-keyed result), and a fake daemon that sent `oldest_seq` as
+the real one does made a lost message impossible to settle (liveness, fixed by reading a null `oldest_seq` on
+an empty recent window as the protocol defines it). Writing the rules B4 and B1 to B5 found that the core never
+moved the window off a session no daemon lists. Reading found, in the same round: a lane closed by the app was
+never reported to the core (`older_turns_page_in`), the attention feed waited a whole period for a new session
+(`appearance_and_size_matrix`), a refused stop left a running session without its lane, a refused card message
+was shown nowhere, and the thread pane's settle and worktree read bypassed the scheduler.
