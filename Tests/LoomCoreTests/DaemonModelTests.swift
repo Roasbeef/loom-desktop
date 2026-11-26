@@ -58,6 +58,8 @@ struct DaemonModel: SimSpec {
         var retired: [(session: String, generation: Int)] = []
         /// Polls completed since the catalogue first listed each resident session without an attention read since.
         var unfed: [String: Int] = [:]
+        /// The resident sessions an attention read has been asked about since each last became resident.
+        var covered: Set<String> = []
 
         mutating func count(_ key: String) { census[key, default: 0] += 1 }
     }
@@ -91,7 +93,15 @@ struct DaemonModel: SimSpec {
                 world.fake.version += 1
             }
         case 2:
-            if !world.fake.sessions.isEmpty { world.fake.sessions.remove(at: arg % world.fake.sessions.count); world.fake.version += 1 }
+            if arg % 2 == 1, let index = world.fake.sessions.indices.first(where: { !world.fake.sessions[$0].resident }) {
+                // A saved session is resumed, so it is resident again with no feed row.
+                world.fake.sessions[index].resident = true
+                world.fake.version += 1
+                world.count("resume")
+            } else if !world.fake.sessions.isEmpty {
+                world.fake.sessions.remove(at: arg % world.fake.sessions.count)
+                world.fake.version += 1
+            }
         case 3:
             if !world.fake.sessions.isEmpty {
                 let index = arg % world.fake.sessions.count
@@ -285,8 +295,10 @@ struct DaemonModel: SimSpec {
             case .catalogue:
                 // F1: each completed poll ages a resident session no attention read has covered.
                 let resident = Set(world.daemon.sessions.filter { $0.state.isResident }.map(\.id))
+                // A session that stops being resident loses its feed row, so a read of it no longer counts.
+                world.covered.formIntersection(resident)
                 world.unfed = world.unfed.filter { resident.contains($0.key) }
-                for id in resident { world.unfed[id, default: 0] += 1 }
+                for id in resident where !world.covered.contains(id) { world.unfed[id, default: 0] += 1 }
                 for (id, polls) in world.unfed.sorted(by: { $0.key < $1.key }) where polls > 3 {
                     world.fake.violations.append(Sim.Violation("F1", "resident session \(id) went \(polls) polls with no attention read covering it"))
                 }
@@ -310,7 +322,10 @@ struct DaemonModel: SimSpec {
                 world.count("detachAll")
             case .due(let periodic):
                 world.count("due")
-                if periodic == .attention { world.unfed = [:] }
+                if periodic == .attention {
+                    world.unfed = [:]
+                    world.covered = Set(world.daemon.sessions.filter { $0.state.isResident }.map(\.id))
+                }
             case .settled(let tag, let settlement):
                 world.settled[tag] = settlement
                 world.ownerQueued.remove(tag)
@@ -377,11 +392,11 @@ final class DaemonModelTests: XCTestCase {
         }
     }
 
-    /// The corpus: seeds that once failed, kept so they keep passing. The first is the campaign failure
-    /// on generator 102: a session that stopped being resident and returned was not read again, because
-    /// the core still remembered it as covered.
+    /// The corpus: seeds that once failed, kept so they keep passing. Both were campaign failures of rule
+    /// F1 that came from the model counting a covered session's polls as uncovered; they stay because
+    /// the check that replaced it also covers a session that stops being resident and returns.
     func testTheRegressionSeedsPass() {
-        for hex in ["f1000095e605d6a597898c"] {
+        for hex in ["f1000095e605d6a597898c", "1b000055e685f6155735cc"] {
             guard let seed = Sim.Seed(hex: hex), case .success = Sim.run(DaemonModel(), seed: seed) else { return XCTFail("seed \(hex) fails") }
         }
     }
