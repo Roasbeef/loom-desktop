@@ -639,6 +639,9 @@ enum Snapshot {
             "actionError": model.actions.error ?? "",
             "isPaletteOpen": model.isPaletteOpen,
             "showsInspector": model.showsInspector,
+            // Whether any window is drawn. SwiftUI draws nothing in a window no display shows, and a view that
+            // changes its own state then changes nothing a test can read.
+            "windowDrawn": NSApp.windows.contains { $0.occlusionState.contains(.visible) },
             "transcriptGeometry": TranscriptDebug.geometry,
             "windowFrame": NSApp.windows.first { $0.isVisible && $0.frame.width > 400 && $0.canBecomeMain }.map { w in
                 let frame = w.accessibilityFrame()
@@ -677,6 +680,8 @@ enum Snapshot {
         if let session = model.currentSession {
             body["session"] = [
                 "isLive": session.isLive,
+                // Names the attachment, so a test can tell a lane that ended and was replaced from one that never ended.
+                "lane": "\(ObjectIdentifier(session).hashValue)",
                 "thinkingLevel": session.strand?.thinkingLevel ?? "",
                 "profile": session.surfaces["profile"]?["profile"]?.string ?? "",
                 "isBusy": session.isBusy,
