@@ -128,7 +128,8 @@ public struct Session: Sendable, Equatable {
 
     private enum Owner: Sendable, Equatable {
         case caller(Int)
-        case draft(id: Int, text: String, delivery: Delivery, strand: String)
+        /// `id` is nil for a message with no words, an image alone, which the ledger does not show.
+        case draft(id: Int?, text: String, delivery: Delivery, strand: String)
     }
 
     private var owners: [Lane.Ticket: Owner] = [:]
@@ -151,7 +152,7 @@ public struct Session: Sendable, Equatable {
         focusedStrand = previous.focusedStrand
         ledger = previous.ledger
         let rows = previous.conversation
-        ledger.loseWaiting { Session.occurrences(of: $0.text, in: rows, strand: $0.strand) }
+        ledger.loseWaiting { rows.newestSeq(strand: $0.strand) ?? 0 }
     }
 
     private init(lane: Lane, conversation: Conversation) {
@@ -210,9 +211,7 @@ public struct Session: Sendable, Equatable {
             let strand = command.body["strand"]?.string ?? focusedStrand
             let id = ledger.sent(text, delivery: delivery, strand: strand)
             let admitted = lane.submit(command, now: now)
-            if let id {
-                owners[admitted.ticket] = .draft(id: id, text: text, delivery: delivery, strand: strand)
-            }
+            owners[admitted.ticket] = .draft(id: id, text: text, delivery: delivery, strand: strand)
             var updates = admitted.updates
             if case .notSent(let reason) = admitted.disposition { updates.append(.notSent(admitted.ticket, reason: reason)) }
             return route(updates, now: now)
@@ -334,27 +333,29 @@ public struct Session: Sendable, Equatable {
         case .draft(let id, let text, let delivery, let strand):
             switch settlement {
             case .reply(let reply):
-                ledger.taken(id)
+                if let id { ledger.taken(id) }
                 if delivery == .queue, reply.body["status"]?.string == "queued" {
                     return [.notice("Queued. It runs after this turn.", .info)]
                 }
                 return []
             case .unknown:
-                ledger.lost(id, baseline: Self.occurrences(of: text, in: conversation, strand: strand))
+                if let id { ledger.lost(id, afterSeq: conversation.newestSeq(strand: strand) ?? 0) }
                 return [.notice(Self.maybeSentWords, .warning)]
             case .refused(_, let message, _):
-                return refused(id, words: message.isEmpty ? "The daemon refused the message." : message)
+                return refused(id, text: text, words: message.isEmpty ? "The daemon refused the message." : message)
             case .failed(let error):
-                return refused(id, words: error.localizedDescription)
+                return refused(id, text: text, words: error.localizedDescription)
             case .cut:
                 return []
             }
         }
     }
 
-    private mutating func refused(_ id: Int, words: String) -> [Effect] {
+    private mutating func refused(_ id: Int?, text: String, words: String) -> [Effect] {
         var effects: [Effect] = []
-        if let restored = ledger.refused(id) { effects.append(.restoreDraft(restored)) }
+
+        // An image alone has no ledger line and no words, but the images still go back.
+        if let id { if let restored = ledger.refused(id) { effects.append(.restoreDraft(restored)) } } else { effects.append(.restoreDraft(text)) }
         effects.append(.notice(words, .warning))
         return effects
     }
@@ -364,8 +365,16 @@ public struct Session: Sendable, Equatable {
         guard ledger.lines.contains(where: \.isUnknown) else { return [] }
         let held = conversation
         let offered = ledger.settleUnknown { line in
-            Self.occurrences(of: line.text, in: held, strand: line.strand)
-                + held.pendingInputs.filter { $0.text == line.text }.count
+            guard case .unknown(let afterSeq) = line.outcome else { return .undecided }
+            let arrived = held.rows(strand: line.strand).contains { row in
+                guard let seq = row.seq, seq > afterSeq, case .user(let body, _) = row.kind else { return false }
+                return body == line.text
+            }
+            if arrived || held.pendingInputs.contains(where: { $0.text == line.text && $0.strand == line.strand }) { return .delivered }
+
+            // Absence proves something only if this window reaches back to what the sender held.
+            guard let oldest = held.oldestSeq, oldest <= afterSeq + 1 else { return .undecided }
+            return .absent
         }
         var effects: [Effect] = []
         for text in offered {

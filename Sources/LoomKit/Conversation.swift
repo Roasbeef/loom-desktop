@@ -397,6 +397,12 @@ public struct Conversation: Sendable, Equatable {
         // Loom's stream_identity: an unrelated entry landing on any strand says
         // nothing about this reply. A stream with no reservation, from an older
         // daemon, keeps the old rule of any landed entry.
+        //
+        // A stream whose turn is interrupted or fails before its entry is published stays drawn
+        // until the strand's next generation replaces it. Loom's `response_awaited` also stops when
+        // the operation is over, but a cut's metadata can be older than a push that reached this
+        // client first, so an idle strand in a cut is not proof that the reply will never land.
+        // That gap is listed in docs/core.md.
         if landed {
             streams = streams.filter { stream in
                 guard stream.value.ended else { return true }

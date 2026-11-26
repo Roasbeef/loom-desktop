@@ -64,8 +64,10 @@ enum Frames {
         return text(.object(fields))
     }
 
-    static func begin(replyTo: Int, snapshot: String, window: String, nextSeq: Int, session: String, role: String = "owner", epoch: String = "e1") -> String {
-        envelope(replyTo: replyTo, event: "snapshot_begin", body: .object([
+    static func begin(replyTo: Int, snapshot: String, window: String, nextSeq: Int, session: String, role: String = "owner", epoch: String = "e1", oldestSeq: Int? = nil) -> String {
+        var fields: [String: JSONValue] = ["oldest_seq": oldestSeq.map { .int(Int64($0)) } ?? .null]
+        fields["_"] = nil
+        return envelope(replyTo: replyTo, event: "snapshot_begin", body: .object(fields.merging([
             "snapshot_id": .string(snapshot),
             "next_seq": .int(Int64(nextSeq)),
             "window": .string(window),
@@ -77,7 +79,7 @@ enum Frames {
             "complete_history": .bool(false),
             "fragment_bytes_limit": .int(Int64(TransferAssembler.fragmentLimit)),
             "record_bytes_limit": .int(Int64(TransferAssembler.recordLimit)),
-        ]))
+        ], uniquingKeysWith: { $1 })))
     }
 
     /// One whole record in one chunk. `kind` is `metadata` or `entry`.

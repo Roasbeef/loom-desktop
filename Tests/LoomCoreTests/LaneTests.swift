@@ -171,4 +171,17 @@ final class LaneTests: XCTestCase {
         XCTAssertEqual(rig.lane.cursor, 50)
         XCTAssertTrue(rig.updates.contains { if case .cut(ticket, _, _) = $0 { return true }; return false })
     }
+
+    /// A socket reports its end more than once, and a close this client asked for is followed by the
+    /// transport's own. A closed lane tells nobody twice.
+    func testASecondReportOfTheSocketEndingChangesNothing() {
+        var rig = Rig()
+        rig.answerTransfer(window: "recent", nextSeq: 1)
+        _ = rig.lane.close()
+        rig.collect()
+        let outputs = rig.outputs.count
+        XCTAssertTrue(rig.lane.receive(failed: .closed("the socket ended")).isEmpty)
+        rig.collect()
+        XCTAssertEqual(rig.outputs.count, outputs, "no second shut")
+    }
 }

@@ -179,7 +179,8 @@ public struct ControlLane: Sendable, Equatable {
     }
 
     public mutating func receive(failed error: LoomError) -> [Update] {
-        fail(error)
+        guard phase != .closed else { return [] }
+        return fail(error)
     }
 
     public mutating func tick(now: Int) -> [Update] {

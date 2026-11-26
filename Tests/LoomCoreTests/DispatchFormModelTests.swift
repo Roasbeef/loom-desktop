@@ -272,6 +272,18 @@ final class DispatchFormModelTests: XCTestCase {
         XCTAssertEqual(form.requestKey, afterName, "with a name typed the prompt is not a create parameter")
     }
 
+    /// The disk can change under the same text, so a fresh judgement is taken even when the text did not move.
+    func testAFreshJudgementOfTheSameFolderIsTaken() {
+        var form = DispatchForm(seed: "f")
+        _ = form.apply(.edit(.prompt("go")))
+        _ = form.apply(.edit(.workspace("/new", folder: .missing, worktreeProblem: nil)))
+        XCTAssertFalse(form.canDispatch)
+        let key = form.requestKey
+        _ = form.apply(.edit(.workspace("/new", folder: .ok("/new"), worktreeProblem: nil)))
+        XCTAssertTrue(form.canDispatch, "the folder was made, and the same text now judges well")
+        XCTAssertEqual(form.requestKey, key, "the text did not change, so the key did not")
+    }
+
     func testARetryAfterANewFolderNeverCarriesTheOldKey() {
         var form = DispatchForm(seed: "f")
         _ = form.apply(.edit(.workspace("/a", folder: .ok("/a"), worktreeProblem: nil)))

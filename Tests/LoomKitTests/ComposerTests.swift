@@ -184,23 +184,19 @@ final class DraftLedgerUnknownTests: XCTestCase {
     func testALostReplyKeepsTheLineAndNeverReturnsTheTextByItself() {
         var ledger = DraftLedger()
         let id = ledger.sent("hello", delivery: .send, strand: "main")!
-        ledger.lost(id, baseline: 0)
+        ledger.lost(id, afterSeq: 0)
         XCTAssertEqual(ledger.lines.map(\.isUnknown), [true])
         XCTAssertNil(ledger.refused(999))
     }
 
-    func testTheTranscriptSettlesAnUnknownLineAsDeliveredOrOffersTheTextBack() {
-        var delivered = DraftLedger()
-        let first = delivered.sent("hello", delivery: .send)!
-        delivered.lost(first, baseline: 0)
-        XCTAssertEqual(delivered.settleUnknown { _ in 1 }, [], "one more row than at send time: it arrived")
-        XCTAssertTrue(delivered.lines.isEmpty)
-
-        var missing = DraftLedger()
-        let second = missing.sent("hello", delivery: .send)!
-        missing.lost(second, baseline: 2)
-        XCTAssertEqual(missing.settleUnknown { _ in 2 }, ["hello"], "no new row: the text is offered back")
-        XCTAssertTrue(missing.lines.isEmpty)
+    func testTheTranscriptSettlesAnUnknownLineAsDeliveredAbsentOrUndecided() {
+        for (verdict, offered, remaining) in [(DraftLedger.Verdict.delivered, [], 0), (.absent, ["hello"], 0), (.undecided, [], 1)] {
+            var ledger = DraftLedger()
+            let id = ledger.sent("hello", delivery: .send)!
+            ledger.lost(id, afterSeq: 7)
+            XCTAssertEqual(ledger.settleUnknown { _ in verdict }, offered)
+            XCTAssertEqual(ledger.lines.count, remaining, "an undecided line waits for a window that reaches back to it")
+        }
     }
 
     func testAReplacedSessionLosesWhatWasStillWaiting() {
@@ -210,6 +206,6 @@ final class DraftLedgerUnknownTests: XCTestCase {
         ledger.taken(taken)
         ledger.loseWaiting { _ in 3 }
         XCTAssertEqual(ledger.lines.map(\.text), ["a"])
-        XCTAssertEqual(ledger.lines.first?.outcome, .unknown(baseline: 3))
+        XCTAssertEqual(ledger.lines.first?.outcome, .unknown(afterSeq: 3))
     }
 }

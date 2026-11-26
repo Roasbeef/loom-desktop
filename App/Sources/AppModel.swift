@@ -729,8 +729,10 @@ final class AppModel {
         // The core settles the board, the open thread, the folder, the project selection
         // and the notices in one step, from these facts, so the pane and the highlight never
         // see a board the selection has not met.
-        run(core.apply(.place(place)))
+        // The facts come first: the place settles against them, so a selection made just before
+        // (a project that was created and chosen) is judged against the board that holds it.
         run(core.apply(.facts(facts, now: Int(Date().timeIntervalSince1970 * 1000))))
+        run(core.apply(.place(place)))
     }
 
     /// What the board and the unseen marks are computed from, as the shell holds it.
@@ -1450,6 +1452,7 @@ final class SessionController {
     private func mirrorLedger() {
         guard let ledger = core?.ledger, composer.ledger != ledger else { return }
         composer.ledger = ledger
+        composer.pruneImages()
     }
 
     /// Arms the one wake-up the core asks for. Nothing ticks on a fixed cadence.

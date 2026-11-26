@@ -80,6 +80,8 @@ struct FakeDaemon: Equatable {
     var socket = Socket()
     var counter = 0
     var strands: [String] = ["main"]
+    /// When set, a `recent` transfer carries only this many of the newest entries, as the real window does.
+    var recentLimit: Int?
     /// The fragments of each entry, which never change once written, so a transfer does not encode it again.
     var fragmentsByEntry: [String: [Fragment]] = [:]
 
@@ -149,13 +151,14 @@ struct FakeDaemon: Equatable {
         counter += 1
         let snapshot = "x\(counter)"
         var fragments = Self.fragments(record: "metadata", kind: "metadata", seq: nil, payload: metadata())
+        let served = window == "recent" ? Array(entries.suffix(recentLimit ?? entries.count)) : entries
         if window != "decided" {
-            for entry in entries where window == "history" ? false : entry.seq >= from {
+            for entry in served where window == "history" ? false : entry.seq >= from {
                 fragments += fragmentsByEntry[entry.id] ?? []
             }
         }
         socket.transfer = OpenTransfer(id: snapshot, nextSeq: nextSeq, fragments: fragments)
-        return [Frames.begin(replyTo: id, snapshot: snapshot, window: window, nextSeq: nextSeq, session: sessionID, role: socket.role)]
+        return [Frames.begin(replyTo: id, snapshot: snapshot, window: window, nextSeq: nextSeq, session: sessionID, role: socket.role, oldestSeq: window == "history" ? nil : (served.first?.seq ?? 1))]
     }
 
     private mutating func nextFragment(id: Int, body: JSONValue) -> [String] {

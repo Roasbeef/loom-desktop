@@ -277,8 +277,11 @@ struct SessionModel: SimSpec {
     }
 
     private func disconnect(_ world: inout World) {
-        guard world.session.isLive else { return }
-        perform(&world, world.session.receive(failed: .closed("the socket ended"), now: world.now))
+        // A socket reports its end more than once, so this is sent to a lane that is already closed too.
+        let wasLive = world.session.isLive
+        let effects = world.session.receive(failed: .closed("the socket ended"), now: world.now)
+        if !wasLive, !effects.isEmpty { world.daemon.violations.append(Sim.Violation("I5", "a closed session reported its end again: \(effects)")) }
+        perform(&world, effects)
         world.count("disconnect")
     }
 
@@ -494,7 +497,7 @@ final class SessionModelTests: XCTestCase {
                 for (key, value) in outcome.tallies { seen[key, default: 0] += value }
             }
         }
-        for key in ["send", "daemonProgress", "lostRequest", "lostReply", "disconnect", "reattach", "maybeSent", "restoreDraft", "unrelatedEntry", "duplicatePush", "reorderedPushes"] where (seen[key] ?? 0) == 0 {
+        for key in ["send", "daemonProgress", "lostRequest", "lostReply", "disconnect", "reattach", "maybeSent", "restoreDraft", "offeredBack", "unrelatedEntry", "duplicatePush", "reorderedPushes"] where (seen[key] ?? 0) == 0 {
             XCTFail("no run reached \(key); reached \(seen.sorted(by: { $0.key < $1.key }))")
         }
     }

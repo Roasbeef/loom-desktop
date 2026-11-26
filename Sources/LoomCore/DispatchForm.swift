@@ -236,10 +236,12 @@ public struct DispatchForm: Sendable, Equatable {
             worktreeProblemWords = nil
             generation += 1
         case .workspace(let text, let judged, let problem):
-            guard text != fields.workspace else { return }
-            fields.workspace = text
+            // The disk may have changed under the same text (a folder made, a repository
+            // initialised), so the judgement is always taken. Only a new text moves the key.
             folder = judged
             worktreeProblemWords = problem
+            guard text != fields.workspace else { return }
+            fields.workspace = text
             generation += 1
         case .configuration(let text):
             guard text != fields.configuration else { return }

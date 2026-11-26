@@ -28,9 +28,11 @@ public struct PendingDraft: Sendable, Equatable, Identifiable {
         /// The command is on the wire or waiting for it, and the reply may still come.
         case waiting
         /// No reply arrived, so the daemon may or may not have admitted the text. The
-        /// transcript decides: `baseline` is how many user rows already carried this
-        /// text when it was sent, so one more settles it as delivered.
-        case unknown(baseline: Int)
+        /// transcript decides: `afterSeq` is the newest record the sender held when the
+        /// reply was lost, so a user row with this text above it settles the line as
+        /// delivered, and no such row in a window that reaches back to it settles it as
+        /// not delivered. A count of equal texts would mistake old history for a new row.
+        case unknown(afterSeq: Int)
     }
 
     /// Whether the person is told the text may have been sent.
@@ -77,30 +79,42 @@ public struct DraftLedger: Sendable, Equatable {
     /// No reply arrived, so the outcome is unknown. The line stays, now marked, and the
     /// text is kept out of the editor: the daemon may have admitted it, and putting it
     /// back would leave it both in the transcript and one Return from a second send.
-    public mutating func lost(_ id: Int, baseline: Int) {
+    public mutating func lost(_ id: Int, afterSeq: Int) {
         guard let index = lines.firstIndex(where: { $0.id == id }) else { return }
-        lines[index].outcome = .unknown(baseline: baseline)
+        lines[index].outcome = .unknown(afterSeq: afterSeq)
     }
 
     /// Marks every line still waiting as unknown, for a session that replaced the one
     /// that sent them. Their replies can no longer arrive.
-    public mutating func loseWaiting(baseline: (PendingDraft) -> Int) {
+    public mutating func loseWaiting(afterSeq: (PendingDraft) -> Int) {
         for index in lines.indices where lines[index].outcome == .waiting {
-            lines[index].outcome = .unknown(baseline: baseline(lines[index]))
+            lines[index].outcome = .unknown(afterSeq: afterSeq(lines[index]))
         }
     }
 
-    /// Settles the unknown lines against the transcript that has just been read.
-    ///
-    /// `held` counts how many user rows or held inputs now carry a text. A line whose
-    /// count has risen past its baseline was delivered and is dropped. The others were
-    /// not delivered, and their text is returned to be offered back to the person.
-    public mutating func settleUnknown(carrying held: (PendingDraft) -> Int) -> [String] {
+    /// What the transcript just read says of one unknown line.
+    public enum Verdict: Sendable, Equatable {
+        /// A row with the text sits above the line's `afterSeq`: it arrived.
+        case delivered
+        /// The window reaches back to `afterSeq` and holds no such row: it did not arrive.
+        case absent
+        /// The window does not reach back far enough to say, so the line stays unknown.
+        case undecided
+    }
+
+    /// Settles the unknown lines against the transcript that has just been read. A delivered
+    /// line is dropped, an absent one is dropped and its text returned to be offered back, and
+    /// an undecided one stays.
+    public mutating func settleUnknown(_ verdict: (PendingDraft) -> Verdict) -> [String] {
         var offered: [String] = []
         for line in lines where line.isUnknown {
-            guard case .unknown(let baseline) = line.outcome else { continue }
-            if held(line) <= baseline { offered.append(line.text) }
-            lines.removeAll { $0.id == line.id }
+            switch verdict(line) {
+            case .delivered: lines.removeAll { $0.id == line.id }
+            case .absent:
+                offered.append(line.text)
+                lines.removeAll { $0.id == line.id }
+            case .undecided: break
+            }
         }
         return offered
     }

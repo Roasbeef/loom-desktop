@@ -111,6 +111,37 @@ final class SessionTests: XCTestCase {
         XCTAssertTrue(rig.session.ledger.lines.isEmpty)
     }
 
+    /// The window the new attachment gets can be shorter than the history the message was sent into.
+    /// Absence from a window that does not reach back proves nothing, so the line stays unknown and the
+    /// text is neither offered back (a duplicate if it arrived) nor dropped.
+    func testAWindowThatDoesNotReachBackLeavesALostMessageUnknown() {
+        var rig = Rig()
+        rig.send("hello#")
+        rig.dropReplies()
+        rig.advance(to: Lane.commandDeadlineMs)
+        for _ in 0..<8 { rig.daemon.version += 0; _ = rig.daemon.unrelatedEntry() }
+        rig.daemon.recentLimit = 3
+        let next = Session.start(sessionID: "s1", inheriting: rig.session, now: 13_000)
+        rig.session = next.session
+        rig.daemon.attach()
+        rig.wire = []
+        rig.effects = []
+        rig.absorb(next.effects)
+        rig.pump()
+        XCTAssertFalse(rig.has { if case .restoreDraft = $0 { return true }; return false }, "the prompt may be in history the window does not show")
+        XCTAssertEqual(rig.session.ledger.lines.map(\.isUnknown), [true])
+    }
+
+    /// An image alone has no words and no ledger line, but a refusal still returns its images.
+    func testARefusedMessageWithNoWordsStillReturnsItsImages() {
+        var rig = Rig()
+        let command = Lane.Command("prompt", body: ["strand": "nowhere", "text": ""], kind: .mutation)
+        rig.absorb(rig.session.apply(.send(text: "", delivery: .send, command: command), now: rig.now))
+        rig.pump()
+        XCTAssertTrue(rig.has { $0 == .restoreDraft("") })
+        XCTAssertTrue(rig.has { if case .notice(_, .warning) = $0 { return true }; return false })
+    }
+
     /// H4: pushes that are not tokens changed the observed stream once each. The core asks
     /// for the stream to be written once per flush window and never for another push.
     func testPushesThatAreNotTokensNeverWriteTheStreamAndTokensAreCoalescedToTheFlush() {

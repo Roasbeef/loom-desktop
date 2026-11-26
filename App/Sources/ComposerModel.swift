@@ -191,10 +191,16 @@ final class ComposerModel {
         controller.send(message: text, delivery: delivery, command: command)
     }
 
+    /// Forgets the images of messages the ledger no longer holds, so a sent message's bytes are not kept.
+    func pruneImages() {
+        let held = Set(ledger.lines.map(\.text))
+        imagesInFlight = imagesInFlight.filter { held.contains($0.key) || $0.key.isEmpty }
+    }
+
     /// Puts a message's text back in the editor, with the images it carried, because the
     /// daemon refused it or it never left. The notice that explains why follows.
     func restore(_ text: String) {
-        draft = DraftLedger.restoring(text, into: draft)
+        if !text.isEmpty { draft = DraftLedger.restoring(text, into: draft) }
         if let sent = imagesInFlight.removeValue(forKey: text) { images = sent + images }
     }
 

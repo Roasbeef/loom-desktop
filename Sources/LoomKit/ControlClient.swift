@@ -207,13 +207,13 @@ public actor ControlClient {
     /// where a session may be placed. `node` narrows it to one key and adds that
     /// node's long lists. Every statement is as seen from this daemon.
     public func deployment(node: String? = nil) async throws -> Deployment {
-        Deployment(try await request("deployment.status", body: node.map { ["node": .string($0)] } ?? .object([:])))
+        Deployment(try await request("deployment.status", body: node.map { ["node": .string($0)] } ?? .object([:]), priority: .background))
     }
 
     /// Lists the sessions this daemon's other orchestrators hold. A `silent`
     /// group is never the same as a group with no sessions.
     public func sessionsElsewhere() async throws -> [ElsewhereGroup] {
-        let body = try await request("sessions.elsewhere", body: .object([:]))
+        let body = try await request("sessions.elsewhere", body: .object([:]), priority: .background)
         return (body["orchestrators"]?.array ?? []).map(ElsewhereGroup.init)
     }
 

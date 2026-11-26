@@ -38,7 +38,9 @@ import LoomKit
 /// this lane keeps a FIFO and applies the Loom rule to each queued command. A
 /// refused catch-up on a lane that already holds a cut is retried at the next
 /// refresh instead of closing the lane, as the Swift lane has always done. The
-/// goal-board read is a Loom terminal feature the desktop does not have.
+/// goal-board read is a Loom terminal feature the desktop does not have. A completed ticketed
+/// transfer (history, lineage, decided) does not ask for an early refresh as Loom's does, and a
+/// `resumed` reply to `catch_up` is a protocol violation here, because no daemon path sends it.
 ///
 /// ## Timing
 ///
@@ -314,7 +316,10 @@ public struct Lane: Sendable, Equatable {
 
     /// Reduces the transport's report that the socket ended or failed.
     public mutating func receive(failed error: LoomError) -> [Update] {
-        fail(error)
+        // A socket reports its end more than once, and a close this client asked for is followed
+        // by the transport's own. The lane is closed once and tells nobody twice.
+        guard phase != .closed else { return [] }
+        return fail(error)
     }
 
     /// Drives the deadline and the idle refresh. A host may call it as often as it

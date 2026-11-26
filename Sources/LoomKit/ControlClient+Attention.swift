@@ -107,7 +107,7 @@ extension ControlClient {
         let body = try await request("approval.read", body: [
             "session": .string(sessionID),
             "epoch": .string(try currentEpoch()),
-        ])
+        ], priority: .background)
         guard let evidence = ApprovalEvidence(body) else {
             throw LoomError.protocolViolation("approval.read returned no approvals")
         }
@@ -122,7 +122,7 @@ extension ControlClient {
             "session": .string(sessionID),
             "since": .int(Int64(since)),
             "epoch": .string(try currentEpoch()),
-        ])
+        ], priority: .background)
         guard let brief = SessionBrief(body) else {
             throw LoomError.protocolViolation("session.brief returned no brief")
         }

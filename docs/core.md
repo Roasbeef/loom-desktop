@@ -108,4 +108,10 @@ change that makes the harness miss a patch is a regression.
 - `AppCore`'s inputs are gathered from observed models, so a change is reported one main-actor turn later,
   as the old observation reported it.
 - `SessionController.inherit` drops images in flight.
+- A stream whose turn is interrupted or fails before its entry is published stays drawn until the strand's next
+  generation. Loom also stops waiting when the operation is over, but a cut's metadata can be older than a push
+  that reached the client first, so an idle strand in a cut is not proof that the entry will never land.
+- `DispatchForm`'s `.submit`, `Request` and `.finished` half is simulated but the sheet still sends its own
+  request, so the form's O4 check covers `Request.createParameters`, not the parameters the sheet ships.
+- The lost-message settlement needs the window's `oldest_seq`; a daemon that omits it leaves a lost message unknown.
 - Layout, focus, the accessibility tree, real WebSocket framing and the real daemon are not simulated.

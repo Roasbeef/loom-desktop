@@ -19,6 +19,8 @@ final class StreamHandoffTests: XCTestCase {
             metadata: ["cells": [
                 ["namespace": "strand.config", "key": "main", "seq": 1, "value": ["model": ["modelId": "fake"]]],
                 ["namespace": "strand.leaf", "key": "main", "seq": 2, "value": leaf.map { .string($0) } ?? .null],
+                // The turn is still running until its entry is published.
+                ["namespace": "strand.state", "key": "main", "seq": 3, "value": ["currentOperationId": "op"]],
             ], "peers": [], "usage": .null],
             entries: entries
         )
