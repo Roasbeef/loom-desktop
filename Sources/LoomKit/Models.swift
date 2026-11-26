@@ -6,6 +6,13 @@ public struct DaemonHello: Sendable, Equatable {
     public let principal: String
     public let buildVersion: String
     public let buildCommit: String
+
+    public init(epoch: String, principal: String, buildVersion: String, buildCommit: String) {
+        self.epoch = epoch
+        self.principal = principal
+        self.buildVersion = buildVersion
+        self.buildCommit = buildCommit
+    }
 }
 
 /// `status`: the daemon's capacity at a moment.
@@ -15,7 +22,7 @@ public struct DaemonStatus: Sendable, Equatable {
     public let resident: Int
     public let blocked: Int
 
-    init(_ body: JSONValue) {
+    public init(_ body: JSONValue) {
         ready = body["ready"]?.bool ?? false
         capacity = body["capacity"]?.int ?? 0
         resident = body["resident"]?.int ?? 0

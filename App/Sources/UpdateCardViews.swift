@@ -33,36 +33,33 @@ final class UpdateWatcher {
     /// The session whose open pane reads its own brief, which this loop then skips.
     var paneSession: String?
 
-    @ObservationIgnored private var readAt: [String: Int] = [:]
-
     /// Keeps a brief the open pane read, as if this loop had read it.
     func offer(_ brief: SessionBrief, session: String) {
         digests[session] = UpdateDigest(brief: brief)
-        readAt[session] = Self.nowMs
     }
 
-    private static var nowMs: Int { Int(Date().timeIntervalSince1970 * 1000) }
+    /// Keeps the cards' briefs fresh while the inbox is drawn, for the sessions in Updates only.
+    /// The read host spaces them: a brief is a surface read in turn, never-read first and then the
+    /// longest ago, and the surfaces' period is the pause times the number of cards, which keeps the
+    /// cards at about one read a second whatever their number and leaves the daemon's six in four
+    /// seconds room for the open pane's own read.
+    func run(model: AppModel, targets: [String]) async {
+        let present = Set(UpdateWatch.targets(rows: model.board.rows))
+        if digests.keys.contains(where: { !present.contains($0) }) { digests = digests.filter { present.contains($0.key) } }
+        let period = UpdateWatch.pauseMs * max(1, targets.count)
+        let entries = targets.map { id in
+            ReadHost.Entry(.init(name: "update.brief", session: id, periodMs: period, budget: .brief)) {
+                guard let control = model.daemon(holding: id)?.control, let brief = try? await control.brief(sessionID: id) else { return .failed }
 
-    func run(model: AppModel) async {
-        while !Task.isCancelled {
-            let rows = model.board.rows
-            let targets = UpdateWatch.targets(rows: rows, excluding: paneSession)
-            let present = Set(UpdateWatch.targets(rows: rows))
-            if digests.keys.contains(where: { !present.contains($0) }) { digests = digests.filter { present.contains($0.key) } }
-            readAt = readAt.filter { present.contains($0.key) }
-
-            if let id = UpdateWatch.next(targets: targets, readAt: readAt) {
-                readAt[id] = Self.nowMs
-                if let control = model.daemon(holding: id)?.control, let brief = try? await control.brief(sessionID: id) {
-                    // A read that outlived the inbox must not write, and one for a
-                    // session that left Updates while it ran must not bring it back.
-                    guard !Task.isCancelled, present.contains(id) else { return }
-                    let digest = UpdateDigest(brief: brief)
-                    if digests[id] != digest { digests[id] = digest }
-                }
+                // A read that outlived the inbox must not write, and one for a session that left
+                // Updates while it ran must not bring it back.
+                guard !Task.isCancelled, present.contains(id) else { return .failed }
+                let digest = UpdateDigest(brief: brief)
+                if self.digests[id] != digest { self.digests[id] = digest }
+                return .read
             }
-            try? await Task.sleep(for: .milliseconds(UpdateWatch.pauseMs))
         }
+        await model.reads.hold(owner: "updates", entries)
     }
 }
 

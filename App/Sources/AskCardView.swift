@@ -67,10 +67,13 @@ struct AskCardView: View {
         // fails is tried again, since the page would otherwise show a head and no way
         // to answer it.
         .task(id: card.id) {
-            while !Task.isCancelled, rail.askRecords[card.id] == nil {
-                if await rail.readAsk(id: card.id, control: control) { break }
-                try? await Task.sleep(for: RailModel.refreshEvery)
-            }
+            guard rail.askRecords[card.id] == nil else { return }
+            let id = card.id
+            await model.reads.hold(owner: "ask.\(id)", [
+                ReadHost.Entry(.init(name: "ask.\(id)", session: rail.sessionID, periodMs: RailModel.refreshMs, budget: .unbudgeted), repeats: .untilRead) {
+                    await rail.readAsk(id: id, control: control) ? .read : .failed
+                }
+            ])
         }
     }
 

@@ -371,7 +371,9 @@ struct InboxView: View {
         }
         // One loop reads the cards' briefs while the inbox is drawn, for the sessions in
         // Updates only, and re-derives which on each lap.
-        .task { await watcher.run(model: model) }
+        .task(id: UpdateWatch.targets(rows: model.board.rows, excluding: watcher.paneSession)) {
+            await watcher.run(model: model, targets: UpdateWatch.targets(rows: model.board.rows, excluding: watcher.paneSession))
+        }
         #if DEBUG
         .onChange(of: drawn, initial: true) { _, now in model.debugInboxDrawn = now }
         #endif

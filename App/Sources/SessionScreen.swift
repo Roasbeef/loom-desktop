@@ -140,15 +140,18 @@ private struct LiveSession: View {
             // every five seconds while the page is open, and approval evidence only
             // while an approval waits, since the daemon caches neither.
             .task(id: record.id) {
-                while !Task.isCancelled {
-                    if controller.isLive {
-                        await rail.refresh(
-                            control: model.daemon(holding: record.id)?.control,
-                            hasApprovals: !controller.escalations.isEmpty
-                        )
+                let id = record.id
+                await model.reads.hold(owner: "rail.\(id)", [
+                    ReadHost.Entry(.init(name: "rail", session: id, periodMs: RailModel.refreshMs, budget: .unbudgeted)) {
+                        if controller.isLive {
+                            await rail.refresh(
+                                control: model.daemon(holding: id)?.control,
+                                hasApprovals: !controller.escalations.isEmpty
+                            )
+                        }
+                        return .read
                     }
-                    try? await Task.sleep(for: RailModel.refreshEvery)
-                }
+                ])
             }
             .navigationTitle(record.title)
             .navigationSubtitle(subtitle)

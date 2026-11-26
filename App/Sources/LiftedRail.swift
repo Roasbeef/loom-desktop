@@ -46,7 +46,7 @@ final class RailModel {
 
     /// How often the rail reads while the page is open. The daemon caches nothing
     /// and pushes nothing, and the web page reads at the same pace.
-    static let refreshEvery: Duration = .seconds(5)
+    static let refreshMs = 5_000
 
     init(sessionID: String) {
         self.sessionID = sessionID

@@ -173,8 +173,10 @@ final class DaemonConnection: Identifiable {
 
     private var endpoint: DaemonEndpoint?
     @ObservationIgnored var control: ControlClient?
-    private var loop: Task<Void, Never>?
-    private var ticks = 0
+    /// The hosted connection: it owns the socket, the poll saga and the reconnect, as decided by
+    /// `LoomCore.Daemon`. The app acts on what it publishes.
+    @ObservationIgnored private var host: DaemonHost?
+    private var listener: Task<Void, Never>?
 
     /// The deployment read connects to every node, so it runs far less often
     /// than the catalogue poll.
@@ -224,101 +226,98 @@ final class DaemonConnection: Identifiable {
     }
 
     func start() {
-        guard loop == nil else { return }
-        loop = Task { await self.run() }
+        guard host == nil else { return }
+        let source = self.source
+        let host = DaemonHost(open: {
+            let endpoint: DaemonEndpoint
+            switch source {
+            case .local(let root): endpoint = try DaemonDiscovery.discover(root: root)
+            case .remote(let saved, let token): endpoint = try DaemonEndpoint(address: saved.address, token: token)
+            }
+            return (endpoint, WebSocket(url: try endpoint.url(path: "/v2/control"), bearer: endpoint.token))
+        })
+        self.host = host
+        listener = Task { [weak self] in
+            for await output in host.outputs {
+                guard let self else { return }
+                self.handle(output)
+            }
+        }
+        Task { await host.start() }
     }
 
     func shutDown() {
-        loop?.cancel()
+        listener?.cancel()
         attached.values.forEach { $0.detach() }
         attached = [:]
-        let control = self.control
-        Task { await control?.close() }
+        let host = self.host
+        self.host = nil
+        Task { await host?.stop() }
     }
 
-    private func resolveEndpoint() throws -> DaemonEndpoint {
-        switch source {
-        case .local(let root): return try DaemonDiscovery.discover(root: root)
-        case .remote(let saved, let token): return try DaemonEndpoint(address: saved.address, token: token)
-        }
-    }
-
-    /// Holds a control connection and polls it. The daemon pushes no activity
-    /// on this socket, so a poll is the only way to see it. A failure drops all
-    /// state tied to that daemon lifetime and starts over from discovery.
-    private func run() async {
-        while !Task.isCancelled {
-            do {
-                let endpoint = try resolveEndpoint()
-                let control = try ControlClient(endpoint: endpoint)
-                let hello = try await control.connect()
-                adopt(hello: hello, endpoint: endpoint, control: control)
-                ticks = 0
-                while !Task.isCancelled {
-                    try await refresh(control)
-                    try await Task.sleep(for: .milliseconds(Daemon.pollMs))
-                }
-            } catch {
-                await control?.close()
+    /// Carries out what the core decided about this connection.
+    private func handle(_ output: DaemonHost.Output) {
+        switch output {
+        case .opened(let endpoint):
+            self.endpoint = endpoint
+        case .state(let next):
+            switch next {
+            case .connecting:
+                state = .connecting
+            case .connected:
+                // Every command goes through the one host, so the client is a view of it.
+                if control == nil, let host { control = ControlClient(exchange: host) }
+                state = .connected
+            case .unavailable(let words):
                 control = nil
-                state = .unavailable(error.localizedDescription)
-                try? await Task.sleep(for: .milliseconds(Daemon.retryMs))
+                state = .unavailable(words)
             }
-        }
-    }
-
-    private func adopt(hello: DaemonHello, endpoint: DaemonEndpoint, control: ControlClient) {
-        // A new epoch means every ephemeral fact is void (protocol section 6.7).
-        if self.hello?.epoch != hello.epoch {
+        case .catalogue(let snapshot):
+            apply(snapshot)
+        case .attach(let id, let inheriting):
+            let previous = attached[id]
+            let next = attach(id)
+            if inheriting == .previous, let previous { next?.inherit(from: previous) }
+        case .detachAll:
+            // A new epoch means every ephemeral fact is void (protocol section 6.7).
             attached.values.forEach { $0.detach() }
             attached = [:]
+        case .due(let periodic):
+            guard let control else { return }
+            let resident = sessions.filter { $0.state.isResident }.map(\.id)
+            switch periodic {
+            case .deployment: Task { await refreshDeployment(control) }
+            case .attention: Task { await refreshAttention(control, resident: resident, activity: activity) }
+            case .review: scanReview(control, activity: activity)
+            case .projects: Task { await refreshProjects(control) }
+            }
         }
-        self.hello = hello
-        self.endpoint = endpoint
-        self.control = control
-        state = .connected
     }
 
-    func refresh(_ control: ControlClient) async throws {
-        let status = try await control.status()
-        let sessions = try await control.listSessions()
-        let resident = sessions.filter { $0.state.isResident }.map(\.id)
-        let activity = try await control.activity(sessions: resident)
-
-        self.status = status
-        let sorted = sessions.sorted { $0.createdAt > $1.createdAt }
+    /// Takes one poll's catalogue, as the old `refresh` did after its reads.
+    private func apply(_ snapshot: DaemonHost.Snapshot) {
+        if let body = snapshot.hello, hello == nil || hello?.epoch != body["epoch"]?.string {
+            hello = DaemonHello(
+                epoch: body["epoch"]?.string ?? "", principal: body["principal"]?.string ?? "",
+                buildVersion: body["build_version"]?.string ?? "", buildCommit: body["build_commit"]?.string ?? ""
+            )
+        }
+        if let body = snapshot.status { status = DaemonStatus(body) }
+        let sorted = snapshot.sessions
         if self.sessions != sorted { self.sessions = sorted }
-        if self.activity != activity {
-            for (id, row) in activity where self.activity[id] != nil && self.activity[id] != row {
+        if self.activity != snapshot.activity {
+            for (id, row) in snapshot.activity where self.activity[id] != nil && self.activity[id] != row {
                 lastChanged[id] = Date()
             }
-            self.activity = activity
+            self.activity = snapshot.activity
         }
+    }
 
-        // The core decides which sessions need a lane: one asking for an approval, and one
-        // whose socket dropped while it lives on. A socket can drop, so a session someone
-        // attached to is attached again, taking over the draft and the sent lines. Nothing
-        // unsent is carried across the wire, as the protocol requires (section 6.7).
-        let lanes = attached.mapValues { $0.isLive ? Daemon.LaneState.up : .ended }
-        for step in Daemon.attachPlan(resident: resident, approvals: activity.mapValues(\.approvals), lanes: lanes) {
-            let previous = attached[step.session]
-            let next = attach(step.session)
-            if step.inheriting == .previous, let previous { next?.inherit(from: previous) }
-        }
-
-        if ticks % Self.deploymentEvery == 0 {
-            await refreshDeployment(control)
-        }
-        if ticks % Self.attentionEvery == 0 {
-            await refreshAttention(control, resident: resident, activity: activity)
-        }
-        if ticks % Self.reviewEvery == 0 {
-            scanReview(control, activity: activity)
-        }
-        if ticks % Self.projectsEvery == 0 {
-            await refreshProjects(control)
-        }
-        ticks += 1
+    /// Reads the catalogue now and returns when that read has landed. The argument is the client
+    /// the caller holds, which the host's own poll makes unnecessary; it stays so a caller keeps
+    /// asking in the same words.
+    func refresh(_ control: ControlClient) async throws {
+        try await host?.refreshNow()
     }
 
     /// Starts the read of the next idle session whose worktree is due, when none is
@@ -472,6 +471,11 @@ final class DaemonConnection: Identifiable {
         guard let endpoint else { return nil }
         let controller = SessionController(sessionID: sessionID, endpoint: endpoint)
         attached[sessionID] = controller
+
+        // The core attaches an ended lane again at the next poll, so it is told when one ends.
+        let host = self.host
+        controller.onEnded = { Task { await host?.laneEnded(sessionID) } }
+        Task { await host?.attached(sessionID) }
         controller.connect()
         return controller
     }
@@ -487,6 +491,7 @@ final class DaemonConnection: Identifiable {
         guard let control else { return }
         attached[sessionID]?.detach()
         attached[sessionID] = nil
+        await host?.forget(sessionID)
         try await control.stopSession(sessionID: sessionID)
         try await refresh(control)
     }
@@ -609,6 +614,9 @@ final class DaemonConnection: Identifiable {
 @Observable
 final class AppModel {
     private(set) var daemons: [DaemonConnection] = []
+
+    /// The one place a background read is started, for every view and model that polls.
+    let reads = ReadHost()
 
     var destination: Destination? = .mission
 
@@ -1285,6 +1293,9 @@ final class SessionController {
     @ObservationIgnored private let origin = ContinuousClock.now
     @ObservationIgnored private var inheriting: Session?
 
+    /// Called when this attachment's lane ends, so the host connection can attach again.
+    @ObservationIgnored var onEnded: (() -> Void)?
+
     init(sessionID: String, endpoint: DaemonEndpoint) {
         self.sessionID = sessionID
         self.endpoint = endpoint
@@ -1438,6 +1449,7 @@ final class SessionController {
                 timer?.cancel()
                 ended = EndingWords.notice(for: error)
                 if let error { lastError = error.localizedDescription }
+                onEnded?()
             case .pushedEvent(let event):
                 #if DEBUG
                 pushedEvents[event, default: 0] += 1

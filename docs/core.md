@@ -14,10 +14,10 @@ seed, and checks rules after every step. Loom's own pure state machines are the 
 | `Lane` | `LoomCore/Lane.swift` | one session socket: stop-and-wait credit, transfers, deadlines, the idle refresh, what a lost reply means | `Session` |
 | `Session` | `LoomCore/Session.swift` | a lane plus its conversation, the sent drafts, the stream flush; what a view is shown when | `SessionController` |
 | `ControlLane` | `LoomKit/ControlLane.swift` | the control socket: `hello`, one command at a time, owner commands before background reads | `ControlClient` |
-| `Daemon` | `LoomCore/Daemon.swift` | the poll saga, the catalogue, epochs, which sessions need a lane | model only; `attachPlan` is used by `DaemonConnection` |
+| `Daemon` | `LoomCore/Daemon.swift` | the poll saga, the catalogue, epochs, which sessions need a lane, the periodic reads, the reconnect | `LoomShell/DaemonHost`, beneath `DaemonConnection` and the app's `ControlClient` |
 | `Dispatch` | `LoomCore/Dispatch.swift` | create, open, attach, first prompt | `DaemonConnection.dispatch` |
 | `AppCore` | `LoomCore/AppCore.swift` | the board, the open thread, the folder, the project selection, notices, what is persisted | `AppModel` |
-| `Readers` | `LoomCore/Readers.swift` | which background reads are due, within the daemon's budgets | model only |
+| `Readers` | `LoomCore/Readers.swift` | which background reads are due, within the daemon's budgets | `App/ReadHost`; the thread pane, the update cards, the rail, an ask's record, the jobs tab and the side question hold surfaces there |
 | `DispatchForm` | `LoomCore/DispatchForm.swift` | the new-session form's rules and its idempotency key | `DispatchSheet` |
 
 A core value has no `async`, no clock, no timer and no OS call. `scripts/core-purity.sh` fails
@@ -102,16 +102,14 @@ change that makes the harness miss a patch is a regression.
 
 ## Known gaps
 
-- The shell does not host `Daemon`'s poll saga or `Readers`: `DaemonConnection` keeps its loop and the
-  thread reader, update watcher and rail keep theirs. Their decisions are simulated, not yet carried out
-  by the core in the app.
+- `ControlLaneExchange` (a client that owns its own control socket, used by `loom-probe` and the tests) still exists beside
+  `DaemonHost`; the app uses only the host. The thread reader's first-read settle delay and the worktree read, which is
+  made once, are not scheduled by `Readers`.
 - `AppCore`'s inputs are gathered from observed models, so a change is reported one main-actor turn later,
   as the old observation reported it.
 - `SessionController.inherit` drops images in flight.
 - A stream whose turn is interrupted or fails before its entry is published stays drawn until the strand's next
   generation. Loom also stops waiting when the operation is over, but a cut's metadata can be older than a push
   that reached the client first, so an idle strand in a cut is not proof that the entry will never land.
-- `DispatchForm`'s `.submit`, `Request` and `.finished` half is simulated but the sheet still sends its own
-  request, so the form's O4 check covers `Request.createParameters`, not the parameters the sheet ships.
 - The lost-message settlement needs the window's `oldest_seq`; a daemon that omits it leaves a lost message unknown.
 - Layout, focus, the accessibility tree, real WebSocket framing and the real daemon are not simulated.

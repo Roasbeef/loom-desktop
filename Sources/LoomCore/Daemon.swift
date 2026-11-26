@@ -87,6 +87,8 @@ public struct Daemon: Sendable, Equatable {
     public private(set) var connection: Connection = .connecting
     public private(set) var epoch: String?
     public private(set) var status: JSONValue?
+    /// The body of the daemon's `hello`, for the host to decode who it is talking to.
+    public private(set) var hello: JSONValue?
     public private(set) var sessions: [SessionRecord] = []
     public private(set) var activity: [String: SessionActivity] = [:]
     /// The sessions that have had a lane, and whether it is still up.
@@ -156,6 +158,13 @@ public struct Daemon: Sendable, Equatable {
         return effects
     }
 
+    /// A poll now, because the host just changed something the catalogue shows (a session was
+    /// created, stopped or moved) and wants to read the result. A poll already out is enough.
+    public mutating func pollSoon(now: Int) -> [Effect] {
+        guard connection == .connected, poll == nil else { return [] }
+        return beginPoll(now: now)
+    }
+
     /// A lane this daemon asked for has ended.
     public mutating func laneEnded(_ session: String) {
         if lanes[session] != nil { lanes[session] = .ended }
@@ -201,7 +210,8 @@ public struct Daemon: Sendable, Equatable {
 
     private mutating func handle(_ update: ControlLane.Update, now: Int) -> [Effect] {
         switch update {
-        case .hello(let epoch, _):
+        case .hello(let epoch, let body):
+            hello = body
             var effects: [Effect] = []
 
             // A new epoch means every ephemeral fact is void (protocol section 6.7).

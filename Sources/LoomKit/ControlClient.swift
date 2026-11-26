@@ -1,44 +1,44 @@
 import Foundation
 
-/// A client of the daemon's `/v2/control` endpoint: the catalogue and lifecycle.
+/// What a control client needs of the connection beneath it.
 ///
-/// This actor is the shell around `ControlLane`. The lane decides: which command is on the
-/// wire, which waits, when a reply is overdue. The actor forwards frames to it with a
-/// clock reading, writes its outputs in order, arms one timer for its next deadline, and
-/// resumes the caller a settled ticket names.
+/// The app's connection is hosted by `DaemonHost`, which owns the poll as well as the commands.
+/// A probe or a test uses `ControlLaneExchange`, which owns the commands alone. Both settle a
+/// command the same way, so every method below is written once.
+public protocol ControlExchange: Sendable {
+    /// Waits for the daemon's `hello` and returns it.
+    func connect() async throws -> DaemonHello
+    func close() async
+    /// One command, one reply body. A lost reply is `outcomeUnknown`, and nothing is resent.
+    func request(_ cmd: String, body: JSONValue, priority: ControlLane.Priority) async throws -> JSONValue
+    /// The epoch the last `hello` named, or nil before one.
+    func epoch() async -> String?
+}
+
+/// A client of the daemon's `/v2/control` endpoint: the catalogue and lifecycle.
 ///
 /// Commands carry a priority. A person's action (create, stop, answer) is `owner`, and the
 /// poll and other background reads are `background`. The lane writes the oldest owner
 /// command before any background one, so an action waits behind at most the read already on
-/// the wire and never behind reads that queued after it began. Before, one FIFO credit made
-/// a created session wait behind a `sessions.review` of up to 16 s and the polls queued
-/// after it (audit finding H6).
-public actor ControlClient {
+/// the wire and never behind reads that queued after it began (audit finding H6).
+public final class ControlClient: Sendable {
     /// `sessions.activity` accepts at most this many ids per request.
     static let activityBatch = 24
 
-    private let transport: any ControlTransport
-    private var core: ControlLane
-    private let writes: AsyncStream<String>.Continuation
-    private let writeQueue: AsyncStream<String>
-    private let origin = ContinuousClock.now
-    private var waiters: [ControlLane.Ticket: CheckedContinuation<JSONValue, Error>] = [:]
-    private var helloWaiter: CheckedContinuation<DaemonHello, Error>?
-    private var ended: LoomError?
-    private var readerTask: Task<Void, Never>?
-    private var writerTask: Task<Void, Never>?
-    private var timer: Task<Void, Never>?
-    public private(set) var hello: DaemonHello?
+    private let exchange: any ControlExchange
 
     public init(endpoint: DaemonEndpoint) throws {
-        self.init(transport: WebSocket(url: try endpoint.url(path: "/v2/control"), bearer: endpoint.token))
+        exchange = try ControlLaneExchange(endpoint: endpoint)
     }
 
     /// A client over any transport, for a test that stands in for the daemon.
-    public init(transport: any ControlTransport) {
-        self.transport = transport
-        core = ControlLane(now: 0)
-        (writeQueue, writes) = AsyncStream.makeStream(of: String.self, bufferingPolicy: .unbounded)
+    init(transport: any ControlTransport) {
+        exchange = ControlLaneExchange(transport: transport)
+    }
+
+    /// A client over a connection someone else hosts.
+    public init(exchange: any ControlExchange) {
+        self.exchange = exchange
     }
 
     /// How long a reply may take before its outcome is called unknown. Most commands
@@ -49,34 +49,14 @@ public actor ControlClient {
         Double(ControlLane.deadlineMs(for: command)) / 1000
     }
 
-    /// Starts reading and writing, and waits for the `hello` every other command depends
-    /// on for the epoch. The lane gives the daemon six seconds to send it.
+    /// Waits for the `hello` every other command depends on for the epoch.
     @discardableResult
     public func connect() async throws -> DaemonHello {
-        if let hello { return hello }
-        startIfNeeded()
-        return try await withCheckedThrowingContinuation { resume in
-            if let ended {
-                resume.resume(throwing: ended)
-            } else if let hello {
-                resume.resume(returning: hello)
-            } else {
-                helloWaiter = resume
-            }
-        }
+        try await exchange.connect()
     }
 
-    public func close() {
-        apply { $0.close() }
-    }
-
-    /// Starts the reader and the writer once, so a command sent before `connect` still
-    /// finds the `hello` it waits for.
-    private func startIfNeeded() {
-        guard readerTask == nil else { return }
-        readerTask = Task { await self.readLoop() }
-        writerTask = Task { await self.writeLoop() }
-        arm()
+    public func close() async {
+        await exchange.close()
     }
 
     public func status() async throws -> DaemonStatus {
@@ -101,7 +81,7 @@ public actor ControlClient {
     /// The server pushes no activity, so the caller polls. A session absent
     /// from the result is inactive.
     public func activity(sessions: [String]) async throws -> [String: SessionActivity] {
-        let epoch = try currentEpoch()
+        let epoch = try await currentEpoch()
         var result: [String: SessionActivity] = [:]
         for start in stride(from: 0, to: sessions.count, by: Self.activityBatch) {
             let batch = sessions[start..<min(start + Self.activityBatch, sessions.count)]
@@ -168,7 +148,7 @@ public actor ControlClient {
     /// Opens a saved session and waits until it is resident, which a session
     /// upgrade requires (protocol section 3.8).
     public func openUntilResident(sessionID: String, timeout: Duration = .seconds(60)) async throws -> SessionState {
-        let epoch = try currentEpoch()
+        let epoch = try await currentEpoch()
         let opened = try await request("sessions.open", body: [
             "session_id": .string(sessionID),
             "epoch": .string(epoch),
@@ -193,14 +173,14 @@ public actor ControlClient {
     public func stopSession(sessionID: String) async throws {
         _ = try await request("sessions.stop", body: [
             "session_id": .string(sessionID),
-            "epoch": .string(try currentEpoch()),
+            "epoch": .string(try await currentEpoch()),
         ])
     }
 
     /// Asks the daemon to drain and exit. It is the owner's alone, and the harness
     /// uses it to stop throwaway daemons without signalling a process.
     public func shutdown() async throws {
-        _ = try await request("daemon.shutdown", body: ["epoch": .string(try currentEpoch())])
+        _ = try await request("daemon.shutdown", body: ["epoch": .string(try await currentEpoch())])
     }
 
     /// Reads the deployment: every machine this daemon is configured with, and
@@ -230,118 +210,17 @@ public actor ControlClient {
         try await request(cmd, body: body)
     }
 
-    func currentEpoch() throws -> String {
-        guard let epoch = hello?.epoch else {
+    func currentEpoch() async throws -> String {
+        guard let epoch = await exchange.epoch() else {
             throw LoomError.protocolViolation("a command preceded hello")
         }
         return epoch
     }
 
-    /// One command, one correlated reply. The control socket pushes nothing after
-    /// `hello`, so a frame here can only be this command's answer.
-    ///
-    /// The caller's cancellation never reaches the socket: the lane consumes the reply in
-    /// order whether or not the caller is still waiting. A cancelled exchange would
-    /// otherwise close the shared connection, which fails every other read in flight.
+    /// One command, one correlated reply. The control socket pushes nothing after `hello`, so a
+    /// frame there can only be this command's answer. A caller's cancellation never reaches the
+    /// socket: the lane consumes the reply in order whether or not the caller still waits.
     func request(_ cmd: String, body: JSONValue, priority: ControlLane.Priority = .owner) async throws -> JSONValue {
-        startIfNeeded()
-        return try await withCheckedThrowingContinuation { resume in
-            let admitted = core.submit(ControlLane.Command(cmd, body: body, priority: priority), now: now())
-            waiters[admitted.ticket] = resume
-            handle(admitted.updates)
-        }
-    }
-
-    // MARK: The bridge to the lane
-
-    private func apply(_ transition: (inout ControlLane) -> [ControlLane.Update]) {
-        handle(transition(&core))
-    }
-
-    private func handle(_ updates: [ControlLane.Update]) {
-        for output in core.takeOutputs() {
-            switch output {
-            case .transmit(let text): writes.yield(text)
-            case .shut: writes.finish()
-            }
-        }
-        for update in updates { route(update) }
-        arm()
-    }
-
-    private func route(_ update: ControlLane.Update) {
-        switch update {
-        case .hello(let epoch, let body):
-            let greeting = DaemonHello(
-                epoch: epoch,
-                principal: body["principal"]?.string ?? "",
-                buildVersion: body["build_version"]?.string ?? "",
-                buildCommit: body["build_commit"]?.string ?? ""
-            )
-            hello = greeting
-            helloWaiter?.resume(returning: greeting)
-            helloWaiter = nil
-        case .replied(let ticket, let body):
-            waiters.removeValue(forKey: ticket)?.resume(returning: body)
-        case .refused(let ticket, let code, let message, let details):
-            waiters.removeValue(forKey: ticket)?.resume(throwing: LoomError.server(code: code, message: message, details: details))
-        case .lost(let ticket, let command):
-            waiters.removeValue(forKey: ticket)?.resume(throwing: LoomError.outcomeUnknown(command: command))
-        case .failed(let ticket, let error):
-            waiters.removeValue(forKey: ticket)?.resume(throwing: error)
-        case .closed(let error):
-            ended = error ?? .closed("the control connection has ended")
-            readerTask?.cancel()
-            timer?.cancel()
-            transport.close()
-            helloWaiter?.resume(throwing: ended ?? .closed("the control connection has ended"))
-            helloWaiter = nil
-        }
-    }
-
-    private func readLoop() async {
-        while core.phase != .closed {
-            do {
-                let text = try await transport.receive()
-                apply { $0.receive(text, now: now()) }
-            } catch let error as LoomError {
-                apply { $0.receive(failed: error) }
-            } catch {
-                apply { $0.receive(failed: .closed(error.localizedDescription)) }
-            }
-        }
-    }
-
-    private func writeLoop() async {
-        for await text in writeQueue {
-            do {
-                try await transport.send(text)
-            } catch let error as LoomError {
-                apply { $0.receive(failed: error) }
-            } catch {
-                apply { $0.receive(failed: .closed(error.localizedDescription)) }
-            }
-        }
-    }
-
-    private func arm() {
-        timer?.cancel()
-        timer = nil
-        guard let due = core.nextDue else { return }
-        let wait = max(1, due - now())
-        timer = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(wait))
-            guard !Task.isCancelled else { return }
-            await self?.wake()
-        }
-    }
-
-    private func wake() {
-        apply { $0.tick(now: now()) }
-    }
-
-    private func now() -> Int {
-        let elapsed = ContinuousClock.now - origin
-        return Int(elapsed.components.seconds) * 1000 + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
+        try await exchange.request(cmd, body: body, priority: priority)
     }
 }

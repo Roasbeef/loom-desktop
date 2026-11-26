@@ -102,6 +102,7 @@ struct Collapsing<Content: View>: View {
 /// Background shell jobs the focused strand started. They outlive the call that
 /// began them, so this is where a person sees that something is still running.
 private struct JobsSection: View {
+    @Environment(AppModel.self) private var model
     let controller: SessionController
 
     private var board: JobsBoard? {
@@ -134,10 +135,13 @@ private struct JobsSection: View {
         // The board is an observation, so it is read again every few seconds
         // while this tab is open and not at all otherwise.
         .task(id: controller.focusedStrand) {
-            while !Task.isCancelled {
-                refresh()
-                try? await Task.sleep(for: .seconds(5))
-            }
+            let strand = controller.focusedStrand
+            await model.reads.hold(owner: "jobs.\(controller.sessionID)", [
+                ReadHost.Entry(.init(name: "jobs.\(strand)", session: controller.sessionID, periodMs: 5_000, budget: .unbudgeted)) {
+                    refresh()
+                    return .read
+                }
+            ])
         }
     }
 

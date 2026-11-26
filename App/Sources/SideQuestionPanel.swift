@@ -9,6 +9,7 @@ import SwiftUI
 /// this window's attachment and are forgotten when it disconnects, so the panel
 /// says so rather than implying a record exists.
 struct SideQuestionPanel: View {
+    @Environment(AppModel.self) private var model
     let controller: SessionController
     @State private var question = ""
     @FocusState private var isFocused: Bool
@@ -88,10 +89,13 @@ struct SideQuestionPanel: View {
         }
         // A running answer is read again until it settles, once a second.
         .task(id: isRunning) {
-            while isRunning, !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                if isRunning { controller.read("btw", body: body("read")) }
-            }
+            guard isRunning else { return }
+            await model.reads.hold(owner: "btw.\(controller.sessionID)", [
+                ReadHost.Entry(.init(name: "btw", session: controller.sessionID, periodMs: 1_000, budget: .unbudgeted)) {
+                    if isRunning { controller.read("btw", body: body("read")) }
+                    return .read
+                }
+            ])
         }
     }
 
