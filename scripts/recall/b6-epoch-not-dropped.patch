@@ -1,14 +1,16 @@
 # test: DaemonModelTests
 diff --git a/Sources/LoomCore/Daemon.swift b/Sources/LoomCore/Daemon.swift
-index dbd62ff..d1722ea 100644
+index f40783d..6d227e3 100644
 --- a/Sources/LoomCore/Daemon.swift
 +++ b/Sources/LoomCore/Daemon.swift
-@@ -224,9 +224,7 @@ public struct Daemon: Sendable, Equatable {
+@@ -235,11 +235,7 @@ public struct Daemon: Sendable, Equatable {
  
              // A new epoch means every ephemeral fact is void (protocol section 6.7).
              if let previous = self.epoch, previous != epoch {
 -                lanes = [:]
 -                generations = [:]
+-                fed = []
+-                pollsSinceFeed = Self.coverageFloor
 -                effects.append(.detachAll)
 +                _ = effects
              }

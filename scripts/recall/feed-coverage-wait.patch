@@ -1,32 +1,11 @@
 # test: DaemonModelTests
-diff --git a/App/Sources/AppModel.swift b/App/Sources/AppModel.swift
-index 9ebe407..25cdc5c 100644
---- a/App/Sources/AppModel.swift
-+++ b/App/Sources/AppModel.swift
-@@ -1427,11 +1427,15 @@ final class SessionController {
- 
-     func detach() {
- 
--        // A detach the app asked for needs no new lane, so the host is not told it ended.
-+        // Whoever closes a lane, the host is told it ended, so the core's table of lanes never holds
-+        // one that is gone. A caller that wants no new lane says so with `forget`, which follows the
-+        // end in the host's ordered channel and removes the session from the table.
-+        let ended = onEnded
-         onEnded = nil
-         reader?.cancel()
-         isLive = false
-         perform(core?.close(now: now()) ?? [])
-+        ended?()
-     }
- 
-     // MARK: Carrying out the core's effects
 diff --git a/Sources/LoomCore/Daemon.swift b/Sources/LoomCore/Daemon.swift
-index 4323228..6368d46 100644
+index f40783d..a500076 100644
 --- a/Sources/LoomCore/Daemon.swift
 +++ b/Sources/LoomCore/Daemon.swift
-@@ -377,7 +377,7 @@ public struct Daemon: Sendable, Equatable {
-         // The attention feed is read on a schedule, and also soon after a session first appears that
-         // the last read did not cover, so a new session is not "not checked" for a whole period.
+@@ -379,7 +379,7 @@ public struct Daemon: Sendable, Equatable {
+         // A session that stopped being resident loses its feed row, so it counts as new if it returns.
+         fed.formIntersection(Set(resident))
          let uncovered = !Set(resident).isSubset(of: fed)
 -        if ticks % Self.attentionEvery == 0 || (uncovered && pollsSinceFeed >= Self.coverageFloor) {
 +        if ticks % Self.attentionEvery == 0 {

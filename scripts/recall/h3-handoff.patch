@@ -1,11 +1,11 @@
 # test: SessionModelTests
 diff --git a/Sources/LoomKit/Conversation.swift b/Sources/LoomKit/Conversation.swift
-index 7b3e5e4..702a6b9 100644
+index 6d4ee32..e7f1caf 100644
 --- a/Sources/LoomKit/Conversation.swift
 +++ b/Sources/LoomKit/Conversation.swift
-@@ -404,11 +404,7 @@ public struct Conversation: Sendable, Equatable {
-         // client first, so an idle strand in a cut is not proof that the reply will never land.
-         // That gap is listed in docs/core.md.
+@@ -422,11 +422,7 @@ public struct Conversation: Sendable, Equatable {
+         // entry is still not held has no entry coming.
+         pruneConcluded()
          if landed {
 -            streams = streams.filter { stream in
 -                guard stream.value.ended else { return true }
