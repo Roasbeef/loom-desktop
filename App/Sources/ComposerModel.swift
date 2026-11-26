@@ -259,8 +259,11 @@ final class ComposerModel {
                 case .abort:
                     controller.abort()
                 case .steer(let text):
-                    _ = try await controller.request("steer", body: ["strand": .string(strand), "text": .string(text)])
-                    say("Sent as a steer.")
+                    controller.send(
+                        message: text, delivery: .steer,
+                        command: Lane.Command("steer", body: ["strand": .string(strand), "text": .string(text)], kind: .mutation),
+                        confirming: "Sent as a steer."
+                    )
                 case .queue(let text):
                     controller.send(
                         message: text, delivery: .queue,

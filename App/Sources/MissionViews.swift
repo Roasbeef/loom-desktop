@@ -242,11 +242,12 @@ private struct AgentStrip: View {
     private func send() {
         let text = steer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        steer = ""
-        isSteering = false
         let id = card.sessionID
         Task {
+            // The text stays in the box until a lane takes it, so a session that cannot be reached loses nothing.
             guard let controller = model.daemon(holding: id)?.attach(id) else { return }
+            steer = ""
+            isSteering = false
             await controller.waitUntilAdopted()
             controller.send(text: text)
         }

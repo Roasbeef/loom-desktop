@@ -1533,13 +1533,13 @@ final class SessionController {
 
     /// Sends a message from the composer. The core keeps it in the ledger until the daemon
     /// answers, and decides what becomes of the text if the answer is a refusal or is lost.
-    func send(message text: String, delivery: Delivery, command: Lane.Command) {
+    func send(message text: String, delivery: Delivery, command: Lane.Command, confirming: String? = nil) {
         guard core != nil else {
             composer.restore(text)
             composer.say("The session is not attached.", .warning)
             return
         }
-        perform(core?.apply(.send(text: text, delivery: delivery, command: command), now: now()) ?? [])
+        perform(core?.apply(.send(text: text, delivery: delivery, command: command, confirming: confirming), now: now()) ?? [])
     }
 
     /// Hides everything this window has drawn on the focused strand. The records stay
@@ -1640,10 +1640,17 @@ final class SessionController {
     }
 
     /// Sends input to the focused strand: a prompt when idle, a steer when busy.
+    ///
+    /// The message goes through the session's ledger like the composer's, so a refusal returns its
+    /// text, and a lost reply keeps it out of the editor and says it may have been sent.
     func send(text: String) {
         let strand = focusedStrand
         let steer = isBusy
-        fire { try await self.call(Lane.Command(steer ? "steer" : "prompt", body: ["strand": .string(strand), "text": .string(text)], kind: .mutation)) }
+        send(
+            message: text,
+            delivery: steer ? .steer : .send,
+            command: Lane.Command(steer ? "steer" : "prompt", body: ["strand": .string(strand), "text": .string(text)], kind: .mutation)
+        )
     }
 
     /// Why an observer's command is not sent. The daemon would refuse it too.

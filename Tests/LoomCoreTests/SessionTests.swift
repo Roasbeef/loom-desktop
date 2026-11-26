@@ -159,6 +159,25 @@ final class SessionTests: XCTestCase {
         XCTAssertTrue(taken.has { $0 == .forgetImages(text: "") })
     }
 
+    /// Pre-existing variant of H1: `/steer` and a card's steer box bypassed the ledger, so a refusal (no turn
+    /// is running, which is common) or a lost reply left the text nowhere. Through the ledger a refusal returns
+    /// it, and an accepted one says what it was.
+    func testASteerThroughTheLedgerReturnsItsTextWhenRefusedAndConfirmsWhenTaken() {
+        var refused = Rig()
+        let nowhere = Lane.Command("steer", body: ["strand": "nowhere", "text": "wait#"], kind: .mutation)
+        refused.absorb(refused.session.apply(.send(text: "wait#", delivery: .steer, command: nowhere, confirming: "Sent as a steer."), now: refused.now))
+        refused.pump()
+        XCTAssertTrue(refused.has { $0 == .restoreDraft("wait#") })
+        XCTAssertFalse(refused.has { $0 == .notice("Sent as a steer.", .info) })
+
+        var taken = Rig()
+        let command = Lane.Command("steer", body: ["strand": "main", "text": "wait#"], kind: .mutation)
+        taken.absorb(taken.session.apply(.send(text: "wait#", delivery: .steer, command: command, confirming: "Sent as a steer."), now: taken.now))
+        taken.pump()
+        XCTAssertTrue(taken.has { $0 == .notice("Sent as a steer.", .info) })
+        XCTAssertFalse(taken.has { if case .restoreDraft = $0 { return true }; return false })
+    }
+
     /// H4: pushes that are not tokens changed the observed stream once each. The core asks
     /// for the stream to be written once per flush window and never for another push.
     func testPushesThatAreNotTokensNeverWriteTheStreamAndTokensAreCoalescedToTheFlush() {

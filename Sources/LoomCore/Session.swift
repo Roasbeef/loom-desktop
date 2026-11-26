@@ -100,7 +100,8 @@ public struct Session: Sendable, Equatable {
         /// Any command, settled by `tag`.
         case submit(Lane.Command, tag: Int)
         /// A message from the composer. The ledger holds it until the daemon answers.
-        case send(text: String, delivery: Delivery, command: Lane.Command)
+        /// `confirming` is what to say when the daemon accepts it, for a command whose acceptance is news.
+        case send(text: String, delivery: Delivery, command: Lane.Command, confirming: String? = nil)
         /// Choose a strand, which rebuilds the transcript.
         case focus(String)
         /// Hide what this window has drawn on the focused strand.
@@ -131,7 +132,7 @@ public struct Session: Sendable, Equatable {
     private enum Owner: Sendable, Equatable {
         case caller(Int)
         /// `id` is nil for a message with no words, an image alone, which the ledger does not show.
-        case draft(id: Int?, text: String, delivery: Delivery, strand: String)
+        case draft(id: Int?, text: String, delivery: Delivery, strand: String, confirming: String?)
     }
 
     private var owners: [Lane.Ticket: Owner] = [:]
@@ -209,11 +210,11 @@ public struct Session: Sendable, Equatable {
             if case .notSent(let reason) = admitted.disposition { updates.append(.notSent(admitted.ticket, reason: reason)) }
             return route(updates, now: now)
 
-        case .send(let text, let delivery, let command):
+        case .send(let text, let delivery, let command, let confirming):
             let strand = command.body["strand"]?.string ?? focusedStrand
             let id = ledger.sent(text, delivery: delivery, strand: strand)
             let admitted = lane.submit(command, now: now)
-            owners[admitted.ticket] = .draft(id: id, text: text, delivery: delivery, strand: strand)
+            owners[admitted.ticket] = .draft(id: id, text: text, delivery: delivery, strand: strand, confirming: confirming)
             var updates = admitted.updates
             if case .notSent(let reason) = admitted.disposition { updates.append(.notSent(admitted.ticket, reason: reason)) }
             return route(updates, now: now)
@@ -332,13 +333,14 @@ public struct Session: Sendable, Equatable {
         switch owner {
         case .caller(let tag):
             return [.settled(tag: tag, settlement)]
-        case .draft(let id, let text, let delivery, let strand):
+        case .draft(let id, let text, let delivery, let strand, let confirming):
             switch settlement {
             case .reply(let reply):
                 if let id { ledger.taken(id) }
                 if delivery == .queue, reply.body["status"]?.string == "queued" {
                     return [.forgetImages(text: text), .notice("Queued. It runs after this turn.", .info)]
                 }
+                if let confirming { return [.forgetImages(text: text), .notice(confirming, .info)] }
                 return [.forgetImages(text: text)]
             case .unknown:
                 // An image alone has no words to match against the transcript, so nothing later can
