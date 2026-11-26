@@ -78,6 +78,14 @@ struct FakeDaemon: Equatable {
         let toolName: String?
     }
 
+    /// An approval the daemon raised for a tool call, kept as the `escalation/{id}` register.
+    struct Escalation: Equatable {
+        let id: String
+        let strand: String
+        let tool: String
+        var status: String
+    }
+
     struct Operation: Equatable {
         var strand: String
         var id: String
@@ -90,6 +98,8 @@ struct FakeDaemon: Equatable {
         var ended = false
         /// The request's entry has landed and a tool is running, whose result is next.
         var awaitingResult: (id: String, name: String)?
+        /// The tool's approval is pending, and the tool does not run until it is decided.
+        var approval: String?
         var requests = 0
 
         static func == (lhs: Operation, rhs: Operation) -> Bool {
@@ -139,6 +149,8 @@ struct FakeDaemon: Equatable {
     var nextSeq = 1
     var version = 0
     var operations: [String: Operation] = [:]
+    /// Every approval raised, pending or decided.
+    var escalations: [String: Escalation] = [:]
     /// The main strand's operation, for a test that reads one.
     var operation: Operation? { operations["main"] }
     /// What each strand's last operation came to, as the strand's `last_result` cell says.
@@ -291,6 +303,13 @@ struct FakeDaemon: Equatable {
         }
         for (op, result) in operationResults.sorted(by: { $0.key < $1.key }) {
             cells.append(["namespace": "fact.custom", "key": .string("operation-result/\(op)"), "seq": 5, "value": resultValue(result, op: op)])
+        }
+        for escalation in escalations.values.sorted(by: { $0.id < $1.id }) {
+            cells.append(["namespace": "fact.custom", "key": .string("escalation/\(escalation.id)"), "seq": 6, "value": [
+                "id": .string(escalation.id), "status": .string(escalation.status), "scope": ["strand": .string(escalation.strand)],
+                "tool": .string(escalation.tool), "action": "run", "preview": "echo",
+                "denial": ["reason": "needs approval", "source": "policy", "wanted": []],
+            ]])
         }
         let pending: [JSONValue] = held.map {
             ["id": .string($0.id), "strand": .string($0.strand), "kind": "prompt", "text": .string($0.text), "editable": .bool(true), "revision": 1]
@@ -471,6 +490,13 @@ struct FakeDaemon: Equatable {
 
         // A tool's result lands after the entry that called it, and the next request follows.
         if let call = op.awaitingResult {
+            // An approval raised for the tool is decided first, as a person would, and the tool then runs or is refused.
+            if let id = op.approval {
+                escalations[id]?.status = counter % 2 == 0 ? "approved" : "denied"
+                op.approval = nil
+                operations[strand] = op
+                return [committedNotice()]
+            }
             var tail: [String] = []
             counter += 1
             append(Entry(id: "t\(counter)", seq: nextSeq, parent: leaf[strand], strand: strand, role: "toolResult", text: "ran \(call.name)", toolCallID: call.id))
@@ -540,6 +566,15 @@ struct FakeDaemon: Equatable {
         }
         if let tool = written.compactMap({ block -> (String, String)? in if case .tool(let id, let name, _) = block { return (id, name) } else { return nil } }).first {
             op.awaitingResult = (tool.0, tool.1)
+
+            // One tool call in three is held for approval mid-turn.
+            if pick(3) == 0 {
+                counter += 1
+                let id = "esc-\(counter)"
+                escalations[id] = Escalation(id: id, strand: strand, tool: tool.1, status: "pending")
+                op.approval = id
+                frames.append(committedNotice())
+            }
             operations[strand] = op
             frames.append(Frames.envelope(replyTo: nil, event: "tool_output", body: [
                 "strand": .string(strand), "op": .string(op.id), "step": "step", "source_index": 0, "ephemeral": .bool(true),

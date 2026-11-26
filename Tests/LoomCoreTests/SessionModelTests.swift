@@ -404,6 +404,13 @@ struct SessionModel: SimSpec {
         try rows(world: &world)
         try streams(world)
         try custody(world)
+
+        // X3: an approval is drawn at most once, and only one the daemon raised and has not decided.
+        let drawn = world.session.conversation.escalations.map(\.id)
+        guard Set(drawn).count == drawn.count else { throw Sim.Violation("X3", "an approval appears twice: \(drawn)") }
+        for id in drawn where world.daemon.escalations[id] == nil {
+            throw Sim.Violation("X3", "an approval \(id) the daemon never raised is drawn")
+        }
         if let last = world.lastStream, last > world.now { throw Sim.Violation("T5", "a stream projection from the future") }
     }
 
@@ -500,6 +507,11 @@ struct SessionModel: SimSpec {
                 }
             }
             guard shown == expected else { throw Sim.Violation("liveness", "the transcript \(shown) is not the daemon's chain \(expected)") }
+        }
+
+        // X4: once every turn has settled, no approval remains drawn as pending that the daemon decided.
+        for escalation in conversation.escalations where world.daemon.escalations[escalation.id]?.status != "pending" {
+            throw Sim.Violation("X4", "approval \(escalation.id) is still drawn as pending after the daemon decided it")
         }
 
         // X2: once every turn has settled, nothing is still drawn as live. A stream whose turn failed, or
