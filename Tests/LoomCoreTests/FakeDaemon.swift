@@ -253,7 +253,7 @@ struct FakeDaemon: Equatable {
             }
         }
         socket.transfer = OpenTransfer(id: snapshot, nextSeq: nextSeq, fragments: fragments)
-        return [Frames.begin(replyTo: id, snapshot: snapshot, window: window, nextSeq: nextSeq, session: sessionID, role: socket.role, oldestSeq: window == "history" ? nil : (served.first?.seq ?? 1))]
+        return [Frames.begin(replyTo: id, snapshot: snapshot, window: window, nextSeq: nextSeq, session: sessionID, role: socket.role, oldestSeq: window == "recent" ? served.first?.seq : nil)]
     }
 
     private mutating func nextFragment(id: Int, body: JSONValue) -> [String] {

@@ -1,0 +1,14 @@
+# test: AppCoreModelTests
+diff --git a/Sources/LoomCore/AppCore.swift b/Sources/LoomCore/AppCore.swift
+index 601709d..de7c679 100644
+--- a/Sources/LoomCore/AppCore.swift
++++ b/Sources/LoomCore/AppCore.swift
+@@ -187,7 +187,7 @@ public struct AppCore: Sendable, Equatable {
+         )
+ 
+         // A session that no daemon lists any more is not left on screen. This comes first, so the thread that opens on arriving at the inbox is settled in this same step.
+-        if case .session(let id) = place, case .listing(let listed) = facts.catalogue, !listed.contains(id) {
++        if false, case .session(let id) = place, case .listing(let listed) = facts.catalogue, !listed.contains(id) {
+             place = .inbox
+             effects.append(.left(session: id))
+         }

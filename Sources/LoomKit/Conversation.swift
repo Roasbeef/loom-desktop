@@ -376,6 +376,12 @@ public struct Conversation: Sendable, Equatable {
         }
         if let oldest = cut.oldestSeq {
             oldestSeq = min(oldestSeq ?? oldest, oldest)
+        } else if cut.window == "recent", cut.entries.isEmpty {
+            // The daemon sends `oldest_seq` null "when there is none" (client-protocol.md), and a recent
+            // window that holds no entry has none older to hide: it reaches back to the start. A
+            // catch-up window carries null whatever it holds, so it says nothing about how far back
+            // the held history goes.
+            oldestSeq = 0
         }
 
         // The ledger of decided approvals is a metadata-only read of other cells.

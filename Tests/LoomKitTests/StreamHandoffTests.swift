@@ -119,4 +119,33 @@ final class StreamHandoffTests: XCTestCase {
         state.apply(push: opDelta("end", "", op: "op-1"))
         XCTAssertNil(state.streams["main"])
     }
+
+    // MARK: How far back a window reaches
+
+    private func window(_ name: String, entries: [JSONValue] = [], oldest: Int? = nil) -> Cut {
+        Cut(
+            window: name, nextSeq: 9, oldestSeq: oldest, moreAfter: nil,
+            identity: .init(sessionID: session, epoch: "e", incarnation: "i", connectionID: "c", role: "owner"),
+            metadata: ["cells": [], "peers": [], "usage": .null],
+            entries: entries
+        )
+    }
+
+    /// D9: the real daemon sends `oldest_seq` null on every catch-up cut, entries or not, and on a
+    /// recent window that holds none. Only the second says nothing older exists, so only it proves
+    /// that a message absent from the window never arrived.
+    func testOnlyAnEmptyRecentWindowReachesBackToTheStart() {
+        var empty = Conversation(sessionID: session)
+        empty.apply(cut: window("recent"))
+        XCTAssertEqual(empty.oldestSeq, 0)
+
+        var catchUp = Conversation(sessionID: session)
+        catchUp.apply(cut: window("recent", entries: [assistant("a", parent: nil, "x")], oldest: 5))
+        catchUp.apply(cut: window("catch_up", entries: [assistant("b", parent: "a", "y")]))
+        XCTAssertEqual(catchUp.oldestSeq, 5, "a catch-up cut with null oldest_seq changes nothing")
+
+        var laterEmpty = Conversation(sessionID: session)
+        laterEmpty.apply(cut: window("catch_up"))
+        XCTAssertNil(laterEmpty.oldestSeq, "an empty catch-up cut says nothing about the start")
+    }
 }
