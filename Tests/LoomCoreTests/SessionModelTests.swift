@@ -89,9 +89,13 @@ struct SessionModel: SimSpec {
         var sentStrand: [String: String] = [:]
         var counter = 0
         var faults: Sim.FaultMask
+        /// The faults the seed chose, which the heal turns off in `faults` and a content check still needs to know.
+        let injected: Sim.FaultMask
         var rowBase: [String] = []
         var seen: [String: String] = [:]
         var lastStream: Int?
+        /// How many fragments of each generation the live session has been given.
+        var delivered: [String: Int] = [:]
         var pendingCutVersion = 0
         var lastCutVersion: Int?
         var healing = false
@@ -115,7 +119,7 @@ struct SessionModel: SimSpec {
             _ = daemon.progress(choice: 1)
         }
         let started = Session.start(sessionID: "s1", now: 0)
-        var world = World(session: started.session, daemon: daemon, faults: faults)
+        var world = World(session: started.session, daemon: daemon, faults: faults, injected: faults)
         world.daemon.attach()
         perform(&world, started.effects)
         return world
@@ -161,7 +165,7 @@ struct SessionModel: SimSpec {
         world.faults = .none
         world.healing = true
         for _ in 0..<400 {
-            while world.daemon.operation != nil || !world.daemon.held.isEmpty {
+            while !world.daemon.operations.isEmpty || !world.daemon.held.isEmpty {
                 world.wire += world.daemon.progress(choice: 0)
             }
             while !world.wire.isEmpty { try deliver(&world, rng: &rng) }
@@ -186,8 +190,8 @@ struct SessionModel: SimSpec {
             "lane=\(world.session.lane.phase) next=\(world.session.lane.nextID) cursor=\(world.session.lane.cursor)",
             "rows=\(rows)", "ledger=\(ledger)", "editor=\(world.host.editor.debugDescription)",
             "host=\(world.host.projections)/\(world.host.streamProjections)/\(world.host.pushedProjections)",
-            "daemon=\(world.daemon.entries.map(\.id)) v=\(world.daemon.version) applied=\(applied)",
-            "wire=\(world.wire.count) census=\(world.census.sorted(by: { $0.key < $1.key }))",
+            "results=\(world.daemon.lastResult.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value.outcome)" }) daemon=\(world.daemon.entries.map(\.id)) v=\(world.daemon.version) applied=\(applied)",
+            "delivered=\(world.delivered.sorted { $0.key < $1.key }.map { "\($0.value)" }) streamed=\(world.daemon.streamed.sorted { $0.key < $1.key }.map { "\($0.value.fragments)" }) wire=\(world.wire.count) census=\(world.census.sorted(by: { $0.key < $1.key }))",
         ].joined(separator: "\n")
     }
 
@@ -230,8 +234,10 @@ struct SessionModel: SimSpec {
         let frame = world.wire.removeFirst()
         guard let envelope = try? EventEnvelope.decode(frame) else { return }
         if envelope.replyTo != nil { world.daemon.replyConsumed() }
-        let isToken = envelope.event == "stream_delta" && envelope.body["kind"]?.string == "text"
-        if isToken, let strand = envelope.body["strand"]?.string, let generation = envelope.body["generation"]?.string {
+        let kind = envelope.body["kind"]?.string
+        let isToken = envelope.event == "stream_delta" && ["text", "thinking", "tool_call"].contains(kind ?? "")
+        if envelope.event == "stream_delta", kind != "end", let generation = envelope.body["generation"]?.string { world.delivered[generation, default: 0] += 1 }
+        if isToken, kind == "text", let strand = envelope.body["strand"]?.string, let generation = envelope.body["generation"]?.string {
             world.seen[strand] = generation
         }
         let revision = world.session.conversation.revision
@@ -243,6 +249,18 @@ struct SessionModel: SimSpec {
             guard !effects.contains(where: { if case .project = $0 { return true }; return false }),
                   world.session.conversation.revision == revision else {
                 throw Sim.Violation("T4", "a token caused a projection or moved the revision: \(effects)")
+            }
+        }
+
+        // T7: when a generation's stream ends and the session was given every one of its fragments, once and
+        // in order, the text it holds is exactly what the daemon wrote, however the fragments were cut.
+        if envelope.event == "stream_delta", kind == "end", world.session.isLive,
+           let generation = envelope.body["generation"]?.string, let strand = envelope.body["strand"]?.string,
+           let written = world.daemon.streamed[generation], world.delivered[generation] == written.fragments,
+           !world.injected.has(Fault.duplicate.rawValue), !world.injected.has(Fault.reorder.rawValue) {
+            let held = world.session.conversation.streams[strand]
+            if held?.generation == generation, held?.text != written.text || held?.thinking != written.thinking {
+                throw Sim.Violation("T7", "the stream text \(String(describing: held?.text)) thinking \(String(describing: held?.thinking)) is not what the daemon wrote \(written.text) / \(written.thinking) after \(written.fragments) fragments")
             }
         }
 
@@ -312,6 +330,7 @@ struct SessionModel: SimSpec {
             world.seen = [:]
             world.host.stream = nil
             world.lastCutVersion = nil
+            world.delivered = [:]
             world.count("reattach")
             perform(&world, started.effects)
         }
@@ -395,6 +414,8 @@ struct SessionModel: SimSpec {
         if key == world.rowsKey { return }
         world.rowsKey = key
         let ids = world.session.conversation.rows(strand: strand, clearedThrough: world.session.clearedThrough[strand]).filter { $0.seq != nil }.map(\.id)
+        let all = world.session.conversation.rows(strand: strand).map(\.id)
+        guard Set(all).count == all.count else { throw Sim.Violation("X1", "a block appears twice in the transcript: \(all)") }
         if !world.rowBase.isEmpty {
             var cursor = ids.makeIterator()
             for id in world.rowBase where !cursor.contains(where: { $0 == id }) {
@@ -441,7 +462,7 @@ struct SessionModel: SimSpec {
 
     private func quiescent(_ world: World) -> Bool {
         world.session.isLive && world.reattachAt == nil && world.wire.isEmpty && !world.session.lane.isInFlight
-            && world.session.lane.waiting == 0 && world.session.flushAt == nil && world.daemon.operation == nil
+            && world.session.lane.waiting == 0 && world.session.flushAt == nil && world.daemon.operations.isEmpty
             && world.daemon.held.isEmpty && world.session.ledger.lines.isEmpty
             // A notice that arrives before the first cut is dropped, and a lost final notice is
             // repaired only by the refresh, so the heal must outlast one refresh to be caught up.
@@ -459,15 +480,32 @@ struct SessionModel: SimSpec {
             if applied > 0, shown == 0, world.session.clearedThrough.isEmpty { throw Sim.Violation("liveness", "\(text) was applied but the transcript never shows it") }
         }
         if world.session.clearedThrough.isEmpty, world.session.focusedStrand == "main" {
-            let shown = conversation.rows(strand: "main").compactMap { row -> String? in
+            let shown = conversation.rows(strand: "main").map { row -> String in
                 switch row.kind {
-                case .user(let text, _): return text
-                case .assistant(let text): return text
-                default: return nil
+                case .user(let text, _): return "u:" + text
+                case .assistant(let text): return "a:" + text
+                case .thinking(let text): return "th:" + text
+                case .tool(let name, _, _, _): return "tool:" + name
+                case .notice(let text): return text == "Stopped before the turn finished." ? "stopped" : "notice:" + text
+                case .failure: return "error"
+                default: return "?"
                 }
             }
-            let chain = world.daemon.chain(strand: "main").map(\.text)
-            guard shown == chain else { throw Sim.Violation("liveness", "the transcript \(shown) is not the daemon's chain \(chain)") }
+            let expected = world.daemon.chain(strand: "main").flatMap { entry -> [String] in
+                switch entry.role {
+                case "user": return ["u:" + entry.text]
+                case "assistant":
+                    return entry.blocks.map(\.label) + (entry.stopReason == "aborted" ? ["stopped"] : []) + (entry.errorMessage != nil ? ["error"] : [])
+                default: return []
+                }
+            }
+            guard shown == expected else { throw Sim.Violation("liveness", "the transcript \(shown) is not the daemon's chain \(expected)") }
+        }
+
+        // X2: once every turn has settled, nothing is still drawn as live. A stream whose turn failed, or
+        // was stopped, leaves nothing behind.
+        for (strand, stream) in conversation.streams.sorted(by: { $0.key < $1.key }) {
+            throw Sim.Violation("X2", "a stream for \(strand) (\(stream.generation ?? "?")) is still drawn after every turn settled")
         }
     }
 }
