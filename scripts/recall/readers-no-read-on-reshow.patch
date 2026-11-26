@@ -1,0 +1,13 @@
+# test: ReadersModelTests
+diff --git a/Sources/LoomCore/Readers.swift b/Sources/LoomCore/Readers.swift
+index 3b8c83f..dc72cb8 100644
+--- a/Sources/LoomCore/Readers.swift
++++ b/Sources/LoomCore/Readers.swift
+@@ -101,7 +101,6 @@ public struct Readers: Sendable, Equatable {
+     /// previous view would leave it blank for up to a whole period. The budget still applies, so a
+     /// surface that comes and goes is limited by the daemon's allowance and not by this rule.
+     public mutating func show(_ surfaces: Set<Surface>, now: Int) -> [Effect] {
+-        for surface in surfaces.subtracting(shown) { states[surface]?.lastStart = nil }
+         shown = surfaces
+         return due(now: now)
+     }
