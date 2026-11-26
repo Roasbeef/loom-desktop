@@ -171,7 +171,8 @@ final class DaemonConnection: Identifiable {
     /// the new-session form actually sent.
     private(set) var lastCreation = ""
 
-    private var endpoint: DaemonEndpoint?
+    /// Where the daemon is, once the host has opened it. A test sets it to attach a lane without a host.
+    var endpoint: DaemonEndpoint?
     @ObservationIgnored var control: ControlClient?
     /// The hosted connection: it owns the socket, the poll saga and the reconnect, as decided by
     /// `LoomCore.Daemon`. The app acts on what it publishes.
@@ -499,12 +500,14 @@ final class DaemonConnection: Identifiable {
         attach(sessionID)
     }
 
+    /// Stops a session. The lane stays until the daemon has answered, so a refused stop leaves the
+    /// running session attached, and the caller reports the refusal.
     func stop(_ sessionID: String) async throws {
         guard let control else { return }
+        try await control.stopSession(sessionID: sessionID)
         attached[sessionID]?.detach()
         attached[sessionID] = nil
         host?.forget(sessionID)
-        try await control.stopSession(sessionID: sessionID)
         try await refresh(control)
     }
 
