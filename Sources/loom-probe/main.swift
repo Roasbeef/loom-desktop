@@ -96,9 +96,20 @@ let root = URL(fileURLWithPath: arguments[1])
 
 do {
     let endpoint = try DaemonDiscovery.discover(root: root)
-    let control = try ControlClient(endpoint: endpoint)
-    let hello = try await control.connect()
-    print("HELLO epoch=\(hello.epoch) version=\(hello.buildVersion) commit=\(hello.buildCommit)")
+
+    // The same host the app uses: it connects, says hello and polls, and the probe reads through it.
+    let host = DaemonHost(open: {
+        let found = try DaemonDiscovery.discover(root: root)
+        return (found, WebSocket(url: try found.url(path: "/v2/control"), bearer: found.token))
+    })
+    await host.start()
+    var greeting: JSONValue?
+    for await output in host.outputs {
+        if case .catalogue(let snapshot) = output, let hello = snapshot.hello { greeting = hello; break }
+        if case .state(.unavailable(let words)) = output { throw LoomError.closed(words) }
+    }
+    let control = ControlClient(exchange: host)
+    print("HELLO epoch=\(greeting?["epoch"]?.string ?? "?") version=\(greeting?["build_version"]?.string ?? "?") commit=\(greeting?["build_commit"]?.string ?? "?")")
     print("STATUS \(try await control.status())")
 
     switch arguments[0] {

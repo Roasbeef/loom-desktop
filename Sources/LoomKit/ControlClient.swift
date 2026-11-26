@@ -2,9 +2,8 @@ import Foundation
 
 /// What a control client needs of the connection beneath it.
 ///
-/// The app's connection is hosted by `DaemonHost`, which owns the poll as well as the commands.
-/// A probe or a test uses `ControlLaneExchange`, which owns the commands alone. Both settle a
-/// command the same way, so every method below is written once.
+/// The connection is hosted by `DaemonHost`, which owns the poll as well as the commands, for
+/// the app and for `loom-probe`. A test may stand in with an exchange of its own.
 public protocol ControlExchange: Sendable {
     func close() async
     /// One command, one reply body. A lost reply is `outcomeUnknown`, and nothing is resent.
@@ -25,15 +24,6 @@ public final class ControlClient: Sendable {
 
     private let exchange: any ControlExchange
 
-    public init(endpoint: DaemonEndpoint) throws {
-        exchange = try ControlLaneExchange(endpoint: endpoint)
-    }
-
-    /// A client over any transport, for a test that stands in for the daemon.
-    init(transport: any ControlTransport) {
-        exchange = ControlLaneExchange(transport: transport)
-    }
-
     /// A client over a connection someone else hosts.
     public init(exchange: any ControlExchange) {
         self.exchange = exchange
@@ -45,15 +35,6 @@ public final class ControlClient: Sendable {
     /// than that, or a slow read would be reported lost and would close the socket.
     static func deadline(for command: String) -> Double {
         Double(ControlLane.deadlineMs(for: command)) / 1000
-    }
-
-    /// Waits for the `hello` every other command depends on for the epoch.
-    @discardableResult
-    public func connect() async throws -> DaemonHello {
-        guard let own = exchange as? ControlLaneExchange else {
-            throw LoomError.protocolViolation("a hosted connection says hello to its host, not to a client")
-        }
-        return try await own.connect()
     }
 
     public func close() async {

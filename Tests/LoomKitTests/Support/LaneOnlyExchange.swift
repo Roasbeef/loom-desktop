@@ -1,8 +1,11 @@
 import Foundation
+@testable import LoomKit
 
-/// An exchange over one control socket, for a client that opens its own: the shell around `ControlLane`.
+/// A test double: an exchange over one control socket that runs the commands and nothing else.
 ///
-/// `loom-probe` and the tests use it. The app uses `DaemonHost`, which hosts the whole connection.
+/// The app and `loom-probe` use `DaemonHost`, which hosts the whole connection, poll included. A
+/// test of how the client settles commands cannot have a poll interleave frames with its scripted
+/// transport, so it uses this: the same shell around `ControlLane`, without the poll.
 ///
 /// This actor is the shell around `ControlLane`. The lane decides: which command is on the
 /// wire, which waits, when a reply is overdue. The actor forwards frames to it with a
@@ -15,7 +18,7 @@ import Foundation
 /// the wire and never behind reads that queued after it began. Before, one FIFO credit made
 /// a created session wait behind a `sessions.review` of up to 16 s and the polls queued
 /// after it (audit finding H6).
-public actor ControlLaneExchange: ControlExchange {
+actor ControlLaneExchange: ControlExchange {
     /// `sessions.activity` accepts at most this many ids per request.
     private let transport: any ControlTransport
     private var core: ControlLane
@@ -30,12 +33,8 @@ public actor ControlLaneExchange: ControlExchange {
     private var timer: Task<Void, Never>?
     private var greeting: DaemonHello?
 
-    public init(endpoint: DaemonEndpoint) throws {
-        self.init(transport: WebSocket(url: try endpoint.url(path: "/v2/control"), bearer: endpoint.token))
-    }
-
     /// A client over any transport, for a test that stands in for the daemon.
-    public init(transport: any ControlTransport) {
+    init(transport: any ControlTransport) {
         self.transport = transport
         core = ControlLane(now: 0)
         (writeQueue, writes) = AsyncStream.makeStream(of: String.self, bufferingPolicy: .unbounded)
@@ -44,7 +43,7 @@ public actor ControlLaneExchange: ControlExchange {
     /// Starts reading and writing, and waits for the `hello` every other command depends
     /// on for the epoch. The lane gives the daemon six seconds to send it.
     @discardableResult
-    public func connect() async throws -> DaemonHello {
+    func connect() async throws -> DaemonHello {
         if let greeting { return greeting }
         startIfNeeded()
         return try await withCheckedThrowingContinuation { resume in
@@ -58,7 +57,7 @@ public actor ControlLaneExchange: ControlExchange {
         }
     }
 
-    public func close() {
+    func close() {
         apply { $0.close() }
     }
 
@@ -71,7 +70,7 @@ public actor ControlLaneExchange: ControlExchange {
         arm()
     }
 
-    public func epoch() async -> String? { greeting?.epoch }
+    func epoch() async -> String? { greeting?.epoch }
 
     /// One command, one correlated reply. The control socket pushes nothing after
     /// `hello`, so a frame here can only be this command's answer.
@@ -79,7 +78,7 @@ public actor ControlLaneExchange: ControlExchange {
     /// The caller's cancellation never reaches the socket: the lane consumes the reply in
     /// order whether or not the caller is still waiting. A cancelled exchange would
     /// otherwise close the shared connection, which fails every other read in flight.
-    public func request(_ cmd: String, body: JSONValue, priority: ControlLane.Priority) async throws -> JSONValue {
+    func request(_ cmd: String, body: JSONValue, priority: ControlLane.Priority) async throws -> JSONValue {
         startIfNeeded()
         return try await withCheckedThrowingContinuation { resume in
             let admitted = core.submit(ControlLane.Command(cmd, body: body, priority: priority), now: now())
@@ -179,5 +178,12 @@ public actor ControlLaneExchange: ControlExchange {
     private func now() -> Int {
         let elapsed = ContinuousClock.now - origin
         return Int(elapsed.components.seconds) * 1000 + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
+    }
+}
+
+extension ControlClient {
+    /// A client over a scripted transport, for a test that stands in for the daemon.
+    convenience init(transport: any ControlTransport) {
+        self.init(exchange: ControlLaneExchange(transport: transport))
     }
 }
