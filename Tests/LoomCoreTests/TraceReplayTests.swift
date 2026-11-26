@@ -41,6 +41,8 @@ final class TraceReplayTests: XCTestCase {
     struct Outcome: Equatable {
         var rows: [String]
         var streams: [String]
+        /// What the person and the model said, in order, as `user:` and `assistant:` lines.
+        var speech: [String]
     }
 
     /// Whether a received frame is a push, which carries no `reply_to`.
@@ -124,7 +126,14 @@ final class TraceReplayTests: XCTestCase {
         }
         let rows = conversation.rows(strand: "main").map { "\($0.id)|\(Self.label($0.kind))" }
         let streams = conversation.streams.keys.sorted().map { "\($0)" }
-        return Outcome(rows: rows, streams: streams)
+        let speech = conversation.rows(strand: "main").compactMap { row -> String? in
+            switch row.kind {
+            case .user(let text, _): return "user:" + text.trimmingCharacters(in: .whitespacesAndNewlines)
+            case .assistant(let text): return "assistant:" + text.trimmingCharacters(in: .whitespacesAndNewlines)
+            default: return nil
+            }
+        }
+        return Outcome(rows: rows, streams: streams, speech: speech)
     }
 
     func testEveryTraceEndsWithTheDurableChainAndNothingLive() throws {
@@ -145,6 +154,23 @@ final class TraceReplayTests: XCTestCase {
                 let outcome = Self.replay(Self.perturb(trace.lines, fault: fault))
                 XCTAssertEqual(outcome, reference, "\(trace.name) under \(fault.rawValue) differs from the clean replay")
             }
+        }
+    }
+
+    /// The second oracle: what Loom's own `session_view` draws for the same frames
+    /// (`scripts/conformance.sh` regenerates `Traces/conformance.json` from a loom checkout). The two
+    /// clients must agree on what was said, in order. They draw tool calls and reasoning differently
+    /// by design, so those lines are not compared.
+    func testTheCoreAgreesWithLoomsOwnProjection() throws {
+        let directory = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Traces")
+        let vectors = try JSONValue.parse(Data(contentsOf: directory.appendingPathComponent("conformance.json")))
+        for trace in try Self.traces() {
+            let expected = (vectors[trace.name]?["lines"]?.array ?? []).compactMap { line -> String? in
+                guard let speaker = line["speaker"]?.string, speaker == "user" || speaker == "assistant" else { return nil }
+                return speaker + ":" + (line["text"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            XCTAssertFalse(expected.isEmpty, "\(trace.name) has no vector: \(vectors[trace.name]?["error"]?.string ?? "missing")")
+            XCTAssertEqual(Self.replay(trace.lines).speech, expected, "\(trace.name): the core and session_view disagree")
         }
     }
 }

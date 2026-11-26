@@ -19,6 +19,9 @@ record: ## Record traces from a real loomd: make record LOOMD_BIN=<loomd> [OUT=T
 	swift build --product loom-probe
 	sh scripts/record-traces.sh $(or $(OUT),Tests/LoomCoreTests/Traces)
 
+conformance: ## Regenerate Loom's projection of the traces: make conformance LOOM_CHECKOUT=<loom checkout>
+	sh scripts/conformance.sh
+
 core-purity: ## Fail if Sources/LoomCore can block, wait or read a clock
 	sh scripts/core-purity.sh
 
