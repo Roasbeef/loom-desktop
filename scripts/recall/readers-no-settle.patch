@@ -1,0 +1,13 @@
+# test: ReadersModelTests
+diff --git a/Sources/LoomCore/Readers.swift b/Sources/LoomCore/Readers.swift
+index 723787a..4743c4a 100644
+--- a/Sources/LoomCore/Readers.swift
++++ b/Sources/LoomCore/Readers.swift
+@@ -164,7 +164,6 @@ public struct Readers: Sendable, Equatable {
+         for surface in order {
+             var state = states[surface] ?? State()
+             guard !state.inFlight else { continue }
+-            if now < state.shownAt + surface.settleMs { continue }
+             if let last = state.lastStart, now < last + surface.periodMs { continue }
+             if (starts[surface.budget] ?? []).count >= surface.budget.limit { continue }
+             state.lastStart = now
