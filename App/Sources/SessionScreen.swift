@@ -1,4 +1,5 @@
 import LoomKit
+import LoomShell
 import Markup
 import MissionKit
 import SwiftUI
@@ -141,7 +142,7 @@ private struct LiveSession: View {
             // while an approval waits, since the daemon caches neither.
             .task(id: record.id) {
                 let id = record.id
-                await model.reads.hold(owner: "rail.\(id)", [
+                await model.reads.hold([
                     ReadHost.Entry(.init(name: "rail", session: id, periodMs: RailModel.refreshMs, budget: .unbudgeted)) {
                         if controller.isLive {
                             await rail.refresh(

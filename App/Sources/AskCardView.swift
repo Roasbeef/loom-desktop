@@ -1,4 +1,5 @@
 import LoomKit
+import LoomShell
 import MissionKit
 import SwiftUI
 
@@ -69,7 +70,7 @@ struct AskCardView: View {
         .task(id: card.id) {
             guard rail.askRecords[card.id] == nil else { return }
             let id = card.id
-            await model.reads.hold(owner: "ask.\(id)", [
+            await model.reads.hold([
                 ReadHost.Entry(.init(name: "ask.\(id)", session: rail.sessionID, periodMs: RailModel.refreshMs, budget: .unbudgeted), repeats: .untilRead) {
                     await rail.readAsk(id: id, control: control) ? .read : .failed
                 }

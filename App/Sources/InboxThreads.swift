@@ -1,4 +1,5 @@
 import LoomKit
+import LoomShell
 import MissionKit
 import SwiftUI
 
@@ -80,7 +81,7 @@ final class ThreadReader {
                 return .read
             })
         }
-        await host.hold(owner: "thread.\(session)", entries)
+        await host.hold(entries)
     }
 
     private func readEvidence(_ control: ControlClient, _ session: String) async {

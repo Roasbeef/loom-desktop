@@ -1,4 +1,5 @@
 import LoomKit
+import LoomShell
 import SwiftUI
 
 /// The Session tab's operating sections: the goal, background jobs, schedules,
@@ -136,7 +137,7 @@ private struct JobsSection: View {
         // while this tab is open and not at all otherwise.
         .task(id: controller.focusedStrand) {
             let strand = controller.focusedStrand
-            await model.reads.hold(owner: "jobs.\(controller.sessionID)", [
+            await model.reads.hold([
                 ReadHost.Entry(.init(name: "jobs.\(strand)", session: controller.sessionID, periodMs: 5_000, budget: .unbudgeted)) {
                     refresh()
                     return .read

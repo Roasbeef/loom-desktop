@@ -1,4 +1,5 @@
 import LoomKit
+import LoomShell
 import SwiftUI
 
 /// A question put to the model on the side while the strand keeps working.
@@ -90,7 +91,7 @@ struct SideQuestionPanel: View {
         // A running answer is read again until it settles, once a second.
         .task(id: isRunning) {
             guard isRunning else { return }
-            await model.reads.hold(owner: "btw.\(controller.sessionID)", [
+            await model.reads.hold([
                 ReadHost.Entry(.init(name: "btw", session: controller.sessionID, periodMs: 1_000, budget: .unbudgeted)) {
                     if isRunning { controller.read("btw", body: body("read")) }
                     return .read

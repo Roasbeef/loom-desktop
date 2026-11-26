@@ -1,4 +1,5 @@
 import LoomKit
+import LoomShell
 import MissionKit
 import SwiftUI
 
@@ -59,7 +60,7 @@ final class UpdateWatcher {
                 return .read
             }
         }
-        await model.reads.hold(owner: "updates", entries)
+        await model.reads.hold(entries)
     }
 }
 
