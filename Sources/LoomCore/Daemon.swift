@@ -245,9 +245,20 @@ public struct Daemon: Sendable, Equatable {
     private mutating func lose(_ error: LoomError, now: Int) -> [Effect] {
         var effects: [Effect] = []
         if control != nil, control?.phase != .closed {
-            _ = control?.close()
+            // The lane reports what the close cost every command it still holds: the one written is
+            // lost, and each that waited behind it never was written. A refused poll command ends the
+            // connection through here, so those callers are settled now and not left waiting.
+            let closing = control?.close() ?? []
             effects += drain()
+            for update in closing {
+                switch update {
+                case .lost(let ticket, let command): if !isPoll(ticket) { effects += settle(ticket, .lost(command: command)) }
+                case .failed(let ticket, let reason): if !isPoll(ticket) { effects += settle(ticket, .failed(reason)) }
+                default: break
+                }
+            }
         }
+        for ticket in pending.keys.sorted() { effects += settle(ticket, .failed(.closed("the daemon connection ended"))) }
         control = nil
         poll = nil
         pollAt = nil

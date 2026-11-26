@@ -15,7 +15,8 @@ import LoomKit
 /// | the shell's reconnect and attach | `Host`: performs `open` and `attach` as the app does |
 ///
 /// Faults, one bit each: 0 the reply to a command is lost, 1 the socket closes mid-poll, 2 the
-/// daemon restarts (a new epoch, same sessions), 3 a lane ends under a session.
+/// daemon restarts (a new epoch, same sessions), 3 a lane ends under a session, 4 the daemon refuses
+/// the poll's commands, 5 the daemon is down and the socket cannot be opened.
 ///
 /// Rules: B6 no lane of an earlier epoch survives the hello of a new one. B7 after the heal,
 /// every resident session with an approval has a lane and every ended lane is replaced. H6 the
@@ -26,7 +27,7 @@ struct DaemonModel: SimSpec {
     static let maxSteps = 64
 
     enum Fault: Int {
-        case lostReply = 0, closeSocket, restart, laneEnds
+        case lostReply = 0, closeSocket, restart, laneEnds, refusePoll, daemonDown
     }
 
     static let tickSizes = [10, 100, 500, 1_999, 2_000, 2_001, 3_000, 6_000, 16_000]
@@ -102,7 +103,16 @@ struct DaemonModel: SimSpec {
         case 12: ownerCommand(&world)
         case 13: backgroundReview(&world)
         case 14: world.wire += world.fake.releaseReview()
-        default: try deliver(&world)
+        default:
+            if arg % 3 == 1, faulty(.refusePoll) {
+                world.fake.refusePolls = true
+                world.count("refusePoll")
+            } else if arg % 3 == 2, faulty(.daemonDown) {
+                world.fake.isUp = false
+                world.count("daemonDown")
+            } else {
+                try deliver(&world)
+            }
         }
         try check(&world)
     }
@@ -111,6 +121,7 @@ struct DaemonModel: SimSpec {
         world.faults = .none
         for _ in 0..<300 {
             world.wire += world.fake.releaseReview()
+            world.fake.refusePolls = false
             if !world.fake.isUp { world.fake.isUp = true }
             while !world.wire.isEmpty { try deliver(&world) }
             try check(&world)
@@ -230,13 +241,20 @@ struct DaemonModel: SimSpec {
     // MARK: Performing effects
 
     private func perform(_ world: inout World, _ effects: [Daemon.Effect]) {
+        var pendingFailure = false
+        defer { _ = pendingFailure }
         for effect in effects {
             switch effect {
             case .open:
                 world.opens += 1
                 world.fake.socketOpen = false
-                world.wire = world.fake.open()
-                if !world.fake.isUp { /* the open failed, which the host reports */ }
+                if world.fake.isUp {
+                    world.wire = world.fake.open()
+                } else {
+                    // The socket cannot be opened. The host reports that as the end of one.
+                    world.wire = []
+                    pendingFailure = true
+                }
             case .transmit(let text):
                 if let command = Frames.decode(command: text) {
                     let marker = command.body["marker"]?.int
@@ -271,6 +289,9 @@ struct DaemonModel: SimSpec {
                 world.settled[tag] = settlement
                 world.ownerQueued.remove(tag)
             }
+        }
+        if pendingFailure {
+            perform(&world, world.daemon.receive(failed: .closed("the daemon is down"), now: world.now))
         }
     }
 
@@ -325,7 +346,7 @@ final class DaemonModelTests: XCTestCase {
                 for (key, value) in outcome.tallies { seen[key, default: 0] += value }
             }
         }
-        for key in ["attach", "reattach", "detachAll", "restart", "closeSocket", "lostReply", "ownerCommand", "review", "laneEnded", "due"] where (seen[key] ?? 0) == 0 {
+        for key in ["attach", "reattach", "detachAll", "restart", "closeSocket", "lostReply", "ownerCommand", "review", "laneEnded", "due", "refusePoll", "daemonDown"] where (seen[key] ?? 0) == 0 {
             XCTFail("no run reached \(key); reached \(seen.sorted { $0.key < $1.key })")
         }
     }

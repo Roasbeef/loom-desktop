@@ -23,6 +23,8 @@ struct FakeControl: Equatable {
     var counter = 0
     var version = 0
     var isUp = true
+    /// The daemon refuses the poll's commands, as a rate limit or a demoted credential would.
+    var refusePolls = false
     var socketOpen = false
     var owed = 0
     var violations: [Sim.Violation] = []
@@ -52,6 +54,9 @@ struct FakeControl: Equatable {
         let id = command.id
         let staleEpoch = command.body["epoch"]?.string.map { $0 != epoch } ?? false
         if staleEpoch { return [Frames.error(replyTo: id, code: "stale_epoch")] }
+        if refusePolls, ["status", "sessions.list", "sessions.activity"].contains(command.cmd) {
+            return [Frames.error(replyTo: id, code: "rate_limited", message: "too many reads")]
+        }
         switch command.cmd {
         case "status":
             return [Frames.envelope(replyTo: id, event: "status", body: ["epoch": .string(epoch)])]
