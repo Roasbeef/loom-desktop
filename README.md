@@ -81,3 +81,4 @@ The scenarios address the app by meaning: accessibility names and state, not coo
 - [docs/design.md](docs/design.md): why it is built this way, packaging, interface rules, and measurements.
 - [docs/parity.md](docs/parity.md): the complete inventory against the web UI.
 - [docs/testing.md](docs/testing.md): the test tools, and how to add a scenario.
+- [docs/testing-architecture.md](docs/testing-architecture.md): the test layers, the simulation, and how they relate to Loom's tests.

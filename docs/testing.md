@@ -1,6 +1,6 @@
 # Testing the app
 
-The test tools exist to answer one question: does the app a person runs do what `docs/parity.md` claims? Unit tests cover the pure rules in `Sources/`, and everything else runs against the real app and a real daemon.
+The test tools exist to answer one question: does the app a person runs do what `docs/parity.md` claims? Unit tests cover the pure rules in `Sources/`, and everything else runs against the real app and a real daemon. [testing-architecture.md](testing-architecture.md) is the map of all the layers, how they relate to Loom's own tests, and what each can and cannot catch.
 
 ## The layers
 
