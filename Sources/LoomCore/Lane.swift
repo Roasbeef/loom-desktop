@@ -164,6 +164,11 @@ public struct Lane: Sendable, Equatable {
 
     public let sessionID: String
     public let admission: Admission
+    /// Commands an observer never sends, whatever the admission rule says of the rest. The
+    /// desktop's lane lets the daemon decide, because its generic request carries reads too, but
+    /// the commands that change a session are named, and the lane refuses them locally once the
+    /// role is known, including ones queued before it was.
+    public let guarded: Set<String>
     public private(set) var phase: Phase = .ready
 
     /// The next wire id, which is also one more than the last one used.
@@ -207,13 +212,14 @@ public struct Lane: Sendable, Equatable {
     private var outbox: [Out] = []
 
     /// Opens a lane by writing its subscribe, so request 1 is outstanding.
-    public static func start(sessionID: String, admission: Admission = .roleGated, now: Int) -> Lane {
-        var lane = Lane(sessionID: sessionID, admission: admission)
+    public static func start(sessionID: String, admission: Admission = .roleGated, guarded: Set<String> = [], now: Int) -> Lane {
+        var lane = Lane(sessionID: sessionID, admission: admission, guarded: guarded)
         lane.issueCapture(command: "subscribe", body: ["session": .string(sessionID)], trigger: .requested, now: now)
         return lane
     }
 
-    private init(sessionID: String, admission: Admission) {
+    private init(sessionID: String, admission: Admission, guarded: Set<String>) {
+        self.guarded = guarded
         self.sessionID = sessionID
         self.admission = admission
     }
@@ -225,7 +231,8 @@ public struct Lane: Sendable, Equatable {
     public var canMutate: Bool { phase != .closed && identity?.role != "observer" }
 
     private func refuses(_ command: Command) -> Bool {
-        command.kind == .mutation && admission == .roleGated && !canMutate
+        (command.kind == .mutation && admission == .roleGated && !canMutate)
+            || (guarded.contains(command.name) && identity?.role == "observer")
     }
 
     /// Whether the lane holds a cut, which is what a catch-up reconciles from.

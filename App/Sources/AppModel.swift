@@ -1515,12 +1515,28 @@ final class SessionController {
 
     /// Submits a command and waits for the core to say how it ended.
     private func submit(_ command: Lane.Command) async -> Session.Settlement {
+        await settle { .submit(command, tag: $0) }
+    }
+
+    /// Gives the core an intent that names a tag, and waits for the core to settle that tag.
+    private func settle(_ intent: (Int) -> Session.Intent) async -> Session.Settlement {
         guard core != nil else { return .failed(.closed("this session is not attached")) }
         let tag = nextTag
         nextTag += 1
         return await withCheckedContinuation { resume in
             waiters[tag] = resume
-            perform(core?.apply(.submit(command, tag: tag), now: now()) ?? [])
+            perform(core?.apply(intent(tag), now: now()) ?? [])
+        }
+    }
+
+    /// Answers an approval through the core, which holds the record to its current sequence.
+    private func answer(_ record: Escalation, _ decision: Session.Decision) async throws -> EventEnvelope {
+        switch await settle({ .decide(record, decision, tag: $0) }) {
+        case .reply(let reply): return reply
+        case .cut: throw LoomError.protocolViolation("an answer returned a transfer")
+        case .refused(let code, let message, let details): throw LoomError.server(code: code, message: message, details: details)
+        case .unknown(let name): throw LoomError.outcomeUnknown(command: name)
+        case .failed(let error): throw error
         }
     }
 
@@ -1679,36 +1695,11 @@ final class SessionController {
     /// Answers with the record the person is looking at, captured by the view.
     /// A stale answer is refused by sequence, and the next cut redraws it.
     func approve(_ record: Escalation, remember: Bool = false) {
-        guard !isObserver else { lastError = Self.observerWords; return }
-        guard isCurrent(record) else { return }
-        var body: [String: JSONValue] = [
-            "escalation_id": .string(record.id),
-            "grants": .array(record.grants),
-            "action": .string(record.action),
-            "expected_seq": .int(Int64(record.seq)),
-        ]
-        if remember { body["scope"] = "session" }
-        fire { try await self.call(Lane.Command("approve", body: .object(body), kind: .mutation)) }
+        fire { try await self.answer(record, .approve(remember ? .forSession : .once)) }
     }
 
     func deny(_ record: Escalation) {
-        guard !isObserver else { lastError = Self.observerWords; return }
-        guard isCurrent(record) else { return }
-        fire {
-            try await self.call(Lane.Command("deny", body: [
-                "escalation_id": .string(record.id),
-                "expected_seq": .int(Int64(record.seq)),
-            ], kind: .mutation))
-        }
-    }
-
-    /// Whether the record a person answered is the one the session holds now. A
-    /// record that changed under them is refused here with words, instead of
-    /// being sent for the daemon to refuse by sequence.
-    private func isCurrent(_ record: Escalation) -> Bool {
-        if escalations.contains(record) { return true }
-        lastError = Escalation.staleWords
-        return false
+        fire { try await self.answer(record, .deny) }
     }
 
     /// Runs any session command. A snapshot reply lands in `surfaces` by its mode,

@@ -102,6 +102,10 @@ public struct Session: Sendable, Equatable {
         /// A message from the composer. The ledger holds it until the daemon answers.
         /// `confirming` is what to say when the daemon accepts it, for a command whose acceptance is news.
         case send(text: String, delivery: Delivery, command: Lane.Command, confirming: String? = nil)
+        /// An answer to an approval, taken from the record the person was shown. It is sent only if
+        /// the session still holds that record, and carries the record's own sequence, so the daemon
+        /// can refuse an answer to something that changed. An observer sends nothing.
+        case decide(Escalation, Decision, tag: Int)
         /// Choose a strand, which rebuilds the transcript.
         case focus(String)
         /// Hide what this window has drawn on the focused strand.
@@ -113,6 +117,25 @@ public struct Session: Sendable, Equatable {
         /// Stop reading it.
         case endPeek
     }
+
+    /// How a person answers an approval.
+    public enum Decision: Sendable, Equatable {
+        case approve(Remembering)
+        case deny
+    }
+
+    /// Whether an approval's grant is kept for the rest of the session.
+    public enum Remembering: Sendable, Equatable {
+        case once
+        case forSession
+    }
+
+    /// The commands that change a session, which an observer never sends. The daemon refuses them
+    /// too; the lane refuses them first, because the role is known from the first cut.
+    public static let observerBlocked: Set<String> = ["prompt", "steer", "abort", "approve", "deny"]
+
+    /// Why an observer's command is not sent.
+    public static let observerWords = "An observer can watch a session but cannot change it."
 
     /// The shortest and longest wait between stream projections, by reply length.
     public static func flushMs(replyBytes: Int) -> Int {
@@ -140,7 +163,7 @@ public struct Session: Sendable, Equatable {
     /// Opens a session by subscribing, writing the lane's first frame.
     public static func start(sessionID: String, inheriting previous: Session? = nil, now: Int) -> (session: Session, effects: [Effect]) {
         var session = Session(
-            lane: Lane.start(sessionID: sessionID, admission: .daemonDecides, now: now),
+            lane: Lane.start(sessionID: sessionID, admission: .daemonDecides, guarded: Self.observerBlocked, now: now),
             conversation: Conversation(sessionID: sessionID)
         )
         if let previous { session.inherit(from: previous) }
@@ -205,6 +228,30 @@ public struct Session: Sendable, Equatable {
         switch intent {
         case .submit(let command, let tag):
             let admitted = lane.submit(command, now: now)
+            owners[admitted.ticket] = .caller(tag)
+            var updates = admitted.updates
+            if case .notSent(let reason) = admitted.disposition { updates.append(.notSent(admitted.ticket, reason: reason)) }
+            return route(updates, now: now)
+
+        case .decide(let record, let decision, let tag):
+            if conversation.role == "observer" { return [.settled(tag: tag, .failed(.closed(Self.observerWords)))] }
+
+            // The record must be the one the session holds now, or the answer is to something else.
+            guard conversation.escalations.contains(record) else {
+                return [.settled(tag: tag, .failed(.closed(Escalation.staleWords)))]
+            }
+            var body: [String: JSONValue] = ["escalation_id": .string(record.id), "expected_seq": .int(Int64(record.seq))]
+            let name: String
+            switch decision {
+            case .deny:
+                name = "deny"
+            case .approve(let remembering):
+                name = "approve"
+                body["grants"] = .array(record.grants)
+                body["action"] = .string(record.action)
+                if remembering == .forSession { body["scope"] = "session" }
+            }
+            let admitted = lane.submit(Lane.Command(name, body: .object(body), kind: .mutation), now: now)
             owners[admitted.ticket] = .caller(tag)
             var updates = admitted.updates
             if case .notSent(let reason) = admitted.disposition { updates.append(.notSent(admitted.ticket, reason: reason)) }

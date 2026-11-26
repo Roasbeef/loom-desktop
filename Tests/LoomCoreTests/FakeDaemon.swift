@@ -205,6 +205,16 @@ struct FakeDaemon: Equatable {
             return nextFragment(id: id, body: command.body)
         case "prompt", "steer":
             return mutate(id: id, command: command.cmd, body: command.body)
+        case "approve", "deny":
+            // The daemon applies an answer only to the escalation it names, at the sequence it was shown.
+            let target = command.body["escalation_id"]?.string ?? ""
+            guard command.body["expected_seq"]?.int == 6, escalations[target]?.status == "pending" else {
+                return [Frames.error(replyTo: id, code: "stale", message: "the approval changed")]
+            }
+            escalations[target]?.status = command.cmd == "approve" ? "approved" : "denied"
+            applied[command.cmd, default: 0] += 1
+            version += 1
+            return [Frames.envelope(replyTo: id, event: "ack", body: ["status": "admitted"]), committedNotice()]
         case "abort":
             applied["abort", default: 0] += 1
             return [Frames.envelope(replyTo: id, event: "ack", body: ["status": "admitted"])]
@@ -492,7 +502,7 @@ struct FakeDaemon: Equatable {
         if let call = op.awaitingResult {
             // An approval raised for the tool is decided first, as a person would, and the tool then runs or is refused.
             if let id = op.approval {
-                escalations[id]?.status = counter % 2 == 0 ? "approved" : "denied"
+                if escalations[id]?.status == "pending" { escalations[id]?.status = counter % 2 == 0 ? "approved" : "denied" }
                 op.approval = nil
                 operations[strand] = op
                 return [committedNotice()]

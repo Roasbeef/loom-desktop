@@ -61,7 +61,7 @@ struct SessionModel: SimSpec {
     static let maxSteps = 64
 
     enum Fault: Int {
-        case lostReply = 0, duplicate, reorder, disconnect, lostRequest
+        case lostReply = 0, duplicate, reorder, disconnect, lostRequest, observer
     }
 
     static let tickSizes = [10, 33, 34, 60, 100, 250, 1_000, 3_000, 5_000, 9_999, 10_000, 30_000]
@@ -79,6 +79,8 @@ struct SessionModel: SimSpec {
 
     struct World {
         var session: Session
+        /// The sequence of each approval the person was shown and answered while the session held it.
+        var decisions: [String: Int] = [:]
         var daemon = FakeDaemon()
         var host = Host()
         var now = 0
@@ -120,6 +122,7 @@ struct SessionModel: SimSpec {
         }
         let started = Session.start(sessionID: "s1", now: 0)
         var world = World(session: started.session, daemon: daemon, faults: faults, injected: faults)
+        world.daemon.socket.role = faults.has(Fault.observer.rawValue) ? "observer" : "owner"
         world.daemon.attach()
         perform(&world, started.effects)
         return world
@@ -149,7 +152,9 @@ struct SessionModel: SimSpec {
                 world.rowBase = []
             }
         default:
-            if arg % 2 == 1, faulty(.lostRequest) {
+            if arg % 4 == 0 {
+                try decide(&world, arg: arg)
+            } else if arg % 2 == 1, faulty(.lostRequest) {
                 world.dropNextCommand = true
                 world.count("lostRequest")
             } else {
@@ -157,6 +162,25 @@ struct SessionModel: SimSpec {
             }
         }
         try check(&world)
+    }
+
+    /// The person answers an approval: one the session holds, or one it never did.
+    private func decide(_ world: inout World, arg: Int) throws(Sim.Violation) {
+        let held = world.session.conversation.escalations
+        let record: Escalation
+        if let first = held.first, arg % 8 != 4 {
+            record = held[arg % held.count]
+            world.decisions[record.id] = record.seq
+            _ = first
+        } else {
+            // A record the session does not hold, as a view that outlived its row would offer.
+            record = Escalation(id: "ghost\(arg)", seq: 1, status: "pending", strand: "main", tool: "bash", action: "run", preview: "", reason: "", source: "", grants: [], untranslatableGrants: 0)
+        }
+        world.counter += 1
+        let tag = 10_000 + world.counter
+        let decision: Session.Decision = arg % 3 == 0 ? .deny : .approve(arg % 5 == 0 ? .forSession : .once)
+        perform(&world, world.session.apply(.decide(record, decision, tag: tag), now: world.now))
+        world.count("decide")
     }
 
     func finish(_ world: inout World, rng: inout SimRandom) throws(Sim.Violation) {
@@ -323,6 +347,7 @@ struct SessionModel: SimSpec {
             world.reattachAt = nil
             let started = Session.start(sessionID: "s1", inheriting: world.session, now: world.now)
             world.session = started.session
+            world.daemon.socket.role = world.injected.has(Fault.observer.rawValue) ? "observer" : "owner"
             world.daemon.attach()
             world.wire = []
             world.attachments += 1
@@ -343,6 +368,20 @@ struct SessionModel: SimSpec {
         for effect in effects {
             switch effect {
             case .transmit(let text):
+                if let command = Frames.decode(command: text) {
+                    // O5: once the session knows it is an observer, it sends no mutation.
+                    if world.session.conversation.role == "observer", Session.observerBlocked.contains(command.cmd) {
+                        world.daemon.violations.append(Sim.Violation("O5", "an observer transmitted \(command.cmd)"))
+                    }
+
+                    // O3: an answer carries the sequence of a record the session held when the person answered.
+                    if command.cmd == "approve" || command.cmd == "deny" {
+                        let id = command.body["escalation_id"]?.string ?? ""
+                        if world.decisions[id] != command.body["expected_seq"]?.int {
+                            world.daemon.violations.append(Sim.Violation("O3", "\(command.cmd) for \(id) carried expected_seq \(String(describing: command.body["expected_seq"]?.int)), not a record the session held"))
+                        }
+                    }
+                }
                 let before = world.daemon.version
                 if world.dropNextCommand, let command = Frames.decode(command: text), command.cmd == "prompt" || command.cmd == "steer" {
                     world.dropNextCommand = false
