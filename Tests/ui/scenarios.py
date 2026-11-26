@@ -23,6 +23,35 @@ class Scenario:
     needs_display: bool
     run: object
 
+    # The calls that read pixels or a window's position, which need the window where a screen shows it.
+    RENDERED_VERBS = ("scrollup", "detach", "sweep", "click", "rclick")
+    SCREEN_CALLS = frozenset({"shot", "fully_on_screen", "end_on_screen", "resize", "hitch", "take_focus", "key", "type", "focus", "fill"})
+
+    @property
+    def headless(self):
+        """Whether the scenario reads only the driver's state and the accessibility tree, so it runs with the
+        window parked off the screen and never needs the screen or the focus. It is decided from the
+        scenario's own source: a scenario that draws, captures, resizes, types or holds focus is not."""
+        if self.foreground or self.needs_display:
+            return False
+        import ast
+        import inspect
+        import textwrap
+        try:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(self.run)))
+        except (OSError, SyntaxError):
+            return False
+        calls = {n.func.attr for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+        if calls & self.SCREEN_CALLS:
+            return False
+
+        # Driver verbs that only a rendered window can carry out: a scroll goes through the view's own scroll
+        # position, and a detach waits on the view to attach the lane again. `older_turns_page_in` timed out
+        # on `detach` with the window parked, so these stay where a screen shows them.
+        words = [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+        words += [part.value for n in ast.walk(tree) if isinstance(n, ast.JoinedStr) for part in n.values if isinstance(part, ast.Constant)]
+        return not any(w.lstrip().startswith(self.RENDERED_VERBS) for w in words)
+
 
 class Context:
     def __init__(self, app, cluster, out, args):

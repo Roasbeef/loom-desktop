@@ -206,13 +206,13 @@ private struct MenuBarContent: View {
     private func show(_ subject: InboxSubject) {
         model.openInbox(subject)
         raiseMainWindow { openWindow(id: "main") }
-        NSApplication.shared.activate()
+        NSApplication.shared.activateUnlessDriven()
     }
 
     private func show(_ destination: Destination) {
         model.destination = destination
         raiseMainWindow { openWindow(id: "main") }
-        NSApplication.shared.activate()
+        NSApplication.shared.activateUnlessDriven()
     }
 }
 
@@ -351,7 +351,7 @@ final class NoticeClicks: NSObject, UNUserNotificationCenterDelegate, @unchecked
         let rows = model.board.rows
         let subject = rows.first { $0.id == row }?.subject ?? session.map { InboxSubject.session($0) }
         showWindow()
-        NSApplication.shared.activate()
+        NSApplication.shared.activateUnlessDriven()
         if let subject { model.openInbox(subject) } else { model.destination = .inbox }
     }
 }
@@ -396,5 +396,17 @@ struct SettingsView: View {
         case .connecting: return "Connecting"
         case .unavailable: return "Unavailable"
         }
+    }
+}
+
+extension NSApplication {
+    /// Brings the app forward, except under the test driver, which must never take the owner's focus.
+    /// The driver's own `activate` command is the one way a foreground scenario asks for it.
+    func activateUnlessDriven() {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["LOOM_DEBUG_DRIVER"] != nil,
+           ProcessInfo.processInfo.environment["LOOM_FORCE_ACTIVE"] == nil { return }
+        #endif
+        activate()
     }
 }
