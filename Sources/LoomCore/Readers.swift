@@ -13,6 +13,8 @@
 /// - A surface is read again after its own period, never sooner, while it stays shown. A surface
 ///   that becomes shown is read at once, because its view is new and empty, and a budgeted class is
 ///   still held to its allowance.
+/// - A surface with a settle time is first read that long after it became shown, so a pane
+///   the person passes through on the way to another reads nothing.
 /// - The reads of one class never exceed the daemon's budget for a credential in any window
 ///   of `windowMs`: six `session.brief` reads in four seconds, and two review reads in four
 ///   seconds. A read that would pass the budget waits for the oldest start in the window to
@@ -47,12 +49,15 @@ public struct Readers: Sendable, Equatable {
         public let session: String
         public let periodMs: Int
         public let budget: Class
+        /// How long after it becomes shown the surface waits before its first read.
+        public let settleMs: Int
 
-        public init(name: String, session: String, periodMs: Int, budget: Class) {
+        public init(name: String, session: String, periodMs: Int, budget: Class, settleMs: Int = 0) {
             self.name = name
             self.session = session
             self.periodMs = periodMs
             self.budget = budget
+            self.settleMs = settleMs
         }
 
         /// A surface is what is read and for which session. How often, and against which budget, can
@@ -84,6 +89,8 @@ public struct Readers: Sendable, Equatable {
     private struct State: Sendable, Equatable {
         var lastStart: Int?
         var inFlight = false
+        /// When the surface last became shown, which its settle time is counted from.
+        var shownAt = 0
     }
 
     /// What is known of every surface that has been shown, including those hidden since.
@@ -101,7 +108,12 @@ public struct Readers: Sendable, Equatable {
     /// previous view would leave it blank for up to a whole period. The budget still applies, so a
     /// surface that comes and goes is limited by the daemon's allowance and not by this rule.
     public mutating func show(_ surfaces: Set<Surface>, now: Int) -> [Effect] {
-        for surface in surfaces.subtracting(shown) { states[surface]?.lastStart = nil }
+        for surface in surfaces.subtracting(shown) {
+            var state = states[surface] ?? State()
+            state.lastStart = nil
+            state.shownAt = now
+            states[surface] = state
+        }
         shown = surfaces
         return due(now: now)
     }
@@ -124,7 +136,7 @@ public struct Readers: Sendable, Equatable {
         for surface in shown {
             let state = states[surface] ?? State()
             guard !state.inFlight else { continue }
-            let ready = max(state.lastStart.map { $0 + surface.periodMs } ?? 0, roomAt(surface.budget) ?? 0)
+            let ready = max(state.lastStart.map { $0 + surface.periodMs } ?? 0, state.shownAt + surface.settleMs, roomAt(surface.budget) ?? 0)
             soonest = min(soonest ?? ready, ready)
         }
         return soonest
@@ -152,6 +164,7 @@ public struct Readers: Sendable, Equatable {
         for surface in order {
             var state = states[surface] ?? State()
             guard !state.inFlight else { continue }
+            if now < state.shownAt + surface.settleMs { continue }
             if let last = state.lastStart, now < last + surface.periodMs { continue }
             if (starts[surface.budget] ?? []).count >= surface.budget.limit { continue }
             state.lastStart = now

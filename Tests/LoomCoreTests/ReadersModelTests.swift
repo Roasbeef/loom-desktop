@@ -9,7 +9,7 @@ import XCTest
 /// records a violation when a class passes its budget. Faults, one bit each: 0 a read fails,
 /// 1 a read is slow.
 ///
-/// Rules: R5 a surface that becomes shown is read at once, budget permitting. R0 only a shown surface is read. R1 one read in flight per surface. R2 no class
+/// Rules: R6 no read starts before a surface's settle time has passed since it became shown. R5 a surface that becomes shown is read at once, budget permitting. R0 only a shown surface is read. R1 one read in flight per surface. R2 no class
 /// passes the daemon's budget in any window. R3 after the heal, every shown surface that can
 /// be read has been read within its period plus the budget's wait.
 struct ReadersModel: SimSpec {
@@ -25,7 +25,7 @@ struct ReadersModel: SimSpec {
         for session in ["s1", "s2", "s3", "s4", "s5", "s6", "s7"] {
             out.append(.init(name: "brief", session: session, periodMs: 1_000, budget: .brief))
             out.append(.init(name: "rail", session: session, periodMs: 5_000, budget: .unbudgeted))
-            out.append(.init(name: "review", session: session, periodMs: 3_000, budget: .review))
+            out.append(.init(name: "review", session: session, periodMs: 3_000, budget: .review, settleMs: 350))
         }
         return out
     }()
@@ -46,6 +46,8 @@ struct ReadersModel: SimSpec {
         var violations: [Sim.Violation] = []
         /// The surfaces that became shown in this step, which are read at once and not held to their period.
         var justShown: Set<Readers.Surface> = []
+        /// When each shown surface last became shown.
+        var shownAt: [Readers.Surface: Int] = [:]
         /// Surfaces that became shown and have not yet had their first read (it is in flight, or the budget was full).
         var owedFirst: Set<Readers.Surface> = []
 
@@ -122,6 +124,9 @@ struct ReadersModel: SimSpec {
             if recent.count > surface.budget.limit {
                 world.violations.append(Sim.Violation("R2", "\(recent.count) \(surface.budget) reads in \(Readers.windowMs) ms; the daemon allows \(surface.budget.limit)"))
             }
+            if let at = world.shownAt[surface], world.now < at + surface.settleMs {
+                world.violations.append(Sim.Violation("R6", "\(surface.name) of \(surface.session) was read \(world.now - at) ms after it became shown; it settles for \(surface.settleMs)"))
+            }
             world.owedFirst.remove(surface)
             world.inFlight.append(surface)
             world.lastRead[surface] = world.now
@@ -135,12 +140,13 @@ struct ReadersModel: SimSpec {
         let fresh = next.subtracting(world.shown)
         world.shown = next
         world.justShown = fresh
+        for surface in fresh { world.shownAt[surface] = world.now }
         world.owedFirst.formUnion(fresh)
         var before = Set(world.inFlight)
         run(&world, world.readers.show(next, now: world.now))
         world.justShown = []
         before.formUnion(world.unknown)
-        for surface in fresh.sorted() where !before.contains(surface) && !world.inFlight.contains(surface) {
+        for surface in fresh.sorted() where surface.settleMs == 0 && !before.contains(surface) && !world.inFlight.contains(surface) {
             let recent = (world.history[surface.budget] ?? []).filter { $0 > world.now - Readers.windowMs }
             if recent.count < surface.budget.limit {
                 throw Sim.Violation("R5", "\(surface.name) of \(surface.session) became shown with budget to spare and was not read")
