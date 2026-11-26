@@ -52,4 +52,15 @@ final class DaemonConnectionTests: XCTestCase {
         } catch {}
         XCTAssertNotNil(connection.attached["s1"], "the lane stays attached after a refusal")
     }
+
+    /// A detach ends the lane at once, as the debug driver's `detach` relies on, and the connection keeps the
+    /// ended controller until the core asks for a new one.
+    func testADetachEndsTheLaneAtOnce() {
+        let connection = DaemonConnection(id: "d2", source: .local(root: URL(fileURLWithPath: "/nonexistent")))
+        connection.endpoint = DaemonEndpoint(host: "127.0.0.1", port: 1, token: String(repeating: "a", count: 64))
+        let lane = connection.attach("s1")
+        XCTAssertEqual(lane?.isLive, true)
+        lane?.detach()
+        XCTAssertEqual(connection.attached["s1"]?.isLive, false, "the ended lane is what the connection holds until the next poll attaches another")
+    }
 }
