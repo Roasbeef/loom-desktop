@@ -114,6 +114,7 @@ struct SessionModel: SimSpec {
 
     func makeWorld(mode: Int, faults: Sim.FaultMask, rng: inout SimRandom) -> World {
         var daemon = FakeDaemon()
+        daemon.reseed(rng.next())
         if mode == 1 {
             // A session already in progress: history, and a reply streaming.
             _ = daemon.receive(command: Frames.text(["v": 2, "id": 1, "cmd": "prompt", "body": ["strand": "main", "text": "earlier"]]))
@@ -202,6 +203,16 @@ struct SessionModel: SimSpec {
         guard quiescent(world) else {
             throw Sim.Violation("liveness", "no quiescence: live=\(world.session.isLive) inflight=\(world.session.lane.isInFlight) waiting=\(world.session.lane.waiting) wire=\(world.wire.count) reattach=\(String(describing: world.reattachAt))")
         }
+
+        // A change that moves no durable record (a turn that failed before writing one) is picked up by the
+        // lane's idle refresh, at most 30 s away, so the settled checks run after that much time.
+        for _ in 0..<2 {
+            world.now += 31_000
+            try tickNow(&world)
+            while !world.wire.isEmpty { try deliver(&world, rng: &rng) }
+            try check(&world)
+        }
+        guard quiescent(world) else { throw Sim.Violation("liveness", "no quiescence after the idle refresh") }
         try settledChecks(world)
     }
 
@@ -477,6 +488,9 @@ struct SessionModel: SimSpec {
         for (strand, generation) in world.seen {
             guard let reserved = StreamIdentity.responseEntry(generation) else { continue }
             let current = conversation.streams[strand]
+
+            // A reply whose turn failed before it wrote its entry has none to hand off to, and is retired.
+            if world.daemon.abandoned.contains(reserved) { continue }
             if conversation.holds(entry: reserved) {
                 if current?.generation == generation, current?.ended == true {
                     throw Sim.Violation("T3", "the text is in the durable row \(reserved) and in the ended stream")

@@ -160,6 +160,9 @@ struct FakeDaemon: Equatable {
     /// and never overwrites.
     var operationResults: [String: LastResult] = [:]
 
+    /// Reserved entries that will never be published, because their turn failed before writing one.
+    var abandoned: Set<String> = []
+
     private mutating func record(_ result: LastResult, strand: String, op: String) {
         var keyed = result
         keyed.op = op
@@ -169,6 +172,12 @@ struct FakeDaemon: Equatable {
     /// The text each generation was streamed as, which the client should hold when its stream ends.
     var streamed: [String: Streamed] = [:]
     private var salt: UInt64 = 0x9E37_79B9_7F4A_7C15
+
+    /// Takes the run's own randomness for the choices the daemon makes (the shape of a turn, where a
+    /// reply is split). Without it every run drew the same sequence of choices, and which shapes a run
+    /// reached depended only on how many choices came before, so a change that consumed one more choice
+    /// could make a whole shape unreachable.
+    mutating func reseed(_ value: UInt64) { salt ^= value }
     var held: [Held] = []
     var applied: [String: Int] = [:]
     var violations: [Sim.Violation] = []
@@ -558,6 +567,7 @@ struct FakeDaemon: Equatable {
         var frames: [String] = []
         switch plan.fate {
         case .failsWithoutEntry:
+            abandoned.insert(op.reserved)
             record(LastResult(outcome: "failed", error: "the provider request failed"), strand: strand, op: op.id)
             return finish(strand: strand, frames: [committedNotice()])
         case .lands, .aborts, .failsWithEntry:

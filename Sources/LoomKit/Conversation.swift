@@ -431,12 +431,14 @@ public struct Conversation: Sendable, Equatable {
         return landed || metadataChanged || !wasAdopted
     }
 
-    /// Drops each ended stream whose operation has a recorded result and whose reserved entry is
-    /// not held.
+    /// Drops each stream whose operation has a recorded result and whose reserved entry is not
+    /// held. A stream that never ended is dropped too: a lane that attached while the reply was
+    /// streaming saw some of its fragments and not the `end`, and the operation's result says no
+    /// more will come.
     private mutating func pruneConcluded() {
         guard !concluded.isEmpty else { return }
         streams = streams.filter { _, stream in
-            guard stream.ended, let operation = stream.operation else { return true }
+            guard let operation = stream.operation else { return true }
             return !concluded.contains(operation)
         }
     }
