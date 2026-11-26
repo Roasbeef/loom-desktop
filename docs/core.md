@@ -168,11 +168,30 @@ change that makes the harness miss a patch is a regression.
 
 ## What the widened simulation found
 
-By itself, with no reading of the code to point it there: a stream whose turn failed before its entry landed
-stayed drawn (X2, fixed from the daemon's operation-keyed result), and a fake daemon that sent `oldest_seq` as
-the real one does made a lost message impossible to settle (liveness, fixed by reading a null `oldest_seq` on
-an empty recent window as the protocol defines it). Writing the rules B4 and B1 to B5 found that the core never
-moved the window off a session no daemon lists. Reading found, in the same round: a lane closed by the app was
-never reported to the core (`older_turns_page_in`), the attention feed waited a whole period for a new session
-(`appearance_and_size_matrix`), a refused stop left a running session without its lane, a refused card message
-was shown nowhere, and the thread pane's settle and worktree read bypassed the scheduler.
+Three counts, kept apart.
+
+**Found by the simulation itself** (a rule failed with no one pointing at the code):
+
+1. A stream whose turn failed before its entry landed stayed drawn (X2). Fixed from the daemon's operation-keyed
+   result, which also retires a stream that never ended (a lane attached mid-reply).
+2. With the fake daemon sending `oldest_seq` as the real one does (null on catch-up cuts and on an empty recent
+   window), a lost message could never be settled (liveness). Fixed by reading a null `oldest_seq` on an empty
+   recent window as the protocol defines it.
+3. The new rule B4 found that the core never moved the window off a session no daemon lists.
+4. Rule O5 found that a mutation queued before the first cut said the session was an observer's was still
+   written after it; the lane now refuses the named mutations once the role is known.
+
+Triaged as harness artifacts, not bugs (DST section 8): the T7, X2 and T3 false positives while the rules were
+written; rule F1 counting a covered session's polls (campaign, generators 102 and 106); the fake daemon's
+choices not being seeded per run, which made turns that fail before writing an entry unreachable once an unrelated
+choice was added (found because the recall row for that rule silently missed). Policy gaps: none new.
+
+**Caught only by a UI run or an app-host test:** a lane the app closed was never reported to the daemon core
+(`older_turns_page_in`, now `LoomAppTests`); the attention feed waited a whole period for a new session
+(`appearance_and_size_matrix`, now rule F1); a refused stop left a running session without its lane
+(`DaemonConnectionTests`).
+
+**Found by reading:** a session that stopped being resident and returned was not read again for the feed (the
+swarm does not catch removing the fix, because the model rarely holds a session out of residence for a poll and
+then lets four polls pass); a refused card message was shown nowhere; the thread pane's settle delay and worktree
+read bypassed the scheduler; five recall patches had gone stale and one had picked up an unrelated change.
