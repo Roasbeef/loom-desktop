@@ -5,7 +5,7 @@ feeds a value an event and a clock reading, and performs the effects the value r
 simulation in `Tests/LoomCoreTests` runs those same values against a simulated world, from a
 seed, and checks rules after every step. Loom's own pure state machines are the model:
 `session_view/session_channel.gleam`, `step.gleam`, `stream_identity.gleam` and
-`project/engine.gleam`.
+`project/engine.gleam`. [testing-architecture.md](testing-architecture.md) places this document among the other test layers and explains how they relate to Loom.
 
 ## The seam
 
