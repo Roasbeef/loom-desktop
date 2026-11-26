@@ -228,6 +228,31 @@ def streaming_is_drawn_while_it_arrives(c):
 
 
 @scenario("TR-37")
+def a_streamed_reply_hands_off_to_its_row_whole(c):
+    """The live region and the committed row never both hold the reply, and the reply reaches the list."""
+    c.app.dispatch("Handoff check, long report", WORKSPACE)
+    c.app.open_session("Handoff check")
+    last = "Paragraph 239"
+    seen_live = False
+    duplicated = 0
+    committed = False
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        session = c.app.session()
+        live = bool(session.get("liveText"))
+        committed = any(last in t for t in session.get("transcript", []))
+        seen_live = seen_live or live
+        if live and committed:
+            duplicated += 1
+        if committed and not session.get("isBusy"):
+            break
+        time.sleep(0.02)
+    check(seen_live, "the live region never held any of the reply")
+    check(duplicated == 0, f"the reply was in the live region and the list at once, {duplicated} times")
+    check(committed, "the reply never reached the list")
+
+
+@scenario("TR-37")
 def the_transcript_offers_latest_when_read_above_the_tail(c):
     """A reader at the tail has no Latest control, and one scrolled above it gets one."""
     c.app.dispatch("Tail check, long report", WORKSPACE)

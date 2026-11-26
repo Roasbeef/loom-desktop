@@ -988,6 +988,61 @@ struct LiveTail: View {
     }
 }
 
+/// The reply still being written, in a region of its own beneath the transcript.
+///
+/// It used to be the last rows of the transcript's lazy stack, so every token
+/// changed the content size and scroll geometry the stack and its scroll view
+/// were laying out, and a long reply could keep the main thread in one layout
+/// pass for as long as it streamed. Here the text grows inside its own scroll
+/// view of fixed height, pinned to its end, so nothing it does reaches the
+/// transcript's layout. The transcript changes only when the region appears and
+/// when it goes, which is two updates for a reply however long it is.
+///
+/// When the reply commits, the controller removes the stream in the same pass
+/// that adds the durable row (`SessionController.syncAll`), so the text is never
+/// drawn twice and never missing.
+struct LiveRegion: View {
+    let controller: SessionController
+
+    /// The height of the region while text is arriving. The text scrolls inside it.
+    static let height: CGFloat = 220
+
+    private var hasText: Bool {
+        guard let stream = controller.stream else { return false }
+        return !stream.text.isEmpty || !stream.thinking.isEmpty || !stream.tools.isEmpty
+    }
+
+    private var isLive: Bool { controller.stream != nil || controller.busySince != nil }
+
+    var body: some View {
+        #if DEBUG
+        let isOff = ProcessInfo.processInfo.environment["LOOM_LAYOUT_OFF"]?.contains("livetext") == true
+        #else
+        let isOff = false
+        #endif
+        if isLive, !isOff {
+            Group {
+                if hasText {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) { LiveTail(controller: controller) }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .defaultScrollAnchor(.bottom)
+                    .frame(height: Self.height)
+                } else {
+                    LiveTail(controller: controller)
+                }
+            }
+            .padding(.leading, GutterRow<EmptyView>.width)
+            .frame(maxWidth: Theme.contentWidth + GutterRow<EmptyView>.width, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .accessibilityElement(children: .contain)
+        }
+    }
+}
+
 /// Reasoning as it streams. It shows the newest line and opens to everything so
 /// far, and it folds to a quiet row once the answer begins.
 private struct LiveReasoning: View {
