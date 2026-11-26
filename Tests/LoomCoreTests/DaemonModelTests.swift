@@ -56,6 +56,8 @@ struct DaemonModel: SimSpec {
         var generation = 0
         /// Lanes that were replaced or dropped, whose controller may still report an end.
         var retired: [(session: String, generation: Int)] = []
+        /// Polls completed since the catalogue first listed each resident session without an attention read since.
+        var unfed: [String: Int] = [:]
 
         mutating func count(_ key: String) { census[key, default: 0] += 1 }
     }
@@ -278,8 +280,16 @@ struct DaemonModel: SimSpec {
             case .shut:
                 world.fake.socketOpen = false
                 world.wire = []
-            case .state, .catalogue:
+            case .state:
                 break
+            case .catalogue:
+                // F1: each completed poll ages a resident session no attention read has covered.
+                let resident = Set(world.daemon.sessions.filter { $0.state.isResident }.map(\.id))
+                world.unfed = world.unfed.filter { resident.contains($0.key) }
+                for id in resident { world.unfed[id, default: 0] += 1 }
+                for (id, polls) in world.unfed.sorted(by: { $0.key < $1.key }) where polls > 3 {
+                    world.fake.violations.append(Sim.Violation("F1", "resident session \(id) went \(polls) polls with no attention read covering it"))
+                }
             case .attach(let id, let inheriting):
                 // A lane that ended is replaced by one that takes over what it held, and one that did not end is not.
                 if inheriting == .previous, !world.endedLanes.contains(id) {
@@ -298,8 +308,9 @@ struct DaemonModel: SimSpec {
                 world.lanes = [:]
                 world.endedLanes = []
                 world.count("detachAll")
-            case .due:
+            case .due(let periodic):
                 world.count("due")
+                if periodic == .attention { world.unfed = [:] }
             case .settled(let tag, let settlement):
                 world.settled[tag] = settlement
                 world.ownerQueued.remove(tag)

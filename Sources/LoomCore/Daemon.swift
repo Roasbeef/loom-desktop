@@ -33,6 +33,8 @@ import LoomKit
 /// - B6 no lane of an earlier epoch survives a new epoch.
 /// - B7 a resident session with a pending approval has a lane within one poll of a
 ///   connection that is up, and one whose lane ended is attached again within one poll.
+/// - F1 a resident session is covered by an attention read within three polls of the catalogue first
+///   listing it, rather than waiting for the next scheduled read thirty seconds away.
 /// - H6 an owner command is written before any background command that queued after it,
 ///   so it waits at most for the one read already on the wire.
 public struct Daemon: Sendable, Equatable {
@@ -43,6 +45,11 @@ public struct Daemon: Sendable, Equatable {
     public static let attentionEvery = 15
     public static let projectsEvery = 4
     public static let reviewEvery = 3
+
+    /// Polls that must pass after one attention read before another is started for a session the
+    /// last read did not cover. It keeps a burst of new sessions to one extra read and keeps the
+    /// feed within the daemon's rate for a credential.
+    public static let coverageFloor = 2
 
     /// A read the host performs beside the catalogue.
     public enum Periodic: Sendable, Equatable, Hashable {
@@ -97,6 +104,10 @@ public struct Daemon: Sendable, Equatable {
     /// lane is stale and is ignored, so a controller that was detached cannot end the one that replaced it.
     private var generations: [String: Int] = [:]
     public private(set) var ticks = 0
+
+    /// The resident sessions the last attention read was asked about.
+    private var fed: Set<String> = []
+    private var pollsSinceFeed = Daemon.coverageFloor
     public private(set) var retryAt: Int?
     public private(set) var pollAt: Int?
 
@@ -226,6 +237,8 @@ public struct Daemon: Sendable, Equatable {
             if let previous = self.epoch, previous != epoch {
                 lanes = [:]
                 generations = [:]
+                fed = []
+                pollsSinceFeed = Self.coverageFloor
                 effects.append(.detachAll)
             }
             self.epoch = epoch
@@ -360,7 +373,17 @@ public struct Daemon: Sendable, Equatable {
             effects.append(.attach(session: step.session, inheriting: step.inheriting))
         }
         if ticks % Self.deploymentEvery == 0 { effects.append(.due(.deployment)) }
-        if ticks % Self.attentionEvery == 0 { effects.append(.due(.attention)) }
+
+        // The attention feed is read on a schedule, and also soon after a session first appears that
+        // the last read did not cover, so a new session is not "not checked" for a whole period.
+        let uncovered = !Set(resident).isSubset(of: fed)
+        if ticks % Self.attentionEvery == 0 || (uncovered && pollsSinceFeed >= Self.coverageFloor) {
+            effects.append(.due(.attention))
+            fed = Set(resident)
+            pollsSinceFeed = 0
+        } else {
+            pollsSinceFeed += 1
+        }
         if ticks % Self.reviewEvery == 0 { effects.append(.due(.review)) }
         if ticks % Self.projectsEvery == 0 { effects.append(.due(.projects)) }
         ticks += 1
