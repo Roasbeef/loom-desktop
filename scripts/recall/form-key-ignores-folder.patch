@@ -1,12 +1,12 @@
 # test: DispatchFormModelTests
 diff --git a/Sources/LoomCore/DispatchForm.swift b/Sources/LoomCore/DispatchForm.swift
-index 69b6857..9427d60 100644
+index 831cc11..4915415 100644
 --- a/Sources/LoomCore/DispatchForm.swift
 +++ b/Sources/LoomCore/DispatchForm.swift
-@@ -239,7 +239,6 @@ public struct DispatchForm: Sendable, Equatable {
-             fields.workspace = text
-             folder = judged
+@@ -242,7 +242,6 @@ public struct DispatchForm: Sendable, Equatable {
              worktreeProblemWords = problem
+             guard text != fields.workspace else { return }
+             fields.workspace = text
 -            generation += 1
          case .configuration(let text):
              guard text != fields.configuration else { return }
