@@ -22,6 +22,9 @@ record: ## Record traces from a real loomd: make record LOOMD_BIN=<loomd> [OUT=T
 conformance: ## Regenerate Loom's projection of the traces: make conformance LOOM_CHECKOUT=<loom checkout>
 	sh scripts/conformance.sh
 
+contract: ## The shell's real sockets against a real loomd: make contract LOOMD_BIN=<loomd>
+	LOOMD_BIN=$(LOOMD_BIN) swift test --filter ContractTests
+
 core-purity: ## Fail if Sources/LoomCore can block, wait or read a clock
 	sh scripts/core-purity.sh
 
