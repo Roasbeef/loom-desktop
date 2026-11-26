@@ -1,0 +1,22 @@
+# test: SessionModelTests
+diff --git a/Sources/LoomKit/Conversation.swift b/Sources/LoomKit/Conversation.swift
+index 2690d06..29f69d5 100644
+--- a/Sources/LoomKit/Conversation.swift
++++ b/Sources/LoomKit/Conversation.swift
+@@ -414,7 +414,6 @@ public struct Conversation: Sendable, Equatable {
+         // operation it predates, and one that carries the record is later than the operation's end.
+         // The entry itself lands before or with that record, so an ended stream whose reserved
+         // entry is still not held has no entry coming.
+-        pruneConcluded()
+         if landed {
+             streams = streams.filter { stream in
+                 guard stream.value.ended else { return true }
+@@ -620,7 +619,7 @@ public struct Conversation: Sendable, Equatable {
+             }
+ 
+             // Likewise when the cut already recorded this operation's result without the entry.
+-            if let operation = stream.operation, concluded.contains(operation) {
++            if false, let operation = stream.operation, concluded.contains(operation) {
+                 streams[strand] = nil
+                 return
+             }
