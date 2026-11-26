@@ -177,6 +177,7 @@ final class DaemonConnection: Identifiable {
     /// `LoomCore.Daemon`. The app acts on what it publishes.
     @ObservationIgnored private var host: DaemonHost?
     private var laneGeneration = 0
+    private var running: Set<Daemon.Periodic> = []
     private var listener: Task<Void, Never>?
 
     /// The deployment read connects to every node, so it runs far less often
@@ -287,12 +288,18 @@ final class DaemonConnection: Identifiable {
             attached = [:]
         case .due(let periodic):
             guard let control else { return }
+
+            // A read slower than its cadence (a board read queued behind a review) is not started
+            // again beside itself, or the older one could write last.
+            guard running.insert(periodic).inserted else { return }
             let resident = sessions.filter { $0.state.isResident }.map(\.id)
             switch periodic {
-            case .deployment: Task { await refreshDeployment(control) }
-            case .attention: Task { await refreshAttention(control, resident: resident, activity: activity) }
-            case .review: scanReview(control, activity: activity)
-            case .projects: Task { await refreshProjects(control) }
+            case .deployment: Task { await refreshDeployment(control); running.remove(.deployment) }
+            case .attention: Task { await refreshAttention(control, resident: resident, activity: activity); running.remove(.attention) }
+            case .review:
+                scanReview(control, activity: activity)
+                running.remove(.review)
+            case .projects: Task { await refreshProjects(control); running.remove(.projects) }
             }
         }
     }
@@ -1449,6 +1456,8 @@ final class SessionController {
                 composer.restore(text)
             case .notice(let words, let tone):
                 composer.say(words, tone == .warning ? .warning : .info)
+            case .forgetImages(let text):
+                composer.forgetImages(text)
             case .restoreReturned(let text, let strand, let attachments):
                 composer.restoreReturned(text, strand: strand, attachments: attachments)
             case .ended(let error):

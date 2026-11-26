@@ -366,7 +366,7 @@ struct SessionModel: SimSpec {
                 world.host.notices.append(words)
                 if words == Session.maybeSentWords { world.count("maybeSent") }
                 if words == Session.offeredBackWords { world.count("offeredBack") }
-            case .restoreReturned, .pushedEvent:
+            case .restoreReturned, .pushedEvent, .forgetImages:
                 break
             case .ended:
                 world.reattachAt = world.now + 3_000

@@ -142,6 +142,23 @@ final class SessionTests: XCTestCase {
         XCTAssertTrue(rig.has { if case .notice(_, .warning) = $0 { return true }; return false })
     }
 
+    /// Review finding: an image alone has no ledger line, so a lost reply was never offered back. Its images
+    /// return with a warning, and a taken one releases what the composer kept.
+    func testAnImageOnlyMessageWithALostReplyReturnsItsImagesAndATakenOneForgetsThem() {
+        var rig = Rig()
+        let command = Lane.Command("prompt", body: ["strand": "main", "text": ""], kind: .mutation)
+        rig.absorb(rig.session.apply(.send(text: "", delivery: .send, command: command), now: rig.now))
+        rig.dropReplies()
+        rig.advance(to: Lane.commandDeadlineMs)
+        XCTAssertTrue(rig.has { $0 == .restoreDraft("") })
+        XCTAssertTrue(rig.has { $0 == .notice(Session.maybeSentImagesWords, .warning) })
+
+        var taken = Rig()
+        taken.absorb(taken.session.apply(.send(text: "", delivery: .send, command: command), now: taken.now))
+        taken.pump()
+        XCTAssertTrue(taken.has { $0 == .forgetImages(text: "") })
+    }
+
     /// H4: pushes that are not tokens changed the observed stream once each. The core asks
     /// for the stream to be written once per flush window and never for another push.
     func testPushesThatAreNotTokensNeverWriteTheStreamAndTokensAreCoalescedToTheFlush() {

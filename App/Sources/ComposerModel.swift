@@ -197,6 +197,11 @@ final class ComposerModel {
         imagesInFlight = imagesInFlight.filter { held.contains($0.key) || $0.key.isEmpty }
     }
 
+    /// The message was taken or is settled for good, so its images need not be kept.
+    func forgetImages(_ text: String) {
+        imagesInFlight[text] = nil
+    }
+
     /// Puts a message's text back in the editor, with the images it carried, because the
     /// daemon refused it or it never left. The notice that explains why follows.
     func restore(_ text: String) {

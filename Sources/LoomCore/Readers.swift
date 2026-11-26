@@ -55,6 +55,18 @@ public struct Readers: Sendable, Equatable {
             self.budget = budget
         }
 
+        /// A surface is what is read and for which session. How often, and against which budget, can
+        /// change while it is shown (the update cards' period follows how many there are), and a change
+        /// of either must not make it a new surface with no memory of when it was last read.
+        public static func == (lhs: Surface, rhs: Surface) -> Bool {
+            lhs.name == rhs.name && lhs.session == rhs.session
+        }
+
+        public func hash(into hasher: inout Hasher) {
+            hasher.combine(name)
+            hasher.combine(session)
+        }
+
         public static func < (lhs: Surface, rhs: Surface) -> Bool {
             (lhs.session, lhs.name) < (rhs.session, rhs.name)
         }

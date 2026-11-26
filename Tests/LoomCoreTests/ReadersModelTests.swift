@@ -192,6 +192,19 @@ final class ReadersModelTests: XCTestCase {
         XCTAssertEqual(Sim.corpus(ReadersModel(), seeds: seeds), [])
     }
 
+    /// Review finding: the update cards' period follows their number, and a period that was part of the
+    /// surface's identity made every card a new surface, with no memory of its last read, whenever one came or went.
+    func testAChangedPeriodKeepsTheSurfaceAndItsLastRead() {
+        var readers = Readers()
+        let few = Readers.Surface(name: "update.brief", session: "s1", periodMs: 1_000, budget: .brief)
+        let many = Readers.Surface(name: "update.brief", session: "s1", periodMs: 3_000, budget: .brief)
+        XCTAssertEqual(readers.show([few], now: 0), [.read(few)])
+        _ = readers.finished(few, .read, now: 10)
+        XCTAssertTrue(readers.show([many], now: 500).isEmpty, "a new period is not a new surface, so it is not read at once")
+        XCTAssertTrue(readers.tick(now: 2_999).isEmpty)
+        XCTAssertEqual(readers.tick(now: 3_000).count, 1, "and it follows the new period")
+    }
+
     /// A pane reopened inside its period must not stay blank for the rest of it.
     func testASurfaceThatBecomesShownAgainIsReadAtOnce() {
         var readers = Readers()

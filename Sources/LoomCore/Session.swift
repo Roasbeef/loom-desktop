@@ -85,6 +85,8 @@ public struct Session: Sendable, Equatable {
         case restoreDraft(String)
         /// Say this above the composer.
         case notice(String, Tone)
+        /// A message was taken or refused for good, so whatever the composer kept for it can go.
+        case forgetImages(text: String)
         /// A draining daemon returned a held prompt.
         case restoreReturned(text: String, strand: String, attachments: Int)
         /// The lane ended. A nil error is a close this client asked for.
@@ -335,11 +337,14 @@ public struct Session: Sendable, Equatable {
             case .reply(let reply):
                 if let id { ledger.taken(id) }
                 if delivery == .queue, reply.body["status"]?.string == "queued" {
-                    return [.notice("Queued. It runs after this turn.", .info)]
+                    return [.forgetImages(text: text), .notice("Queued. It runs after this turn.", .info)]
                 }
-                return []
+                return [.forgetImages(text: text)]
             case .unknown:
-                if let id { ledger.lost(id, afterSeq: conversation.newestSeq(strand: strand) ?? 0) }
+                // An image alone has no words to match against the transcript, so nothing later can
+                // settle it. Its images go back, with a warning that it may have been sent.
+                guard let id else { return [.restoreDraft(text), .notice(Self.maybeSentImagesWords, .warning)] }
+                ledger.lost(id, afterSeq: conversation.newestSeq(strand: strand) ?? 0)
                 return [.notice(Self.maybeSentWords, .warning)]
             case .refused(_, let message, _):
                 return refused(id, text: text, words: message.isEmpty ? "The daemon refused the message." : message)
@@ -399,5 +404,6 @@ public struct Session: Sendable, Equatable {
     }
 
     public static let maybeSentWords = "No reply came, so this message may have been sent. It is not back in the editor; the next read of the transcript shows whether it arrived."
+    public static let maybeSentImagesWords = "No reply came, so this message may have been sent. Its images are back in the editor; send them again only if it did not arrive."
     public static let offeredBackWords = "That message did not arrive, so its text is back in the editor."
 }

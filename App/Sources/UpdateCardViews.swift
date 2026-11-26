@@ -54,7 +54,7 @@ final class UpdateWatcher {
 
                 // A read that outlived the inbox must not write, and one for a session that left
                 // Updates while it ran must not bring it back.
-                guard !Task.isCancelled, present.contains(id) else { return .failed }
+                guard Set(UpdateWatch.targets(rows: model.board.rows)).contains(id) else { return .failed }
                 let digest = UpdateDigest(brief: brief)
                 if self.digests[id] != digest { self.digests[id] = digest }
                 return .read
