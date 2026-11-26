@@ -93,6 +93,9 @@ public struct Daemon: Sendable, Equatable {
     public private(set) var activity: [String: SessionActivity] = [:]
     /// The sessions that have had a lane, and whether it is still up.
     public private(set) var lanes: [String: LaneState] = [:]
+    /// Which lane each session's record is about, as the host numbered it. A report about any other
+    /// lane is stale and is ignored, so a controller that was detached cannot end the one that replaced it.
+    private var generations: [String: Int] = [:]
     public private(set) var ticks = 0
     public private(set) var retryAt: Int?
     public private(set) var pollAt: Int?
@@ -168,14 +171,16 @@ public struct Daemon: Sendable, Equatable {
         return beginPoll(now: now)
     }
 
-    /// A lane this daemon asked for has ended.
-    public mutating func laneEnded(_ session: String) {
-        if lanes[session] != nil { lanes[session] = .ended }
+    /// A lane this daemon asked for has ended. The generation names which lane: the host numbers each lane it makes.
+    public mutating func laneEnded(_ session: String, generation: Int) {
+        guard generations[session] == generation, lanes[session] != nil else { return }
+        lanes[session] = .ended
     }
 
     /// A session was stopped or removed, so it has no lane to keep.
     public mutating func forget(_ session: String) {
         lanes[session] = nil
+        generations[session] = nil
     }
 
     /// Submits a command the host wants answered, settled by `tag`.
@@ -220,6 +225,7 @@ public struct Daemon: Sendable, Equatable {
             // A new epoch means every ephemeral fact is void (protocol section 6.7).
             if let previous = self.epoch, previous != epoch {
                 lanes = [:]
+                generations = [:]
                 effects.append(.detachAll)
             }
             self.epoch = epoch
@@ -350,6 +356,7 @@ public struct Daemon: Sendable, Equatable {
 
         for step in Self.attachPlan(resident: resident, approvals: activity.mapValues(\.approvals), lanes: lanes) {
             lanes[step.session] = .up
+            generations[step.session] = nil
             effects.append(.attach(session: step.session, inheriting: step.inheriting))
         }
         if ticks % Self.deploymentEvery == 0 { effects.append(.due(.deployment)) }
@@ -386,8 +393,9 @@ public struct Daemon: Sendable, Equatable {
         return plan
     }
 
-    /// Records that the host attached a session on its own, for a session someone opened.
-    public mutating func attached(_ session: String) {
+    /// Records that the host made a lane for a session, whether the core asked for it or someone opened the session.
+    public mutating func laneAttached(_ session: String, generation: Int) {
         lanes[session] = .up
+        generations[session] = generation
     }
 }

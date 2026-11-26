@@ -63,6 +63,7 @@ public actor DaemonHost: ControlExchange {
     public init(clock: HostClock = .real(), open: @escaping @Sendable () throws -> (endpoint: DaemonEndpoint, transport: any ControlTransport)) {
         self.clock = clock
         self.open = open
+        (notes, noteSink) = AsyncStream.makeStream(of: Note.self, bufferingPolicy: .unbounded)
         (outputs, outputSink) = AsyncStream.makeStream(of: Output.self, bufferingPolicy: .unbounded)
     }
 
@@ -71,12 +72,16 @@ public actor DaemonHost: ControlExchange {
     /// Begins connecting.
     public func start() {
         guard !stopped, readerTask == nil, transport == nil else { return }
+        noteTask = Task { [weak self, notes] in
+            for await note in notes { await self?.apply(note) }
+        }
         perform(core.start(now: now()))
     }
 
     /// Ends the connection for good.
     public func stop() {
         stopped = true
+        noteTask?.cancel()
         timer?.cancel()
         readerTask?.cancel()
         writes?.finish()
@@ -89,23 +94,52 @@ public actor DaemonHost: ControlExchange {
         failRefreshes(failure)
     }
 
-    /// A lane for this session ended, so the next poll attaches it again if it is still resident.
-    public func laneEnded(_ session: String) {
-        core.laneEnded(session)
+    /// What the app tells the host about its lanes. They go through one ordered channel, because two
+    /// unstructured tasks race: a lane that ends at once could be reported before it was reported made.
+    private enum Note: Sendable {
+        case attached(String, Int)
+        case ended(String, Int)
+        case forgotten(String)
+        case flush(CheckedContinuation<Void, Never>)
     }
 
-    /// The app attached a session on its own, for one someone opened.
-    public func attached(_ session: String) {
-        core.attached(session)
+    private nonisolated let noteSink: AsyncStream<Note>.Continuation
+    private let notes: AsyncStream<Note>
+    private var noteTask: Task<Void, Never>?
+
+    /// A lane was made for this session, numbered `generation`.
+    public nonisolated func laneAttached(_ session: String, generation: Int) {
+        noteSink.yield(.attached(session, generation))
+    }
+
+    /// The lane numbered `generation` for this session ended, so the next poll attaches it again if the
+    /// session is still resident. A report about an older lane is ignored.
+    public nonisolated func laneEnded(_ session: String, generation: Int) {
+        noteSink.yield(.ended(session, generation))
     }
 
     /// A session was stopped or removed.
-    public func forget(_ session: String) {
-        core.forget(session)
+    public nonisolated func forget(_ session: String) {
+        noteSink.yield(.forgotten(session))
+    }
+
+    private func apply(_ note: Note) {
+        switch note {
+        case .attached(let session, let generation): core.laneAttached(session, generation: generation)
+        case .ended(let session, let generation): core.laneEnded(session, generation: generation)
+        case .forgotten(let session): core.forget(session)
+        case .flush(let resume): resume.resume()
+        }
+    }
+
+    /// Lets every note given so far reach the core. A test uses it; the app does not need to wait.
+    public func flushNotes() async {
+        await withCheckedContinuation { noteSink.yield(.flush($0)) }
     }
 
     /// Reads the catalogue now and returns when that read has landed, for a caller that has just
-    /// changed something the catalogue shows. A poll already out is waited for.
+    /// changed something the catalogue shows. A poll already out is not counted: it may have read the
+    /// catalogue before the change, so the caller waits for one that starts after.
     public func refreshNow() async throws {
         try await withCheckedThrowingContinuation { (resume: CheckedContinuation<Void, Error>) in
             guard !stopped, core.isConnected else {

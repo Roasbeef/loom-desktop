@@ -176,6 +176,7 @@ final class DaemonConnection: Identifiable {
     /// The hosted connection: it owns the socket, the poll saga and the reconnect, as decided by
     /// `LoomCore.Daemon`. The app acts on what it publishes.
     @ObservationIgnored private var host: DaemonHost?
+    private var laneGeneration = 0
     private var listener: Task<Void, Never>?
 
     /// The deployment read connects to every node, so it runs far less often
@@ -277,7 +278,9 @@ final class DaemonConnection: Identifiable {
         case .attach(let id, let inheriting):
             let previous = attached[id]
             let next = attach(id)
-            if inheriting == .previous, let previous { next?.inherit(from: previous) }
+
+            // A lane that is still live is not replaced, so there is nothing to inherit from itself.
+            if inheriting == .previous, let previous, next !== previous { next?.inherit(from: previous) }
         case .detachAll:
             // A new epoch means every ephemeral fact is void (protocol section 6.7).
             attached.values.forEach { $0.detach() }
@@ -473,9 +476,11 @@ final class DaemonConnection: Identifiable {
         attached[sessionID] = controller
 
         // The core attaches an ended lane again at the next poll, so it is told when one ends.
+        laneGeneration += 1
+        let generation = laneGeneration
         let host = self.host
-        controller.onEnded = { Task { await host?.laneEnded(sessionID) } }
-        Task { await host?.attached(sessionID) }
+        controller.onEnded = { host?.laneEnded(sessionID, generation: generation) }
+        host?.laneAttached(sessionID, generation: generation)
         controller.connect()
         return controller
     }
@@ -491,7 +496,7 @@ final class DaemonConnection: Identifiable {
         guard let control else { return }
         attached[sessionID]?.detach()
         attached[sessionID] = nil
-        await host?.forget(sessionID)
+        host?.forget(sessionID)
         try await control.stopSession(sessionID: sessionID)
         try await refresh(control)
     }
@@ -1414,6 +1419,9 @@ final class SessionController {
     }
 
     func detach() {
+
+        // A detach the app asked for needs no new lane, so the host is not told it ended.
+        onEnded = nil
         reader?.cancel()
         isLive = false
         perform(core?.close(now: now()) ?? [])

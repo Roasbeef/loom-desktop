@@ -16,7 +16,7 @@ import LoomKit
 ///
 /// Faults, one bit each: 0 the reply to a command is lost, 1 the socket closes mid-poll, 2 the
 /// daemon restarts (a new epoch, same sessions), 3 a lane ends under a session, 4 the daemon refuses
-/// the poll's commands, 5 the daemon is down and the socket cannot be opened.
+/// the poll's commands, 5 the daemon is down and the socket cannot be opened, 6 a controller that was replaced reports its end late.
 ///
 /// Rules: B6 no lane of an earlier epoch survives the hello of a new one. B7 after the heal,
 /// every resident session with an approval has a lane and every ended lane is replaced. H6 the
@@ -27,7 +27,7 @@ struct DaemonModel: SimSpec {
     static let maxSteps = 64
 
     enum Fault: Int {
-        case lostReply = 0, closeSocket, restart, laneEnds, refusePoll, daemonDown
+        case lostReply = 0, closeSocket, restart, laneEnds, refusePoll, daemonDown, lateEnd
     }
 
     static let tickSizes = [10, 100, 500, 1_999, 2_000, 2_001, 3_000, 6_000, 16_000]
@@ -35,6 +35,7 @@ struct DaemonModel: SimSpec {
     struct HostLane: Equatable {
         var epoch: String
         var up: Bool
+        var generation: Int
     }
 
     struct World {
@@ -52,6 +53,9 @@ struct DaemonModel: SimSpec {
         var census: [String: Int] = [:]
         var opens = 0
         var endedLanes: Set<String> = []
+        var generation = 0
+        /// Lanes that were replaced or dropped, whose controller may still report an end.
+        var retired: [(session: String, generation: Int)] = []
 
         mutating func count(_ key: String) { census[key, default: 0] += 1 }
     }
@@ -107,6 +111,10 @@ struct DaemonModel: SimSpec {
             if arg % 3 == 1, faulty(.refusePoll) {
                 world.fake.refusePolls = true
                 world.count("refusePoll")
+            } else if arg % 3 == 2, faulty(.lateEnd), let old = world.retired.randomElementDeterministic(arg) {
+                // A controller that was detached or replaced reports its end late.
+                world.daemon.laneEnded(old.session, generation: old.generation)
+                world.count("lateEnd")
             } else if arg % 3 == 2, faulty(.daemonDown) {
                 world.fake.isUp = false
                 world.count("daemonDown")
@@ -192,7 +200,7 @@ struct DaemonModel: SimSpec {
         let id = ups[arg % ups.count]
         world.lanes[id]?.up = false
         world.endedLanes.insert(id)
-        world.daemon.laneEnded(id)
+        world.daemon.laneEnded(id, generation: world.lanes[id]?.generation ?? 0)
         world.count("laneEnded")
     }
 
@@ -273,13 +281,20 @@ struct DaemonModel: SimSpec {
             case .state, .catalogue:
                 break
             case .attach(let id, let inheriting):
-                // A lane that ended is replaced by one that takes over what it held.
+                // A lane that ended is replaced by one that takes over what it held, and one that did not end is not.
+                if inheriting == .previous, !world.endedLanes.contains(id) {
+                    world.fake.violations.append(Sim.Violation("B7", "session \(id) was attached again with inheritance though its lane had not ended"))
+                }
                 if world.endedLanes.remove(id) != nil, inheriting != .previous {
                     world.fake.violations.append(Sim.Violation("B7", "session \(id) lost its lane and was attached fresh, dropping what the old lane held"))
                 }
-                world.lanes[id] = HostLane(epoch: world.fake.epoch, up: true)
+                if let old = world.lanes[id] { world.retired.append((id, old.generation)) }
+                world.generation += 1
+                world.lanes[id] = HostLane(epoch: world.fake.epoch, up: true, generation: world.generation)
+                world.daemon.laneAttached(id, generation: world.generation)
                 world.count(inheriting == .previous ? "reattach" : "attach")
             case .detachAll:
+                for (id, lane) in world.lanes { world.retired.append((id, lane.generation)) }
                 world.lanes = [:]
                 world.endedLanes = []
                 world.count("detachAll")
@@ -346,7 +361,7 @@ final class DaemonModelTests: XCTestCase {
                 for (key, value) in outcome.tallies { seen[key, default: 0] += value }
             }
         }
-        for key in ["attach", "reattach", "detachAll", "restart", "closeSocket", "lostReply", "ownerCommand", "review", "laneEnded", "due", "refusePoll", "daemonDown"] where (seen[key] ?? 0) == 0 {
+        for key in ["attach", "reattach", "detachAll", "restart", "closeSocket", "lostReply", "ownerCommand", "review", "laneEnded", "due", "refusePoll", "daemonDown", "lateEnd"] where (seen[key] ?? 0) == 0 {
             XCTFail("no run reached \(key); reached \(seen.sorted { $0.key < $1.key })")
         }
     }
@@ -359,4 +374,9 @@ final class DaemonModelTests: XCTestCase {
         }
         XCTAssertEqual(Sim.corpus(DaemonModel(), seeds: seeds), [])
     }
+}
+
+private extension Array {
+    /// An element chosen by `index`, or nil when there is none: the schedule picks, not a random source.
+    func randomElementDeterministic(_ index: Int) -> Element? { isEmpty ? nil : self[index % count] }
 }

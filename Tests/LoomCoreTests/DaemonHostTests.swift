@@ -219,6 +219,34 @@ final class DaemonHostTests: XCTestCase {
         await host.stop()
     }
 
+    /// Review finding: a lane was reported ended by session, so a late report from a detached controller
+    /// marked the lane that replaced it ended too, and the next poll attached it again.
+    func testALateEndOfAnOldLaneDoesNotEndTheLaneThatReplacedIt() async {
+        var fake = seeded()
+        fake.sessions[0].approvals = 1
+        let clock = VirtualClock()
+        let socket = FakeControlSocket(daemon: fake)
+        let (host, log) = await start(socket, clock: clock)
+        func attaches() async -> [DaemonHost.Output] {
+            await log.outputs.filter { if case .attach = $0 { return true }; return false }
+        }
+        let firstPoll = await attaches().count
+        XCTAssertEqual(firstPoll, 1, "s1 asks for an approval and gets a lane")
+        host.laneAttached("s1", generation: 1)
+        host.laneEnded("s1", generation: 1)
+        await host.flushNotes()
+        await clock.advance(by: 2_000)
+        let afterEnd = await attaches().count
+        XCTAssertEqual(afterEnd, 2, "an ended lane is attached again at the next poll")
+        host.laneAttached("s1", generation: 2)
+        host.laneEnded("s1", generation: 1)
+        await host.flushNotes()
+        await clock.advance(by: 4_000)
+        let afterLate = await attaches().count
+        XCTAssertEqual(afterLate, 2, "a late report about the old lane leaves the new one alone")
+        await host.stop()
+    }
+
     /// Runs `work` and gives up after two real seconds, so a hang is a failure and not a stuck test.
     static func withinTwoSeconds(_ work: @escaping @Sendable () async -> String) async -> String {
         await withTaskGroup(of: String.self) { group in
